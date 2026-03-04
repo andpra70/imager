@@ -1,0 +1,94 @@
+<html>
+
+<head>
+  <meta charset="UTF-8" />
+  <title>Facemesh with Webcam</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/0.9.0/p5.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/0.9.0/addons/p5.dom.min.js"></script>
+  <script src="https://unpkg.com/ml5@latest/dist/ml5.min.js" type="text/javascript"></script>
+
+  <style></style>
+</head>
+
+<script>
+
+  let myFaceModel;
+  let myVideo;
+  let myResults;
+  let myScale = 1;
+  const options = {
+    withLandmarks: true,
+    withDescriptors: false,
+  }
+
+  function setup() {
+    createCanvas(640, 480);
+    myVideo = createCapture(VIDEO);
+    myVideo.hide();
+
+    myFaceModel = ml5.faceApi(myVideo, options, modelLoaded);
+
+    textSize(42);
+    textAlign(CENTER, CENTER);
+  }
+
+  function modelLoaded() {
+    console.log('myFaceModel', myFaceModel);
+    myFaceModel.detect(gotResults);
+  }
+
+  function gotResults(error, results) {
+    if (error) {
+      console.log('error', error)
+    }
+    if (results) {
+      myResults = results;
+      myFaceModel.detect(gotResults);
+      // console.log('results', results);
+    }
+  }
+
+  function draw() {
+    image(myVideo, 0, 0, width, height);
+
+    if (myResults && myResults[0]) {
+      const leftEye = myResults[0].parts.leftEye[2];
+      const leftEyeDown = myResults[0].parts.leftEye[4];
+      const rightEye = myResults[0].parts.rightEye[2];
+      const rightEyeDown = myResults[0].parts.rightEye[4];
+
+      const distanceEye = Math.abs(leftEye._x - rightEye._x);
+      myScale = distanceEye / 100;
+
+      textSize(42 * myScale);
+      text('👁️', leftEye._x, (leftEye._y + leftEyeDown._y) / 2);
+      text('👁️', rightEye._x, (rightEye._y + rightEyeDown._y) / 2);
+
+
+      const nose = myResults[0].parts.nose[2];
+      textSize(64 * myScale);
+      text('👃', nose._x, nose._y);
+
+      // const allMouth = myResults[0].parts.mouth;
+      // for (let i = 0; i < allMouth.length; i++) {
+      //   textSize(14);
+      //   text(i, allMouth[i]._x, allMouth[i]._y);
+      // }
+      const mouth = myResults[0].parts.mouth[14];
+      textSize(64 * myScale);
+      text('🫦', mouth._x, mouth._y);
+    }
+  }
+
+
+
+
+
+
+</script>
+
+<body>
+  <h1>Facemesh with Webcam</h1>
+</body>
+
+</html>

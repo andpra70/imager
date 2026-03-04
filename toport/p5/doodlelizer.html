@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/0.7.2/p5.min.js"></script>
+  <script src="https://unpkg.com/p5.js-svg@1.5.1"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/0.7.2/addons/p5.dom.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/0.7.2/addons/p5.sound.min.js"></script>
+  <style>
+    html,
+    body {
+      margin: 0;
+      padding: 0;
+    }
+
+    canvas {
+      display: block;
+    }
+  </style>
+
+</head>
+
+<body>
+  <script>
+
+    let video;
+
+    let tileX = 80;
+    let tileY = Math.floor(tileX * 0.75) * 0.5;
+    let storedX, storedY;
+    let lastDensity;
+    let pathStarted = false;
+    let slidVal;
+    let treshold;
+
+    function quantizeColor(c, levels) {
+      const r = red(c);
+      const g = green(c);
+      const b = blue(c);
+
+      const newR = Math.round((r / 255) * (levels - 1)) * (255 / (levels - 1));
+      const newG = Math.round((g / 255) * (levels - 1)) * (255 / (levels - 1));
+      const newB = Math.round((b / 255) * (levels - 1)) * (255 / (levels - 1));
+
+      return color(newR, newG, newB);
+    }
+
+    function quantizeBrightness(c, levels) {
+      const r = red(c);
+      const g = green(c);
+      const b = blue(c);
+
+      const newBr =
+        Math.round(((r + g + b) / 3 / 255) * (levels - 1)) * (255 / (levels - 1));
+      return newBr;
+    }
+
+    function setup() {
+      createCanvas(640, 480, SVG);
+      treshold = createSlider(0, 255, 20, 1);
+      video = createCapture(VIDEO);
+      video.size(tileX, tileY);
+      //   video.hide();
+    }
+
+    const divisY = (mapped) => {
+      if (mapped % 2 != 0) {
+        return int(mapped);
+      } else {
+        return int(max(mapped, 0) + 1);
+      }
+    };
+
+    function draw() {
+      //   clear();
+      strokeWeight(1);
+      noFill();
+      const tileW = width / tileX;
+      const tileH = height / tileY;
+      stroke(0);
+      if (frameCount % 10 == 0) {
+        clear();
+        background(255);
+        video.loadPixels();
+
+        beginShape();
+        for (let a = 0; a < tileX * tileY; a++) {
+          let ty = floor(a / tileX);
+          let tx = ty % 2 == 0
+            ? a % tileX
+            : floor(tileX - (a % tileX)) - 1;
+
+          let posX = ty % 2 == 0 ? tx * tileW - tileW * 0.5 : tx * tileW - tileW;
+          let posY = ty * tileH;
+
+          let index = (video.width - tx - 1 + ty * video.width) * 4;
+
+          let r = video.pixels[index + 0];
+          let g = video.pixels[index + 1];
+          let b = video.pixels[index + 2];
+
+          let pixelColor = color(r, g, b);
+          //       let pixelColor = video.get(
+          //         int(tx + (video.width / 2 - video.height) / 2),
+          //         int(ty)
+          //       );
+
+          let quantizedColor = quantizeColor(pixelColor, 5);
+          let quantizedBrightness = quantizeBrightness(pixelColor, 8);
+
+          stroke(quantizedBrightness);
+
+          //       const mappedValue = 3;// Math.floor(map(quantizeColor.hsba[2], 0, 1, 15, 1));
+          const mappedValue = Math.floor(
+            map(quantizedBrightness, 0, treshold.value(), 15, 1)
+          );
+
+          const divisX = 2;
+
+          const w = tileW * 0.85;
+          const divisor = max(1, divisY(mappedValue) - 1); // Avoid division by zero
+          const h = (height / tileY / divisor) * 0.9;
+          const density = divisY(mappedValue);
+
+          if (density >= 1) {
+            for (let y = 0; y < density; y++) {
+              let py = y * h;
+
+              for (let x = 0; x < divisX; x++) {
+                let xOffset = ty % 2 == 0 ? x * -w + w + w / 2 : x * w + w / 2;
+
+                let px;
+                if (y % 2 !== 0) {
+                  px = xOffset;
+                } else {
+                  px =
+                    ty % 2 == 0
+                      ? (divisX - 1 - x) * -w + w + w / 2
+                      : (divisX - 1 - x) * w + w / 2;
+                }
+
+                if (pathStarted) {
+                  let densDist = dist(px + posX, py + posY, storedX, storedY);
+                  let dX = int(density - lastDensity);
+
+                  if (dX !== 0 || densDist > (width / tileX) * 2) {
+                    curveVertex(storedX + w / 4, storedY);
+
+                    endShape();
+                    pathStarted = false;
+                  }
+                }
+                if (!pathStarted) {
+                  beginShape();
+                  pathStarted = true;
+                }
+                curveVertex(storedX + w / 4, storedY);
+
+                storedX = px + posX;
+                storedY = py + posY;
+                lastDensity = density;
+              }
+            }
+          }
+        }
+        endShape();
+      }
+    }
+
+    function keyPressed() {
+      if (key === "j") {
+        save("mySVG.svg"); // give file name
+      }
+    }
+
+
+  </script>
+</body>
+
+</html>

@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.6.0/p5.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.6.0/addons/p5.sound.min.js"></script>
+  <link rel="stylesheet" type="text/css" href="style.css">
+  <meta charset="utf-8" />
+
+</head>
+
+<body>
+  <main>
+    <h1>OpenAI API p5.js Template</h1>
+    <p>Type in your question and hit "Submit"</p>
+  </main>
+  <script>
+
+
+    // You can go to https://platform.openai.com/account/api-keys
+    // To get a API key
+    const API_KEY = "YOUR_API_KEY";
+    const url = "https://api.openai.com/v1/completions";
+    let options = {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${API_KEY}`,
+      },
+    };
+    let myButton, myInput, myOutput;
+    let myOutputText = '';
+
+    function setup() {
+      noCanvas();
+      background(200);
+
+      myButton = createButton("Submit");
+      myButton.position(512, 120);
+      myButton.mousePressed(getText);
+      myButton.elt.style.fontSize = "20px";
+
+      myInput = createInput("What is p5.js?");
+      myInput.position(0, 120);
+      myInput.size(500);
+      myInput.elt.style.fontSize = "20px";
+
+      myOutput = createElement("p", "Results:");
+      myOutput.position(0, 150);
+    }
+
+    function getText() {
+      const inputValue = myInput.value();
+      console.log("myinput", inputValue);
+      if (!inputValue || inputValue.length <= 0) {
+        return;
+      }
+      // You can go to https://platform.openai.com/examples to find one example you like
+      // And copy paste the sample optiosn with "node.js"
+      // Don't forget to still include inputValue in the prompt
+      options.body = JSON.stringify({
+        model: "text-davinci-003",
+        prompt: inputValue,
+        temperature: 0.7,
+        max_tokens: 64,
+        top_p: 1.0,
+        frequency_penalty: 0.0,
+        presence_penalty: 0.0,
+      });
+      fetch(url, options)
+        .then((response) => {
+          console.log("response", response);
+          const res = response.json();
+          return res;
+        })
+        .then((response) => {
+          if (response.choices && response.choices[0]) {
+            myOutputText += '<br/>Q:' + inputValue + '<br/>A:' + response.choices[0].text;
+            myOutput.html(myOutputText);
+          }
+        });
+    }
+
+  </script>
+</body>
+
+</html>

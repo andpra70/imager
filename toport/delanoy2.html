@@ -1,0 +1,71 @@
+<html>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"
+  integrity="sha512-M7nHCiNUOwFt6Us3r8alutZLm9qMt4s9951uo8jqO4UwJ1hziseL6O3ndFyigx6+LREfZqnhHxYjKRJ8ZQ69DQ=="
+  crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+
+
+<body>
+
+</body>
+
+<script>
+
+ 
+const canvas = document.createElement('canvas');
+const ctx = canvas.getContext('2d');
+const img = new Image();
+img.src =  './img/car8.jpg';
+img.onload = function() {
+  canvas.width = img.width;
+  canvas.height = img.height;
+  ctx.drawImage(img, 0, 0);
+  generateCircularScribble();
+};
+
+function generateCircularScribble() {
+  const points = []; // Array per i punti di campionamento (coordinate x e y)
+  const gridSize = 20; // Dimensione della griglia (numero di celle per riga/colonna)
+  const cellSize = canvas.width / gridSize;
+
+  for (let y = 0; y < gridSize; y++) {
+    for (let x = 0; x < gridSize; x++) {
+      const cellX = x * cellSize;
+      const cellY = y * cellSize;
+
+      const pixel = ctx.getImageData(cellX, cellY, 1, 1).data;
+      const grayValue = (pixel[0] + pixel[1] + pixel[2]) / 3;
+
+      points.push({ x: cellX + Math.random() * cellSize, y: cellY + Math.random() * cellSize, value: grayValue });
+    }
+  }
+
+  const delaunay = d3.Delaunay.from(points, d => d.x, d => d.y);
+  var triangles = delaunay.trianglePolygons();
+  triangles = Array.from(triangles);
+
+  const outputCanvas = document.createElement('canvas');
+  outputCanvas.width = canvas.width;
+  outputCanvas.height = canvas.height;
+  const outputCtx = outputCanvas.getContext('2d');
+
+  outputCtx.lineWidth = 1;
+
+  triangles.forEach(triangle => {
+    const centerX = (triangle[0][0] + triangle[1][0] + triangle[2][0]) / 3;
+    const centerY = (triangle[0][1] + triangle[1][1] + triangle[2][1]) / 3;
+
+    const radius = Math.sqrt(Math.pow(centerX - triangle[0][0], 2) + Math.pow(centerY - triangle[0][1], 2));
+
+    outputCtx.beginPath();
+    outputCtx.arc(centerX, centerY, radius, 0, 2 * Math.PI);
+    outputCtx.stroke();
+  });
+
+  // Inserisci il risultato nel DOM o esegui altre operazioni
+  document.body.appendChild(outputCanvas);
+}
+
+</script>
+
+</html>

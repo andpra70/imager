@@ -1,4 +1,5 @@
 import "../vendor/bluenoise.js";
+import "../vendor/ml5.js";
 import "../vendor/pnnquant.js";
 import "../vendor/simplify.js";
 import type { ImageTracerOptions } from "../vendor/imagetracer.1.2.6.js";
@@ -8,6 +9,7 @@ import roughRuntime, { type RoughPathOptions, type RoughApi } from "../vendor/ro
 import marchingSquaresRuntime, { type MarchingSquaresFn } from "../vendor/p5-marching-runtime";
 import { LiteGraph } from "litegraph.js";
 import type { GraphImage } from "../models/graphImage";
+import type { GraphMl5Data, Ml5Task } from "../models/graphMl5";
 import type { GraphPalette } from "../models/graphPalette";
 import type { GraphSvg } from "../models/graphSvg";
 import {
@@ -116,6 +118,259 @@ interface MarchingResult {
   pathCount: number;
   sampledWidth: number;
   sampledHeight: number;
+}
+
+interface Ml5ModelLike {
+  detect?: (input: CanvasImageSource, callback?: (result: unknown) => void) => unknown;
+  predict?: (input: CanvasImageSource, callback?: (result: unknown) => void) => unknown;
+  classify?: (input: CanvasImageSource, callback?: (result: unknown) => void) => unknown;
+}
+
+interface Ml5Runtime {
+  bodypose?: (options?: Record<string, unknown>, callback?: (model?: unknown) => void) => unknown;
+  handpose?: (options?: Record<string, unknown>, callback?: (model?: unknown) => void) => unknown;
+  facemesh?: (options?: Record<string, unknown>, callback?: (model?: unknown) => void) => unknown;
+  imageClassifier?: (
+    model: string,
+    callback?: (model?: unknown) => void,
+  ) => unknown;
+}
+
+function getMl5Runtime() {
+  const runtime = globalThis as { ml5?: Ml5Runtime };
+  if (!runtime.ml5) {
+    throw new Error("ml5 runtime is not available.");
+  }
+  return runtime.ml5;
+}
+
+function isPromiseLike(value: unknown): value is Promise<unknown> {
+  return Boolean(value) && typeof (value as { then?: unknown }).then === "function";
+}
+
+function normalizeMl5Result(result: unknown): unknown[] {
+  if (Array.isArray(result)) {
+    return result;
+  }
+  if (result === undefined || result === null) {
+    return [];
+  }
+  return [result];
+}
+
+function isGraphMl5Data(value: unknown): value is GraphMl5Data {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const candidate = value as Record<string, unknown>;
+  return (
+    typeof candidate.task === "string" &&
+    typeof candidate.modelKey === "string" &&
+    typeof candidate.summary === "object" &&
+    candidate.summary !== null
+  );
+}
+
+function collectMl5Landmarks(
+  value: unknown,
+  sink: Array<{ x: number; y: number }>,
+  depth = 0,
+  limit = 480,
+) {
+  if (depth > 5 || sink.length >= limit || value === null || value === undefined) {
+    return;
+  }
+
+  if (Array.isArray(value)) {
+    if (
+      value.length >= 2 &&
+      typeof value[0] === "number" &&
+      typeof value[1] === "number" &&
+      Number.isFinite(value[0]) &&
+      Number.isFinite(value[1])
+    ) {
+      sink.push({ x: value[0], y: value[1] });
+      return;
+    }
+    value.forEach((entry) => collectMl5Landmarks(entry, sink, depth + 1, limit));
+    return;
+  }
+
+  if (typeof value !== "object") {
+    return;
+  }
+
+  const record = value as Record<string, unknown>;
+  if (
+    typeof record.x === "number" &&
+    typeof record.y === "number" &&
+    Number.isFinite(record.x) &&
+    Number.isFinite(record.y)
+  ) {
+    sink.push({ x: record.x, y: record.y });
+  }
+
+  Object.values(record).forEach((entry) => collectMl5Landmarks(entry, sink, depth + 1, limit));
+}
+
+function summarizeMl5Labels(resultItems: unknown[]) {
+  const labels = new Set<string>();
+  resultItems.forEach((item) => {
+    if (!item || typeof item !== "object") {
+      return;
+    }
+    const record = item as Record<string, unknown>;
+    if (typeof record.label === "string") {
+      labels.add(record.label);
+    }
+    if (typeof record.className === "string") {
+      labels.add(record.className);
+    }
+  });
+  return Array.from(labels);
+}
+
+function drawMl5Overlay(input: GraphImage, points: Array<{ x: number; y: number }>) {
+  const preview = drawSourceToCanvas(input);
+  if (!points.length) {
+    return preview;
+  }
+
+  const context = preview.getContext("2d");
+  if (!context) {
+    return preview;
+  }
+
+  context.save();
+  context.globalCompositeOperation = "screen";
+  context.strokeStyle = "rgba(0, 255, 234, 0.9)";
+  context.fillStyle = "rgba(0, 255, 234, 0.5)";
+  context.lineWidth = Math.max(1, Math.min(preview.width, preview.height) / 320);
+  const radius = Math.max(1, Math.min(preview.width, preview.height) / 180);
+  points.slice(0, 480).forEach((point) => {
+    context.beginPath();
+    context.arc(point.x, point.y, radius, 0, Math.PI * 2);
+    context.fill();
+  });
+  context.restore();
+
+  return preview;
+}
+
+async function loadMl5Model(task: Ml5Task, modelKey: string): Promise<Ml5ModelLike> {
+  const ml5 = getMl5Runtime();
+  if (task === "imageclassifier") {
+    if (typeof ml5.imageClassifier !== "function") {
+      throw new Error("ml5 imageClassifier is not available in this bundle.");
+    }
+    const classifier = await new Promise<unknown>((resolve, reject) => {
+      let settled = false;
+      let instance: unknown;
+      const complete = (value?: unknown) => {
+        if (!settled) {
+          settled = true;
+          resolve(value);
+        }
+      };
+      try {
+        instance = ml5.imageClassifier?.(modelKey, (readyModel) => {
+          complete(readyModel ?? instance);
+        });
+        if (isPromiseLike(instance)) {
+          void instance.then(complete).catch((error) => reject(error));
+          return;
+        }
+        if (instance && typeof instance === "object") {
+          complete(instance);
+        }
+      } catch (error) {
+        reject(error);
+      }
+    });
+    if (!classifier || typeof classifier !== "object") {
+      throw new Error("Invalid ml5 imageClassifier instance.");
+    }
+    return classifier as Ml5ModelLike;
+  }
+
+  const loader = ml5[task];
+  if (typeof loader !== "function") {
+    throw new Error(`ml5 ${task} is not available.`);
+  }
+
+  const model = await new Promise<unknown>((resolve, reject) => {
+    let settled = false;
+    let instance: unknown;
+    const complete = (value?: unknown) => {
+      if (!settled) {
+        settled = true;
+        resolve(value);
+      }
+    };
+    try {
+      instance = loader({}, (readyModel) => {
+        complete(readyModel ?? instance);
+      });
+      if (isPromiseLike(instance)) {
+        void instance.then(complete).catch((error) => reject(error));
+        return;
+      }
+      if (instance && typeof instance === "object") {
+        const maybeReady = (instance as { ready?: unknown }).ready;
+        if (isPromiseLike(maybeReady)) {
+          void maybeReady
+            .then(() => complete(instance))
+            .catch((error) => reject(error));
+        } else {
+          complete(instance);
+        }
+      }
+    } catch (error) {
+      reject(error);
+    }
+  });
+
+  if (!model || typeof model !== "object") {
+    throw new Error(`Invalid ml5 ${task} model instance.`);
+  }
+
+  return model as Ml5ModelLike;
+}
+
+async function runMl5Inference(model: Ml5ModelLike, input: GraphImage): Promise<unknown[]> {
+  const methods: Array<keyof Ml5ModelLike> = ["detect", "predict", "classify"];
+  for (const methodName of methods) {
+    const method = model[methodName];
+    if (typeof method !== "function") {
+      continue;
+    }
+    const result = await new Promise<unknown>((resolve, reject) => {
+      let settled = false;
+      const finish = (value?: unknown) => {
+        if (!settled) {
+          settled = true;
+          resolve(value);
+        }
+      };
+      try {
+        const maybe = method.call(model, input, (value) => {
+          finish(value);
+        });
+        if (isPromiseLike(maybe)) {
+          void maybe.then(finish).catch((error) => reject(error));
+          return;
+        }
+        if (maybe !== undefined) {
+          finish(maybe);
+        }
+      } catch (error) {
+        reject(error);
+      }
+    });
+    return normalizeMl5Result(result);
+  }
+
+  throw new Error("No supported inference method found on ml5 model.");
 }
 
 function getImageTracer() {
@@ -903,6 +1158,18 @@ function drawPalettePreview(
 
 function downloadGraphPalette(palette: GraphPalette, filename: string) {
   const blob = new Blob([JSON.stringify(palette, null, 2)], {
+    type: "application/json",
+  });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function downloadGraphMl5Data(data: GraphMl5Data, filename: string) {
+  const blob = new Blob([JSON.stringify(data, null, 2)], {
     type: "application/json",
   });
   const url = URL.createObjectURL(blob);
@@ -2865,6 +3132,194 @@ class SvgSimplifyToolNode {
   }
 }
 
+class Ml5ExtractToolNode {
+  size: [number, number] = [280, 380];
+  properties!: Record<string, unknown>;
+  preview: GraphImage | null = null;
+  data: GraphMl5Data | null = null;
+  status = "idle";
+  executionMs: number | null = null;
+  isRendering = false;
+  lastSignature = "";
+  lastOptionsSignature = "";
+  renderToken = 0;
+  model: Ml5ModelLike | null = null;
+  modelTask: Ml5Task | null = null;
+  modelKey: string | null = null;
+  modelPromise: Promise<Ml5ModelLike> | null = null;
+
+  constructor() {
+    const node = this as unknown as PreviewAwareNode & Ml5ExtractToolNode;
+    getMl5Runtime();
+    node.title = createToolTitle("ML5 Extract");
+    node.properties = {
+      task: "handpose",
+      classifierModel: "MobileNet",
+    };
+    node.addInput("image", "image");
+    node.addOutput("image", "image");
+    node.addOutput("ml5", "ml5");
+    node.addWidget("combo", "Task", "handpose", (value) => {
+      node.properties.task = String(value);
+      node.clearModelCache();
+      notifyGraphStateChange(node);
+    }, { values: ["handpose", "facemesh", "bodypose", "imageclassifier"] });
+    node.addWidget("combo", "Classifier", "MobileNet", (value) => {
+      node.properties.classifierModel = String(value);
+      node.clearModelCache();
+      notifyGraphStateChange(node);
+    }, { values: ["MobileNet", "Darknet", "DoodleNet"] });
+    node.addWidget("button", "Reset model", null, () => {
+      node.clearModelCache();
+      notifyGraphStateChange(node);
+    });
+    node.refreshPreviewLayout = () => {
+      refreshNode(node, node.preview, 3);
+    };
+    node.refreshPreviewLayout();
+  }
+
+  clearModelCache(this: Ml5ExtractToolNode) {
+    this.model = null;
+    this.modelTask = null;
+    this.modelKey = null;
+    this.modelPromise = null;
+  }
+
+  getTask(this: Ml5ExtractToolNode): Ml5Task {
+    const value = String(this.properties.task ?? "handpose");
+    if (value === "bodypose" || value === "facemesh" || value === "imageclassifier") {
+      return value;
+    }
+    return "handpose";
+  }
+
+  getModelKey(this: Ml5ExtractToolNode) {
+    if (this.getTask() !== "imageclassifier") {
+      return "default";
+    }
+    return String(this.properties.classifierModel ?? "MobileNet");
+  }
+
+  getOrLoadModel(this: Ml5ExtractToolNode, task: Ml5Task, modelKey: string) {
+    if (this.model && this.modelTask === task && this.modelKey === modelKey) {
+      return Promise.resolve(this.model);
+    }
+    if (this.modelPromise && this.modelTask === task && this.modelKey === modelKey) {
+      return this.modelPromise;
+    }
+
+    this.model = null;
+    this.modelTask = task;
+    this.modelKey = modelKey;
+    this.modelPromise = loadMl5Model(task, modelKey)
+      .then((loadedModel) => {
+        if (this.modelTask === task && this.modelKey === modelKey) {
+          this.model = loadedModel;
+        }
+        return loadedModel;
+      })
+      .finally(() => {
+        if (this.modelTask === task && this.modelKey === modelKey) {
+          this.modelPromise = null;
+        }
+      });
+    return this.modelPromise;
+  }
+
+  onExecute(this: PreviewAwareNode & Ml5ExtractToolNode) {
+    const input = this.getInputData(0) ?? null;
+    if (!input) {
+      this.preview = null;
+      this.data = null;
+      this.status = "waiting image";
+      this.executionMs = null;
+      this.isRendering = false;
+      this.lastSignature = "";
+      this.lastOptionsSignature = "";
+      this.setOutputData(0, null);
+      this.setOutputData(1, null);
+      this.refreshPreviewLayout();
+      return;
+    }
+
+    const signature = getGraphImageSignature(input);
+    const task = this.getTask();
+    const modelKey = this.getModelKey();
+    const optionsSignature = JSON.stringify({ task, modelKey });
+
+    if (signature !== this.lastSignature || optionsSignature !== this.lastOptionsSignature) {
+      this.lastSignature = signature;
+      this.lastOptionsSignature = optionsSignature;
+      const renderToken = ++this.renderToken;
+      const start = performance.now();
+      this.isRendering = true;
+      this.status = `running ${task}`;
+      this.setDirtyCanvas(true, true);
+
+      void this.getOrLoadModel(task, modelKey)
+        .then((model) => runMl5Inference(model, input))
+        .then((raw) => {
+          if (renderToken !== this.renderToken) {
+            return;
+          }
+
+          const points: Array<{ x: number; y: number }> = [];
+          raw.forEach((item) => collectMl5Landmarks(item, points));
+          const labels = summarizeMl5Labels(raw);
+          this.data = {
+            task,
+            modelKey,
+            image: { width: input.width, height: input.height },
+            summary: {
+              itemCount: raw.length,
+              pointCount: points.length,
+              labels,
+            },
+            generatedAtIso: new Date().toISOString(),
+            raw,
+          };
+          this.preview = drawMl5Overlay(input, points);
+          this.executionMs = performance.now() - start;
+          this.status = "ready";
+          this.isRendering = false;
+          this.setDirtyCanvas(true, true);
+        })
+        .catch((error) => {
+          if (renderToken !== this.renderToken) {
+            return;
+          }
+          this.preview = input;
+          this.data = null;
+          this.executionMs = null;
+          this.status = error instanceof Error ? error.message : "ml5 error";
+          this.isRendering = false;
+          this.setDirtyCanvas(true, true);
+        });
+    }
+
+    this.setOutputData(0, this.preview ?? input);
+    this.setOutputData(1, this.data);
+    this.refreshPreviewLayout();
+  }
+
+  onDrawBackground(this: PreviewAwareNode & Ml5ExtractToolNode, context: CanvasRenderingContext2D) {
+    const layout = drawImagePreview(context, this, this.preview, { footerLines: 3 });
+    const summary = this.data?.summary;
+    context.save();
+    context.fillStyle = "rgba(255,255,255,0.65)";
+    context.font = "12px sans-serif";
+    context.fillText(`${this.getTask()} | ${this.status}`, 10, layout.footerTop + 12);
+    context.fillText(
+      `items ${summary?.itemCount ?? 0} | points ${summary?.pointCount ?? 0}`,
+      10,
+      layout.footerTop + 30,
+    );
+    context.fillText(formatExecutionInfo(this.executionMs), 10, layout.footerTop + 48);
+    context.restore();
+  }
+}
+
 class OutputImageNode {
   image: GraphImage | null = null;
   size: [number, number] = [320, 300];
@@ -3002,6 +3457,57 @@ class OutputPaletteNode {
   }
 }
 
+class OutputMl5Node {
+  data: GraphMl5Data | null = null;
+  size: [number, number] = [320, 240];
+
+  constructor() {
+    const node = this as unknown as PreviewAwareNode & OutputMl5Node;
+    node.title = "ML5";
+    node.properties = {};
+    node.addInput("ml5", "ml5");
+    node.addWidget("button", "Save ML5 JSON", null, () => {
+      if (node.data) {
+        downloadGraphMl5Data(node.data, "plotterfun-ml5.json");
+      }
+    });
+    node.refreshPreviewLayout = () => {
+      node.setDirtyCanvas(true, true);
+    };
+    node.refreshPreviewLayout();
+  }
+
+  onExecute(this: PreviewAwareNode & OutputMl5Node) {
+    const value = this.getInputData(0) as unknown;
+    this.data = isGraphMl5Data(value) ? value : null;
+    this.refreshPreviewLayout();
+  }
+
+  onDrawBackground(this: PreviewAwareNode & OutputMl5Node, context: CanvasRenderingContext2D) {
+    const padding = 10;
+    const headerHeight = 34 + (this.widgets?.length ?? 0) * 28;
+    const lines = this.data
+      ? [
+          `task: ${this.data.task}`,
+          `items: ${this.data.summary.itemCount}`,
+          `points: ${this.data.summary.pointCount}`,
+          `labels: ${this.data.summary.labels.slice(0, 3).join(", ") || "-"}`,
+        ]
+      : ["no ml5 data", "connect ML5 output"];
+    this.size = [320, headerHeight + padding * 2 + lines.length * 18 + 8];
+
+    context.save();
+    context.fillStyle = "#121212";
+    context.fillRect(padding, headerHeight, this.size[0] - padding * 2, this.size[1] - headerHeight - padding);
+    context.fillStyle = "rgba(255,255,255,0.75)";
+    context.font = "12px sans-serif";
+    lines.forEach((line, index) => {
+      context.fillText(line, padding + 8, headerHeight + 18 + index * 18);
+    });
+    context.restore();
+  }
+}
+
 export function registerImageNodes() {
   if (registered) {
     return;
@@ -3028,8 +3534,10 @@ export function registerImageNodes() {
   LiteGraph.registerNodeType("tools/marching", MarchingToolNode as unknown as NodeCtor);
   LiteGraph.registerNodeType("tools/rough", RoughToolNode as unknown as NodeCtor);
   LiteGraph.registerNodeType("tools/svg-simplify", SvgSimplifyToolNode as unknown as NodeCtor);
+  LiteGraph.registerNodeType("tools/ml5-extract", Ml5ExtractToolNode as unknown as NodeCtor);
   LiteGraph.registerNodeType("output/image", OutputImageNode as unknown as NodeCtor);
   LiteGraph.registerNodeType("output/palette", OutputPaletteNode as unknown as NodeCtor);
   LiteGraph.registerNodeType("output/svg", OutputSvgNode as unknown as NodeCtor);
+  LiteGraph.registerNodeType("output/ml5", OutputMl5Node as unknown as NodeCtor);
   registered = true;
 }

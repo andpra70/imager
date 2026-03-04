@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/0.7.2/p5.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/0.7.2/addons/p5.dom.min.js"></script>
+    <script src="../js/p5.geolocation.js"></script>
+    <style>
+        html,
+        body {
+            margin: 0;
+            padding: 0;
+        }
+
+        canvas {
+            display: block;
+        }
+    </style>
+
+</head>
+
+<body>
+    <script>
+
+        var locationData;
+        function preload() {
+            locationData = getCurrentPosition();
+        }
+
+        function setup() {
+            print(locationData.latitude)
+            print(locationData.longitude)
+            print(locationData.accuracy)
+            print(locationData.altitude)
+            print(locationData.altitudeAccuracy)
+            print(locationData.heading)
+            print(locationData.speed)
+        }
+
+    </script>
+</body>
+
+</html>

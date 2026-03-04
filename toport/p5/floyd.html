@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/addons/p5.sound.min.js"></script>
+    <link rel="stylesheet" type="text/css" href="style.css">
+    <meta charset="utf-8" />
+
+  </head>
+  <body>
+    <main>
+    </main>
+    <script>
+        // https://surma.dev/things/ditherpunk/
+let img;
+let threshold = 128;
+
+function preload() {
+  // Load an image
+  img = loadImage('../img/car8.jpg');
+}
+
+function setup() {
+  createCanvas(img.width, img.height);
+  pixelDensity(1)
+  noLoop();
+}
+
+function draw() {
+  background(255);
+
+  img.loadPixels();
+  loadPixels();
+
+  for (let y = 0; y < img.height; y++) {
+    for (let x = 0; x < img.width; x++) {
+      let index = (x + y * img.width) * 4;
+      let r = img.pixels[index];
+      let g = img.pixels[index + 1];
+      let b = img.pixels[index + 2];
+
+      let bright = (r + g + b) / 3;
+
+      let newColor = bright > threshold ? 255 : 0;
+      let err = bright - newColor;
+
+      pixels[index] = newColor;
+      pixels[index + 1] = newColor;
+      pixels[index + 2] = newColor;
+      pixels[index + 3] = 255;
+
+      distributeError(x + 1, y, err * 7 / 16);
+      distributeError(x - 1, y + 1, err * 3 / 16);
+      distributeError(x, y + 1, err * 5 / 16);
+      distributeError(x + 1, y + 1, err * 1 / 16);
+    }
+  }
+
+  updatePixels();
+}
+
+function distributeError(x, y, err) {
+  if (x >= 0 && x < img.width && y >= 0 && y < img.height) {
+    let index = (x + y * img.width) * 4;
+    img.pixels[index] += err;
+    img.pixels[index + 1] += err;
+    img.pixels[index + 2] += err;
+  }
+}
+
+    </script>
+  </body>
+</html>

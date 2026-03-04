@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <script src="../js/pnnquant.js"></script>
+
+</head>
+
+<body>
+  <main>
+  </main>
+  <img id="img" src="./img/legs6.jpg">
+
+  <script>
+
+    function quant() {
+
+      let img=document.getElementById("img");
+      let width=img.width;
+      let height=img.height;
+
+
+      var opts = {
+        colors: 2,            /*  desired palette size  */
+        dithering: true,        /*  whether to use dithering or not  */
+        pixels: null,         /*  source pixels in RGBA 32 bits  */
+        alphaThreshold: 0,      /*  consider as transparent if alpha value <= 0, default is 0  */
+        width: width, 
+        height: height
+      };
+
+      var can = document.createElement("canvas");
+	    can.width = width;
+	    can.height = height;
+      var ctx = can.getContext('2d');
+      ctx.drawImage(img, 0, 0);
+      var imgd = ctx.getImageData(0, 0, can.width, can.height);
+      ctx.setTransform(1, 0, 0, 1, 0.49, 0.49);       // offset 0.49 pixel to handle sub pixeling
+      opts.pixels = new Uint32Array(imgd.data.buffer);
+
+      
+      var quant = new PnnQuant(opts);
+      /*  reduce image  */
+      var img8 = quant.quantizeImage();               /*  Uint32Array  */
+      var pal8 = quant.getPalette();                  /*  RGBA 32 bits of ArrayBuffer  */
+      var indexedPixels = quant.getIndexedPixels();   /*  colors > 256 ? Uint16Array : Uint8Array  */
+      const result = quant.getResult();
+
+      ctx.drawImage(oc, 0, 0, cur.width, cur.height, 0, 0, can.width, can.height);
+
+      opts.paletteOnly = true;
+      opts.palette = pal8 = quant.quantizeImage();
+      var hc = new GilbertCurve(opts);
+      return { img8: hc.dither(), pal8: pal8, indexedPixels: hc.getIndexedPixels(), transparent: quant.getTransparentIndex(), type: quant.getImgType() };
+    }
+
+    quant();
+
+  </script>
+</body>
+
+</html>

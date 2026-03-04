@@ -1,0 +1,314 @@
+<html>
+  
+<script src="./js/simplify.js"></script>
+
+<body>
+
+</body>
+
+
+<script>
+
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d');
+
+  const canvas2 = document.createElement('canvas');
+  const ctx2 = canvas2.getContext('2d');
+
+  const canvas3 = document.createElement('canvas');
+  const ctx3 = canvas3.getContext('2d');
+
+  const canvas4 = document.createElement('canvas');
+  const ctx4 = canvas4.getContext('2d');
+
+  const img = new Image();
+  //img.src = 'giacometti.jpeg';
+  img.src = './img/sofia.jpg';
+
+  img.onload = function () {
+    canvas.width = img.width;
+    canvas.height = img.height;
+    canvas2.width = img.width;
+    canvas2.height = img.height;
+    canvas3.width = img.width;
+    canvas3.height = img.height;
+    canvas4.width = img.width;
+    canvas4.height = img.height;
+    ctx.drawImage(img, 0, 0);
+    ctx2.drawImage(img, 0, 0);
+    ctx3.clearRect(0, 0, img.width, img.height)
+
+    let imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    var data = {
+      img: img,
+      width: canvas.width,
+      height: canvas.height,
+      ctx: ctx,
+      ctx2: ctx2,
+      imageData: imageData
+    };
+    darkest(data);
+  };
+  document.body.appendChild(canvas);
+  document.body.appendChild(canvas2);
+  document.body.appendChild(canvas3);
+  document.body.appendChild(canvas4);
+
+  function darkest(data) {
+    console.log("darkest() start");
+
+    let rgba = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+    let gridSize = ~~(canvas.width/30);
+    const squiggleMaxLength = 1500;
+    const lineDensity = 0.01;
+    const penWidth = 2;
+    const alpha = 0.1;
+    const lineMaxLimit = 3000;
+
+    console.log("darkest() gridSize=",gridSize);
+
+    function calculateLuminance(r, g, b) {
+      return 0.299 * r + 0.587 * g + 0.114 * b;
+    }
+
+    function findDarkestPixel(imageData) {
+      let darkestPixel = { x: 0, y: 0, luminance: Number.MAX_VALUE };
+
+      for (let y = 0; y < imageData.height; y++) {
+        for (let x = 0; x < imageData.width; x++) {
+          const index = (y * imageData.width + x) * 4;
+          const luminance = calculateLuminance(imageData.data[index], imageData.data[index + 1], imageData.data[index + 2]);
+          if (luminance < darkestPixel.luminance) {
+            darkestPixel = { x, y, luminance };
+          }
+        }
+      }
+      console.log("findDarkestPixel() ", darkestPixel);
+      return darkestPixel;
+    }
+
+    function isValidPixel(row, col) {
+      return row >= 0 && row < canvas.height && col >= 0 && col < canvas.width;
+    }
+
+    function getValidNeighbors(pixel) {
+      // console.log("getValidNeighbors() ",pixel);
+      const neighbors = [];
+      const directions = [[-1, 0], [-1,-1], [1, 0], [1,1], [-1,1], [1,-1], [0, -1], [0, 1]]; // Up, Down, Left, Right
+
+      for (const dir of directions) {
+        const newRow = pixel.y + dir[0];
+        const newCol = pixel.x + dir[1];
+
+        if (isValidPixel(newRow, newCol)) {
+          neighbors.push({ x: newCol, y: newRow });
+        }
+      }
+
+      return neighbors;
+    }
+
+    function calculateLuminance(rgba, x, y) {
+      const index = (y * canvas.width + x) * 4;
+      const r = rgba[index];
+      const g = rgba[index + 1];
+      const b = rgba[index + 2];
+      return 0.299 * r + 0.587 * g + 0.114 * b;
+    }
+
+    function findDarkestNeighbor(neighbors) {
+      let darkestNeighbor = neighbors[0];
+      let darkestLuminance = calculateLuminance(rgba, darkestNeighbor.x, darkestNeighbor.y);
+
+      for (const neighbor of neighbors) {
+        const luminance = calculateLuminance(rgba, neighbor.x, neighbor.y);
+        if (luminance < darkestLuminance) {
+          darkestLuminance = luminance;
+          darkestNeighbor = neighbor;
+        }
+      }
+
+      return darkestNeighbor;
+    }
+
+    function getValidUnvisitedNeighbors(pixel, visitedPixels) {
+      const neighbors = getValidNeighbors(pixel);
+      return neighbors.filter(neighbor => !visitedPixels.has(neighbor.x + ',' + neighbor.y));
+    }
+
+    function findNextDarkestSquiggle(startPixel,squiggleMaxLength) {
+      const squigglePath = [startPixel];
+      let currentPixel = startPixel;
+      const visitedPixels = new Set();
+
+      for (let step = 0; step < squiggleMaxLength; step++) {
+        const neighbors = getValidUnvisitedNeighbors(currentPixel, visitedPixels);
+        if (neighbors.length === 0) {
+          break; // Nessun vicino valido non visitato trovato
+        }
+
+        const darkestNeighbor = findDarkestNeighbor(neighbors);
+        squigglePath.push(darkestNeighbor);
+        visitedPixels.add(darkestNeighbor.x + ',' + darkestNeighbor.y);
+        currentPixel = darkestNeighbor;
+      }
+
+      return squigglePath;
+    }
+
+    function calculateGridLuminance(rgba, startX, startY, gridSize) {
+      let totalLuminance = 0;
+
+      for (let y = startY; y < startY + gridSize; y++) {
+        for (let x = startX; x < startX + gridSize; x++) {
+          totalLuminance += calculateLuminance(rgba, x, y);
+        }
+      }
+
+      return totalLuminance / (gridSize * gridSize);
+    }
+
+    function findRandomArea(rgba) {
+      const areas = [];
+      var top=0;
+
+      for( let i=0;i<100;i++) {
+        const x=~~(Math.random()*canvas.width);
+        const y=~~(Math.random()*canvas.height);
+        const luminance = calculateGridLuminance(rgba, x, y, gridSize);
+        if( luminance>top ) {
+          top=luminance;
+          areas.push({ x, y, luminance });
+        }
+      }
+
+      areas.sort((a, b) => a.luminance - b.luminance);
+      return areas.slice(0, 4); // Restituisci le 4 aree più scure
+    }
+
+    function findDarkestArea(rgba) {
+      const areas = [];
+
+      for (let y = 0; y < canvas.height; y += gridSize) {
+        for (let x = 0; x < canvas.width; x += gridSize) {
+          const luminance = calculateGridLuminance(rgba, x, y, gridSize);
+          areas.push({ x, y, luminance });
+        }
+      }
+
+      areas.sort((a, b) => a.luminance - b.luminance);
+      return areas.slice(0, 4); // Restituisci le 4 aree più scure
+    }
+
+    function findDarkestPixelInArea(rgba,darkestArea) {
+      let darkestPixel = { x: darkestArea.x, y: darkestArea.y, luminance: Number.MAX_VALUE };
+
+      for (let y = darkestArea.y; y < darkestArea.y + gridSize; y++) {
+        for (let x = darkestArea.x; x < darkestArea.x + gridSize; x++) {
+          const luminance = calculateLuminance(rgba, x, y);
+          if (luminance < darkestPixel.luminance) {
+            darkestPixel = { x, y, luminance };
+          }
+        }
+      }
+
+      return darkestPixel;
+    }
+
+    function drawBrightenedSquiggle(path) {
+      //      console.log("drawBrightenedSquiggle() start");
+      ctx.save();
+      ctx.strokeStyle = `rgba(255,255,255,${alpha})`; // '#FFFFFF11';
+      ctx.lineWidth = penWidth; // Larghezza della linea
+
+      ctx.beginPath();
+      ctx.moveTo(path[0].x, path[0].y);
+      for (let i = 1; i < path.length; i++) {
+        ctx.lineTo(path[i].x, path[i].y);
+      }
+      ctx.stroke();
+
+      ctx.restore();
+    }
+
+    var pathWhole=[];
+
+    function drawSquiggle(path) {
+      //console.log("drawSquiggle 1", path.length );
+      path=simplify(path,3,true);
+      pathWhole=pathWhole.concat( path );
+      //console.log("drawSquiggle 2", path.length );
+      // ctx3.globalCompositeOperation = 'source-over'; // Ripristina la modalità di composizione predefinita
+      ctx3.save();
+      ctx3.strokeStyle = `rgba(0,0,0,${alpha})`; // '#FFFFFF11';
+      // ctx3.strokeStyle = '#00000011';
+      ctx3.lineWidth = penWidth; // Larghezza della linea
+
+      ctx3.beginPath();
+      ctx3.moveTo(path[0].x, path[0].y);
+      for (let i = 1; i < path.length; i++) {
+        ctx3.lineTo(path[i].x, path[i].y);
+      }
+      ctx3.stroke();
+
+      ctx3.restore();
+    }
+
+    function drawWholeSquiggle(path) {
+      // path=simplify(path,.5,false);
+      console.log("drawWholeSquiggle() end",path);
+
+      ctx4.save();
+      ctx4.strokeStyle = `rgba(0,0,0,${alpha})`; // '#FFFFFF11';
+      ctx4.lineWidth = penWidth; // Larghezza della linea
+      ctx4.beginPath();
+      ctx4.moveTo(path[0].x, path[0].y);
+      for (let i = 1; i < path.length; i++) {
+        ctx4.lineTo(path[i].x, path[i].y);
+      }
+      ctx4.stroke();
+      ctx4.restore();
+    }
+
+
+    function applySquiggleArt() {
+      console.log("ApplySquiggleArt() start");
+      let linesDrawn = 0;
+
+      while (linesDrawn < lineMaxLimit) {
+        rgba = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+
+        const darkestArea = findDarkestArea(rgba);
+        //const darkestArea = findRandomArea(rgba);
+        const darkestPixel = findDarkestPixelInArea(rgba,darkestArea[0]);
+        const squigglePath = findNextDarkestSquiggle(darkestPixel, squiggleMaxLength);
+
+        if (!squigglePath) {
+          break;
+        }
+
+        drawSquiggle(squigglePath);
+        drawBrightenedSquiggle(squigglePath);
+        linesDrawn++;
+
+        if( (linesDrawn%100)===0 ) { 
+          console.log("applySquiggleArt", linesDrawn);
+        }
+
+      }
+      console.log("ApplySquiggleArt() end");
+
+      drawWholeSquiggle(pathWhole);
+
+    }
+
+    applySquiggleArt();
+
+  }
+
+
+
+
+</script>
+
+</html>

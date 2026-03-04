@@ -1,0 +1,269 @@
+<html>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"
+  integrity="sha512-M7nHCiNUOwFt6Us3r8alutZLm9qMt4s9951uo8jqO4UwJ1hziseL6O3ndFyigx6+LREfZqnhHxYjKRJ8ZQ69DQ=="
+  crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+
+<script src="js/salesman.js"></script>
+
+<body>
+
+</body>
+
+
+<script>
+
+
+
+  ///TSP
+  var TSP = function () {
+
+    function TSP(vertices, temperature, coolingRate, maxIteration, ctx) {
+
+      this.vertices = vertices;
+      this.temperature = temperature || 10;
+      this.coolingRate = coolingRate || .5;
+      maxIteration = maxIteration || 5;
+
+      this.count = vertices.length;
+
+      this.order = vertices.map(function (o, i) { return i; });
+      this.minimalorder = this.order.concat();
+      this.pathlength = this.minimallength = this.length();
+
+      var sameCount = 0, cycle = 0;
+      var i2, j2, i1, j1, k1, k2, d;
+
+      while (sameCount < maxIteration) {
+
+        a = false;
+        for (j2 = 0; j2 < this.count * this.count; j2++) {
+
+          i1 = parseInt(this.count * Math.random());
+          j1 = parseInt(this.count * Math.random());
+
+          d = this.distance(i1, i1 + 1) + this.distance(j1, j1 + 1) - this.distance(i1, j1) - this.distance(i1 + 1, j1 + 1);
+
+          if (this.anneal(d)) {
+            if (j1 < i1) {
+              k1 = i1;
+              i1 = j1;
+              j1 = k1;
+            }
+            var l = j1;
+            for (l = j1; l > i1; l--) {
+              i2 = this.order[i1 + 1];
+              this.order[i1 + 1] = this.order[l];
+              this.order[l] = i2;
+              i1++;
+            }
+          }
+        }
+
+        this.pathlength = this.length();
+        //console.log( a, this.pathlength );
+
+        if (this.pathlength < this.minimallength) {
+
+          this.minimallength = this.pathlength;
+
+          for (k2 = 0; k2 < this.count; k2++) {
+            this.minimalorder[k2] = this.order[k2];
+          }
+          sameCount = 0;
+        } else {
+          sameCount++;
+        }
+
+        this.temperature *= this.coolingRate;
+        cycle++;
+        if (ctx) this.draw(ctx);
+      }
+      //console.log( this.length(), this.minimalorder )
+    }
+
+    //Called to determine if annealing should take place.
+    function anneal(d) {
+      if (this.temperature < 0.0) return d > 0.0;
+      return Math.random() < Math.exp(d / this.temperature);
+    }
+
+    function length() {
+      var d = 0;
+      for (var i = 1; i <= this.count; i++) {
+        d += this.distance(i, i - 1);
+      }
+      return d;
+    }
+
+    function distance(i, j) {
+      var p1 = this.vertices[this.order[i % this.count]];
+      var p2 = this.vertices[this.order[j % this.count]];
+      var dx = p1.x - p2.x;
+      var dy = p1.y - p2.y;
+      return Math.sqrt(dx * dx + dy * dy);
+    }
+
+    function getSortedArray() {
+      var tmp = [];
+      for (var i = 0; i < this.count; i++) {
+
+        tmp.push(this.vertices[this.minimalorder[i]]);
+      }
+      return tmp;
+    }
+
+    function draw(ctx) {
+
+      ctx.beginPath();
+      ctx.moveTo(this.vertices[0].x, this.vertices[0].y);
+      for (var i = 0; i < this.count; i++) {
+        var p0 = this.vertices[this.minimalorder[i]];
+        ctx.lineTo(p0.x, p0.y);
+      }
+      ctx.closePath();
+      ctx.stroke();
+
+    }
+
+    var _p = TSP.prototype;
+    _p.anneal = anneal;
+    _p.length = length;
+    _p.distance = distance;
+    _p.getSortedArray = getSortedArray;
+    _p.draw = draw;
+
+    return TSP;
+
+  }();
+  ///////////////////////////////////////////
+
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d');
+  const img = new Image();
+  img.src = './img/sofia.jpg';
+
+  img.onload = function () {
+    let width = img.width;
+    let height = img.height;
+    canvas.width = width;
+    canvas.height = height;
+    ctx.drawImage(img, 0, 0);
+    document.body.appendChild(canvas);
+
+    console.log('loaded!');
+
+    let event = {};
+    const rgba = ctx.getImageData(0, 0, width, height).data;
+    const data = new Float64Array(width * height);
+    for (let i = 0, n = rgba.length / 4; i < n; ++i) data[i] = Math.max(0, 1 - rgba[i * 4] / 254);
+    event.rgba = rgba;
+    event.data = data;
+    event.width = width;
+    event.height = height;
+    event.n = width * height / 30;
+
+    generateStippledGrid(event);
+  };
+
+  function tsp(ctx,event) {
+    ctx.clearRect(0, 0, event.width, event.height);
+    ctx.strokeStyle = "#000000";
+    ctx.globalAlpha = .05;
+    var points = event.points;
+    var tsp = new TSP(points, 10, 0.95, 3, ctx);
+
+    ctx.strokeStyle = "#ff0000";
+    ctx.lineWidth = 2;
+    ctx.globalAlpha = 1;
+    tsp.draw(ctx);
+
+    /*
+    var points = event.points;
+    var tsp = [];
+    for (let i = 0, n = points.length; i < n; i += 2) {
+      tsp.push({ x: points[i], y: points[i + 1] });
+    }
+    event.tsp = tsp;
+    var result = salesman.solve(tsp);
+    event.tsp_result = result;
+    console.log(result);
+    */
+  }
+
+  function messaged(context, event) {
+    context.fillStyle = "#fff";
+    context.fillRect(0, 0, event.width, event.height);
+    context.beginPath();
+    var points = event.points;
+    for (let i = 0, n = points.length; i < n; i += 2) {
+      const x = points[i], y = points[i + 1];
+      context.moveTo(x + 1.5, y);
+      context.arc(x, y, 1.5, 0, 2 * Math.PI);
+    }
+    context.fillStyle = "#000";
+    context.fill();
+
+    tsp(context,event);
+  }
+
+  function generateStippledGrid(event) {
+
+    var iter = 80;
+
+    const { data, width, height, n } = event;
+    const points = new Float64Array(n * 2);
+    const c = new Float64Array(n * 2);
+    const s = new Float64Array(n);
+
+    // Initialize the points using rejection sampling.
+    for (let i = 0; i < n; ++i) {
+      for (let j = 0; j < 30; ++j) {
+        const x = points[i * 2] = Math.floor(Math.random() * width);
+        const y = points[i * 2 + 1] = Math.floor(Math.random() * height);
+        if (Math.random() < data[y * width + x]) break;
+      }
+    }
+
+    const delaunay = new d3.Delaunay(points);
+    const voronoi = delaunay.voronoi([0, 0, width, height]);
+
+    for (let k = 0; k < iter; ++k) {
+
+      // Compute the weighted centroid for each Voronoi cell.
+      c.fill(0);
+      s.fill(0);
+      for (let y = 0, i = 0; y < height; ++y) {
+        for (let x = 0; x < width; ++x) {
+          const w = data[y * width + x];
+          i = delaunay.find(x + 0.5, y + 0.5, i);
+          s[i] += w;
+          c[i * 2] += w * (x + 0.5);
+          c[i * 2 + 1] += w * (y + 0.5);
+        }
+      }
+
+      // Relax the diagram by moving points to the weighted centroid.
+      // Wiggle the points a little bit so they don’t get stuck.
+      const w = Math.pow(k + 1, -0.8) * 10;
+      for (let i = 0; i < n; ++i) {
+        const x0 = points[i * 2], y0 = points[i * 2 + 1];
+        const x1 = s[i] ? c[i * 2] / s[i] : x0, y1 = s[i] ? c[i * 2 + 1] / s[i] : y0;
+        points[i * 2] = x0 + (x1 - x0) * 1.8 + (Math.random() - 0.5) * w;
+        points[i * 2 + 1] = y0 + (y1 - y0) * 1.8 + (Math.random() - 0.5) * w;
+      }
+
+      voronoi.update();
+
+      event.points = points;
+
+    }
+
+    messaged(ctx, event);
+
+
+  }
+
+
+</script>
+
+</html>

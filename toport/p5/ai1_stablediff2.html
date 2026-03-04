@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.5.0/p5.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.5.0/addons/p5.sound.min.js"></script>
+  <link rel="stylesheet" type="text/css" href="style.css">
+  <meta charset="utf-8" />
+
+</head>
+
+<body>
+  <main>
+  </main>
+  <script>
+
+let url = "https://dezgo.p.rapidapi.com/text2image";
+
+let encodedParams = {};
+let options = {
+  method: "POST",
+  headers: {
+    "content-type": "application/x-www-form-urlencoded",
+    "X-RapidAPI-Key": "6f13b60073msha5b5c10f8936817p1edcedjsna7295272c5a4",
+    "X-RapidAPI-Host": "dezgo.p.rapidapi.com",
+  },
+};
+let myButton, myInput;
+
+function setup() {
+  createCanvas(512, 512);
+  background(200);
+  
+  myButton = createButton('Submit');
+  myButton.position(512, 520);
+  myButton.mousePressed(getImage);
+  myButton.elt.style.fontSize = '20px';
+  
+  myInput = createInput("an astronaut riding a horse, digital art, highly-detailed masterpiece trending HQ");
+  myInput.position(0, 520);
+  myInput.size(500);
+  myInput.elt.style.fontSize = '20px';
+
+  encodedParams = new URLSearchParams();
+  encodedParams.append(
+    "prompt",
+    "an astronaut riding a horse, digital art, highly-detailed masterpiece trending HQ"
+  );
+  encodedParams.append("guidance", "7.5");
+  encodedParams.append("sampler", "k_lms");
+  encodedParams.append("steps", "50");
+  encodedParams.append("width", "512");
+  encodedParams.append("height", "512");
+}
+
+function getImage() {
+  const inputValue = myInput.value();
+  console.log('myinput', inputValue);
+  if (!inputValue || inputValue.length <= 0) {
+    return;
+  }
+  encodedParams.set('prompt', inputValue);
+  console.log('encodedParams', encodedParams)
+  
+  options.body = encodedParams;
+  fetch(url, options)
+    .then((response) => {
+      console.log('response', response)
+      const blob = response.blob();
+      return blob;
+    })
+    .then((blob) => blobToB64(blob))
+    .then((imageData) => {
+      console.log('imageData', imageData)
+      drawImage(imageData);
+    })
+    .catch((err) => console.error(err));
+}
+
+const blobToB64 = (blob) => {
+  return new Promise(resolve => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = reader.result;
+      resolve(dataUrl);
+    };
+    reader.readAsDataURL(blob);
+  });
+};
+
+function drawImage(base64Data) {
+  background(255);
+  var img;
+  var raw = new Image();
+  raw.src = base64Data;
+  raw.onload = function() {
+    img = createImage(raw.width, raw.height);
+    img.drawingContext.drawImage(raw, 0, 0);
+    image(img, 0, 0, 512, 512); // draw the image, etc here
+  }
+}
+
+
+  </script>
+</body>
+
+</html>

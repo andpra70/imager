@@ -25,7 +25,9 @@ export const nodePalette: NodePaletteItem[] = [
   { type: "tools/marching", glyph: "ISO", shortLabel: "Marching", tooltip: "MARCHING: estrae superfici di livello dall'immagine (output raster + SVG) con preset Fast/Quality." },
   { type: "tools/rough", glyph: "RFX", shortLabel: "Rough", tooltip: "ROUGH: applica stile rough a un SVG in ingresso e produce un nuovo SVG." },
   { type: "tools/svg-simplify", glyph: "SMP", shortLabel: "Simplify", tooltip: "SVG SIMPLIFY: semplifica path e minifica SVG riducendo il peso mantenendo i colori." },
+  { type: "tools/ml5-extract", glyph: "ML5", shortLabel: "ML5", tooltip: "ML5 EXTRACT: estrae bodypose/handpose/facemesh/imageclassifier (se disponibile) da un'immagine." },
   { type: "output/image", glyph: "OUT", shortLabel: "Output", tooltip: "OUTPUT: mostra il risultato finale e permette il download." },
   { type: "output/palette", glyph: "PAL", shortLabel: "Palette", tooltip: "PALETTE: visualizza e salva i colori in ingresso." },
   { type: "output/svg", glyph: "S/O", shortLabel: "SVG Out", tooltip: "SVG OUTPUT: mostra un SVG in input e permette il download." },
+  { type: "output/ml5", glyph: "M/O", shortLabel: "ML5 Out", tooltip: "ML5 OUTPUT: mostra il riepilogo dei dati ML5 e permette il download JSON." },
 ];

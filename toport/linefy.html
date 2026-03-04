@@ -1,0 +1,1708 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/font-awesome/4.5.0/css/font-awesome.min.css">
+    <title>Create Line Art - Linify</title>
+</head>
+<style>
+    * {
+        margin: 0px;
+        padding: 0px;
+        font-family: "Lucida Grande", "Lucida Sans Unicode", sans-serif;
+        color: white;
+    }
+
+    a {
+        text-decoration: none;
+        color: #0095dd;
+    }
+
+    p {
+        width: 40em;
+        margin-left: 4em;
+    }
+
+    h2 {
+        margin-left: 1.5em;
+    }
+
+    a:hover {
+        text-decoration: underline;
+    }
+
+    body {
+        background-color: rgb(55, 55, 55);
+        text-align: center;
+    }
+
+    #wrapper {
+        display: inline-block;
+        max-width: 1000px;
+    }
+
+    #content {
+        display: inline-block;
+        margin-top: 86px;
+        background-color: rgb(110, 110, 110);
+        border-radius: 8px;
+        padding: 5px;
+        box-shadow: 2px 4px 4px rgba(0, 0, 0, 0.3);
+    }
+
+    #insp {
+        display: inline-block;
+        background-color: rgb(110, 110, 110);
+        border-radius: 8px;
+        padding: 5px;
+        box-shadow: 2px 4px 4px rgba(0, 0, 0, 0.3);
+        max-width: 892px;
+        margin: 12px;
+    }
+
+    #inspHeader {
+        text-align: left;
+        font-size: 1.3em;
+        font-weight: 700;
+        margin-left: 20px;
+    }
+
+    #drawWrapper {
+        display: inline-block;
+        position: relative;
+    }
+
+    #rightCol {
+        display: inline-block;
+        vertical-align: top;
+        margin: 15px;
+    }
+
+    #sizeDiv {
+        position: relative;
+        text-align: right;
+        margin-top: -24px;
+    }
+
+    #size {
+        cursor: pointer;
+        border: none;
+        background-color: transparent;
+        display: inline-block;
+        vertical-align: top;
+    }
+
+    #rSize {
+        display: none;
+        cursor: pointer;
+        border: none;
+        background-color: transparent;
+        vertical-align: top;
+    }
+
+    .settings {
+        background-color: rgb(55, 55, 55);
+        border-radius: 8px;
+        padding-right: 8px;
+        padding-left: 8px;
+        padding-top: 4px;
+        padding-bottom: 4px;
+        width: 19em;
+        white-space: nowrap;
+        box-shadow: 2px 4px 4px rgba(0, 0, 0, 0.3);
+        margin-top: 8px;
+    }
+
+    #topInput {
+        margin-top: 0px;
+    }
+
+    #form input[type="radio"] {
+        vertical-align: middle;
+        width: 15px;
+        height: 15px;
+        margin-right: 4px;
+    }
+
+    #form input[type="checkbox"] {
+        vertical-align: middle;
+        width: 15px;
+        height: 15px;
+        margin-right: 4px;
+    }
+
+    #form input[type="text"] {
+        background-color: white;
+        color: black;
+        font-size: 1.1em;
+        vertical-align: middle;
+        width: 100px;
+        text-align: right;
+        margin-left: 18px;
+    }
+
+    #or {
+        font-size: 1.3em;
+    }
+
+    #file {
+        width: 1px;
+        height: 1px;
+        margin: -1px;
+        opacity: 0;
+        overflow: hidden;
+        position: absolute;
+        z-index: -1;
+    }
+
+    #file:focus+#fileLabel {
+        outline: 1px dotted #000;
+        outline: -webkit-focus-ring-color auto 5px;
+    }
+
+    #fileLabel:focus {
+        outline: 1px dotted #000;
+        outline: -webkit-focus-ring-color auto 5px;
+    }
+
+    .formHeader {
+        border-bottom: 2px solid rgb(110, 110, 110);
+        box-shadow: 0 4px 2px -2px rgba(0, 0, 0, 0.4);
+        font-size: 1.3em;
+        padding-bottom: 4px;
+        font-weight: 700;
+        margin-bottom: 6px;
+    }
+
+    .button {
+        font-size: 1.2em;
+        font-weight: 700;
+        color: white;
+        background-color: #d3394c;
+        display: inline-block;
+        padding-left: 16px;
+        padding-right: 16px;
+        padding-top: 8px;
+        padding-bottom: 8px;
+        box-shadow: 2px 4px 4px rgba(0, 0, 0, 0.2);
+        cursor: pointer;
+        border: none;
+    }
+
+    .button:active {
+        background-color: #B33040;
+        box-shadow: none;
+        transition: background-color 0.1s ease-in-out;
+    }
+
+    .button:focus {
+        outline: 1px dotted #212121;
+        outline: -webkit-focus-ring-color auto 5px;
+    }
+
+    .button:hover {
+        text-decoration: none;
+    }
+
+    #fb {
+        background-color: #3b5998;
+    }
+
+    #fb:active {
+        background-color: #314B80;
+    }
+
+    #tw {
+        background-color: #55acee;
+    }
+
+    #tw:active {
+        background-color: #4993CC;
+    }
+
+    #spacer {
+        width: 12px;
+        display: inline-block;
+    }
+
+    .input {
+        margin: 7px;
+    }
+
+    .share {
+        margin: 7px;
+        text-align: left;
+    }
+
+    .option {
+        vertical-align: middle;
+        font-size: 1.2em;
+        display: inline-block;
+        width: 0;
+        margin-right: 8em;
+        cursor: pointer;
+        position: relative;
+    }
+
+    .tut {
+        text-align: left;
+        color: yellow;
+        display: none;
+        position: absolute;
+        font-size: 0.75em;
+        width: 200px;
+        white-space: normal;
+        background-color: rgba(0, 0, 0, 0.85);
+        z-index: 3;
+        padding-left: 4px;
+        padding-right: 2px;
+        padding-top: 2px;
+        padding-bottom: 2px;
+    }
+
+    .quest:hover+.tut {
+        display: block;
+    }
+
+    .desc {
+        vertical-align: middle;
+        font-size: 1.2em;
+        display: inline-block;
+        width: 9em;
+        text-align: left;
+    }
+
+    .linkDesc {
+        font-size: 1.2em;
+        margin-bottom: 3px;
+    }
+
+    .shareLink {
+        color: black;
+        font-size: 1em;
+        text-align: left;
+        width: 16.5em;
+        margin-left: 1.5em;
+    }
+
+    .iWrap {
+        text-align: center;
+    }
+
+    .example {
+        display: inline-block;
+        margin: 6px;
+    }
+
+    .insp {
+        margin: 6px;
+        border: 2px solid rgb(55, 55, 55);
+    }
+
+    #url {
+        font-size: 1.1em;
+        color: black;
+        width: 100%;
+    }
+
+    #canvas {
+        background-color: rgb(255, 255, 255);
+        margin: 15px;
+    }
+
+    #lCanvas {
+        background-color: rgb(255, 255, 255);
+        display: none;
+        margin: 15px;
+    }
+
+    #header {
+        text-align: center;
+        height: 70px;
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        background-color: rgb(55, 55, 55);
+        border-bottom: 2px solid rgb(110, 110, 110);
+        box-shadow: 0 2px 4px 1px rgba(0, 0, 0, 0.4);
+    }
+
+    #hWrap {
+        display: inline-block;
+        width: 1000px;
+    }
+
+    #leftHeader {
+        float: left;
+    }
+
+    #logo {
+        margin-top: 2px;
+    }
+
+    #create {
+        vertical-align: 100%;
+        margin-left: 15px;
+    }
+
+    #rightHeader {
+        float: right;
+        margin-top: 10px;
+    }
+
+    #social {
+        display: inline-block;
+        vertical-align: middle;
+    }
+
+    #twitter {}
+
+    #facebook {
+        margin-bottom: 5px;
+    }
+
+    #about {
+        display: inline-block;
+        vertical-align: middle;
+        margin-left: 10px;
+        font-size: 1em;
+    }
+
+    #barBack {
+        visibility: hidden;
+        position: absolute;
+        left: 10%;
+        bottom: 30px;
+        width: 80%;
+        background-color: rgb(55, 55, 55);
+        border-radius: 20px;
+    }
+
+    #progressBar {
+        border: 4px solid rgb(110, 110, 110);
+        border-radius: 20px;
+        padding: 2px;
+    }
+
+    #progress {
+        background-color: #fff;
+        width: 0%;
+        height: 18px;
+        border: 1px solid rgba(0, 0, 0, 0);
+        border-radius: 20px;
+    }
+
+    button::-moz-focus-inner {
+        padding: 0;
+        border: 0;
+    }
+
+    #ds {
+        display: none;
+    }
+
+    #aboutText {
+        text-align: left;
+        padding: 8px;
+        padding-top: 0px;
+    }
+
+    #error {
+        width: 892px;
+        text-align: left;
+    }
+</style>
+
+<body>
+    <div id="header">
+        <div id="hWrap">
+            <div id="leftHeader">
+            </div>
+            <div id="rightHeader">
+                <div id="social">
+                    <div id="facebook">
+                        <div data-href="https://www.facebook.com/linifyme" data-layout="button" data-action="like"
+                            data-show-faces="false" data-share="false" class="fb-like"></div>
+                    </div>
+                    <div id="twitter"><a href="https://twitter.com/LINIFYme" data-show-count="false"
+                            data-show-screen-name="false" data-dnt="true" class="twitter-follow-button"></a></div>
+                </div><a href="/about" id="about">About</a>
+            </div>
+        </div>
+    </div>
+    <div id="wrapper">
+        <div id="content">
+            <div id="drawWrapper"><canvas id="canvas"></canvas><canvas id="lCanvas"></canvas>
+                <div id="barBack">
+                    <div id="progressBar">
+                        <div id="progress"></div>
+                    </div>
+                </div>
+                <div id="sizeDiv"><button id="size"><i class="fa fa-expand fa-2x"></i></button><button id="rSize"><i
+                            class="fa fa-compress fa-2x"></i></button></div>
+            </div>
+            <div id="rightCol">
+                <form id="form" autocomplete="off">
+                    <div id="topInput" class="settings">
+                        <div class="formHeader">Select Image</div>
+                        <div class="input"><input id="url" type="url" placeholder="Enter image URL"></div>
+                        <div id="or">--OR--</div>
+                        <div class="input"><input id="file" type="file" accept="image/*"><label id="fileLabel"
+                                for="file" class="button"><i class="fa fa-file-image-o"></i> Import Image</label></div>
+                    </div>
+                    <div id="options" class="settings">
+                        <div class="formHeader">Options</div>
+                        <div class="input"><input type="radio" id="color" name="color" checked><label for="color"
+                                class="option">Color <i class="fa fa-question-circle quest"></i>
+                                <div class="tut">Color generates an image consisting of red green and blue lines, while
+                                    Grayscale consists only of gray lines.</div>
+                            </label><input type="radio" id="add" name="add"><label for="add" class="option">Additive <i
+                                    class="fa fa-question-circle quest"></i>
+                                <div class="tut">Additive adds lines onto a black canvas (RGB), while Subtractive
+                                    subtracts lines from a white canvas (CMY).</div>
+                            </label></div>
+                        <div class="input"><input type="radio" id="gray" name="color"><label for="gray"
+                                class="option">Grayscale</label><input type="radio" id="sub" name="add" checked><label
+                                for="sub" class="option">Subtractive</label></div>
+                        <div class="input"><span class="desc">Number of Lines <i
+                                    class="fa fa-question-circle quest"></i>
+                                <div class="tut">Number of lines to be drawn. Color actually draws ~3x this number.
+                                </div>
+                            </span><input id="numLines" type="text" value="2500"></div>
+                        <div class="input"><span class="desc">Line Heaviness <i class="fa fa-question-circle quest"></i>
+                                <div class="tut">Must be within 1-255. Higher numbers draw heavier lines. No impact on
+                                    performance.</div>
+                            </span><input id="lineStep" type="text" value="16"></div>
+                        <div class="input"><span class="desc">Test Iterations <i
+                                    class="fa fa-question-circle quest"></i>
+                                <div class="tut">Number of tests to run before each line is drawn. Higher numbers yield
+                                    higher quality pictures.</div>
+                            </span><input id="testLines" type="text" value="200"></div>
+                        <div class="input"><input type="checkbox" id="hiRes"><label for="hiRes" class="option">High
+                                Resolution <i class="fa fa-question-circle quest"></i>
+                                <div class="tut"> Takes ~3x longer and uses 4x more memory, but yields higher quality.
+                                    Proceed with caution.</div>
+                            </label></div>
+                    </div>
+                    <div id="draw" class="settings">
+                        <div class="input"><button type="submit" class="button"><i class="fa fa-paint-brush"></i>
+                                Draw!</button></div>
+                    </div>
+                </form>
+                <div id="ds" class="settings">
+                    <div class="input"><a id="dLink" class="button"><i class="fa fa-download"></i> Download</a><span
+                            id="spacer"></span><button id="sLink" class="button"><i class="fa fa-cloud-upload"></i>
+                            Save</button></div>
+                </div>
+            </div>
+        </div>
+        <div id="insp">
+            <div id="inspHeader">Inspiration Gallery</div>
+        </div>
+    </div>
+    <script id="worker">
+        // read from master
+        var lineStep = null;
+        var numLines = null;
+        var testLines = null;
+
+        self.addEventListener('message', function (e) {
+            lineStep = e.data.lineStep;
+            numLines = e.data.numLines;
+            testLines = e.data.testLines;
+            lineMaker(e.data.add, e.data.img, e.data.width, e.data.height);
+        }, false);
+
+        /* line creation */
+        function lineMaker(add, gray, width, height) {
+            // find darkest points then draw best line through point
+            for (var i = 0; i < numLines; i++) {
+                var selection = [0];
+                var lum = gray[0];
+
+                for (var j = 1; j < gray.length; j++) {
+                    if (gray[j] == lum) {
+                        selection.push(j);
+                    }
+                    if (add) {
+                        if (gray[j] > lum) {
+                            selection = [j];
+                            lum = gray[j];
+                        }
+                    } else {
+                        if (gray[j] < lum) {
+                            selection = [j];
+                            lum = gray[j];
+                        }
+                    }
+                }
+
+                var point = selection[Math.floor(Math.random() * selection.length)];
+                self.postMessage(makeLine(point % width, Math.floor(point / width), gray, width, height, add));
+            }
+            close();
+        }
+
+        /* take point and image data, return line as tuple */
+        function makeLine(x, y, img, width, height, add) {
+            var tests = [];
+            for (var i = 0; i < testLines; i++) {
+                var slope = (Math.random() - 0.5) / (Math.random() - 0.5);
+                var lum = 0; // luminousity accumulator
+                var points = [];
+                points.push([x, y]);
+
+                // basically Bresenham
+                if (slope > 1 || slope < -1) { // swap if steep
+                    var delX = Math.floor(Math.abs(slope));
+                    var err = Math.abs(slope) - delX;
+                    var xx = y;
+                    var yy = x;
+                    var wwidth = height;
+                    var hheight = width;
+                    var swap = true;
+                } else { // not steep
+                    var delX = Math.floor(Math.abs(1 / slope));
+                    var err = Math.abs(1 / slope) - delX;
+                    var xx = x;
+                    var yy = y;
+                    var wwidth = width;
+                    var hheight = height;
+                    var swap = false;
+                }
+                if (slope >= 0) {
+                    var sign = 1;
+                } else {
+                    var sign = -1;
+                }
+
+                // go up
+                var currX = xx;
+                var currY = yy;
+                var cErr = 0;
+                up:
+                while (currY > 0) {
+                    currY--;
+                    for (var j = 0; j < delX; j++) {
+                        currX -= sign;
+                        if (currX < 0 || currX >= wwidth) {
+                            break up;
+                        }
+                        if (swap === false) {
+                            lum += img[currY * width + currX];
+                            points.push([currX, currY]);
+                        } else {
+                            lum += img[currX * width + currY];
+                            points.push([currY, currX]);
+                        }
+                    }
+                    cErr += err;
+                    if (cErr >= 0.5) {
+                        currX -= sign;
+                        if (currX < 0 || currX >= wwidth) {
+                            break up;
+                        }
+                        if (swap === false) {
+                            lum += img[currY * width + currX];
+                            points.push([currX, currY]);
+                        } else {
+                            lum += img[currX * width + currY];
+                            points.push([currY, currX]);
+                        }
+                        cErr -= 1;
+                    }
+                }
+
+                // go down
+                currX = xx;
+                currY = yy;
+                cErr = 0;
+                down:
+                while (currY < hheight) {
+                    for (var j = 0; j < delX; j++) {
+                        currX += sign;
+                        if (currX < 0 || currX >= wwidth) {
+                            break down;
+                        }
+                        if (swap === false) {
+                            lum += img[currY * width + currX];
+                            points.unshift([currX, currY]);
+                        } else {
+                            lum += img[currX * width + currY];
+                            points.unshift([currY, currX]);
+                        }
+                    }
+                    cErr += err;
+                    if (cErr >= 0.5) {
+                        currX += sign;
+                        if (currX < 0 || currX >= wwidth) {
+                            break down;
+                        }
+                        if (swap === false) {
+                            lum += img[currY * width + currX];
+                            points.unshift([currX, currY]);
+                        } else {
+                            lum += img[currX * width + currY];
+                            points.unshift([currY, currX]);
+                        }
+                        cErr -= 1;
+                    }
+                    currY++;
+                }
+                tests.push({ lum: lum, points: points });
+            }
+
+            // find best candidate
+            if (add) { // additive
+                var max = 0; // array position
+                var lum = tests[0].lum / tests[0].points.length; // average lum
+                for (var i = 1; i < tests.length; i++) {
+                    var testLum = tests[i].lum / tests[i].points.length;
+                    if (testLum > lum) {
+                        max = i;
+                        lum = testLum;
+                    }
+                }
+                var line = tests[max].points;
+
+                // tick accumulators
+                for (var i = 0; i < line.length; i++) {
+                    img[line[i][1] * width + line[i][0]] -= lineStep;
+                }
+            } else { // subtractive
+                var min = 0; // array position
+                var lum = tests[0].lum / tests[0].points.length; // average lum
+                for (var i = 1; i < tests.length; i++) {
+                    var testLum = tests[i].lum / tests[i].points.length;
+                    if (testLum < lum) {
+                        min = i;
+                        lum = testLum;
+                    }
+                }
+                var line = tests[min].points;
+
+                // tick accumulators
+                for (var i = 0; i < line.length; i++) {
+                    img[line[i][1] * width + line[i][0]] += lineStep;
+                }
+            }
+            return [line[0][0], line[0][1], line[line.length - 1][0], line[line.length - 1][1]];
+        }
+
+    </script>
+    <script>
+
+        function createWorkerFromId(id) {
+            console.log('createWorkerFromId');
+            var response = document.getElementById(id).innerText;
+
+            var blob;
+            try {
+                blob = new Blob([response], { type: 'application/javascript' });
+            } catch (e) { // Backwards-compatibility
+                window.BlobBuilder = window.BlobBuilder || window.WebKitBlobBuilder || window.MozBlobBuilder;
+                blob = new BlobBuilder();
+                blob.append(response);
+                blob = blob.getBlob();
+            }
+            var url = URL.createObjectURL(blob);
+            return url;
+        }
+        // var url = createWorkerFromId('worker');
+
+        /*! @source http://purl.eligrey.com/github/FileSaver.js/blob/master/FileSaver.js */
+        var saveAs = saveAs || function (view) {
+            "use strict";
+            if (typeof navigator !== "undefined" && /MSIE [1-9]\./.test(navigator.userAgent)) {
+                return
+            }
+            var doc = view.document
+                , get_URL = function () {
+                    return view.URL || view.webkitURL || view
+                }
+                , save_link = doc.createElementNS("http://www.w3.org/1999/xhtml", "a")
+                , can_use_save_link = "download" in save_link
+                , click = function (node) {
+                    var event = new MouseEvent("click");
+                    node.dispatchEvent(event)
+                }
+                , is_safari = /Version\/[\d\.]+.*Safari/.test(navigator.userAgent)
+                , webkit_req_fs = view.webkitRequestFileSystem
+                , req_fs = view.requestFileSystem || webkit_req_fs || view.mozRequestFileSystem
+                , throw_outside = function (ex) {
+                    (view.setImmediate || view.setTimeout)(function () {
+                        throw ex
+                    }, 0)
+                }
+                , force_saveable_type = "application/octet-stream"
+                , fs_min_size = 0
+                , arbitrary_revoke_timeout = 500
+                , revoke = function (file) {
+                    var revoker = function () {
+                        if (typeof file === "string") {
+                            get_URL().revokeObjectURL(file)
+                        } else {
+                            file.remove()
+                        }
+                    };
+                    if (view.chrome) {
+                        revoker()
+                    } else {
+                        setTimeout(revoker, arbitrary_revoke_timeout)
+                    }
+                }
+                , dispatch = function (filesaver, event_types, event) {
+                    event_types = [].concat(event_types);
+                    var i = event_types.length;
+                    while (i--) {
+                        var listener = filesaver["on" + event_types[i]];
+                        if (typeof listener === "function") {
+                            try {
+                                listener.call(filesaver, event || filesaver)
+                            } catch (ex) {
+                                throw_outside(ex)
+                            }
+                        }
+                    }
+                }
+                , auto_bom = function (blob) {
+                    if (/^\s*(?:text\/\S*|application\/xml|\S*\/\S*\+xml)\s*;.*charset\s*=\s*utf-8/i.test(blob.type)) {
+                        return new Blob(["\ufeff", blob], {
+                            type: blob.type
+                        })
+                    }
+                    return blob
+                }
+                , FileSaver = function (blob, name, no_auto_bom) {
+                    if (!no_auto_bom) {
+                        blob = auto_bom(blob)
+                    }
+                    var filesaver = this, type = blob.type, blob_changed = false, object_url, target_view, dispatch_all = function () {
+                        dispatch(filesaver, "writestart progress write writeend".split(" "))
+                    }, fs_error = function () {
+                        if (target_view && is_safari && typeof FileReader !== "undefined") {
+                            var reader = new FileReader;
+                            reader.onloadend = function () {
+                                var base64Data = reader.result;
+                                target_view.location.href = "data:attachment/file" + base64Data.slice(base64Data.search(/[,;]/));
+                                filesaver.readyState = filesaver.DONE;
+                                dispatch_all()
+                            }
+                                ;
+                            reader.readAsDataURL(blob);
+                            filesaver.readyState = filesaver.INIT;
+                            return
+                        }
+                        if (blob_changed || !object_url) {
+                            object_url = get_URL().createObjectURL(blob)
+                        }
+                        if (target_view) {
+                            target_view.location.href = object_url
+                        } else {
+                            var new_tab = view.open(object_url, "_blank");
+                            if (new_tab == undefined && is_safari) {
+                                view.location.href = object_url
+                            }
+                        }
+                        filesaver.readyState = filesaver.DONE;
+                        dispatch_all();
+                        revoke(object_url)
+                    }, abortable = function (func) {
+                        return function () {
+                            if (filesaver.readyState !== filesaver.DONE) {
+                                return func.apply(this, arguments)
+                            }
+                        }
+                    }, create_if_not_found = {
+                        create: true,
+                        exclusive: false
+                    }, slice;
+                    filesaver.readyState = filesaver.INIT;
+                    if (!name) {
+                        name = "download"
+                    }
+                    if (can_use_save_link) {
+                        object_url = get_URL().createObjectURL(blob);
+                        setTimeout(function () {
+                            save_link.href = object_url;
+                            save_link.download = name;
+                            click(save_link);
+                            dispatch_all();
+                            revoke(object_url);
+                            filesaver.readyState = filesaver.DONE
+                        });
+                        return
+                    }
+                    if (view.chrome && type && type !== force_saveable_type) {
+                        slice = blob.slice || blob.webkitSlice;
+                        blob = slice.call(blob, 0, blob.size, force_saveable_type);
+                        blob_changed = true
+                    }
+                    if (webkit_req_fs && name !== "download") {
+                        name += ".download"
+                    }
+                    if (type === force_saveable_type || webkit_req_fs) {
+                        target_view = view
+                    }
+                    if (!req_fs) {
+                        fs_error();
+                        return
+                    }
+                    fs_min_size += blob.size;
+                    req_fs(view.TEMPORARY, fs_min_size, abortable(function (fs) {
+                        fs.root.getDirectory("saved", create_if_not_found, abortable(function (dir) {
+                            var save = function () {
+                                dir.getFile(name, create_if_not_found, abortable(function (file) {
+                                    file.createWriter(abortable(function (writer) {
+                                        writer.onwriteend = function (event) {
+                                            target_view.location.href = file.toURL();
+                                            filesaver.readyState = filesaver.DONE;
+                                            dispatch(filesaver, "writeend", event);
+                                            revoke(file)
+                                        }
+                                            ;
+                                        writer.onerror = function () {
+                                            var error = writer.error;
+                                            if (error.code !== error.ABORT_ERR) {
+                                                fs_error()
+                                            }
+                                        }
+                                            ;
+                                        "writestart progress write abort".split(" ").forEach(function (event) {
+                                            writer["on" + event] = filesaver["on" + event]
+                                        });
+                                        writer.write(blob);
+                                        filesaver.abort = function () {
+                                            writer.abort();
+                                            filesaver.readyState = filesaver.DONE
+                                        }
+                                            ;
+                                        filesaver.readyState = filesaver.WRITING
+                                    }), fs_error)
+                                }), fs_error)
+                            };
+                            dir.getFile(name, {
+                                create: false
+                            }, abortable(function (file) {
+                                file.remove();
+                                save()
+                            }), abortable(function (ex) {
+                                if (ex.code === ex.NOT_FOUND_ERR) {
+                                    save()
+                                } else {
+                                    fs_error()
+                                }
+                            }))
+                        }), fs_error)
+                    }), fs_error)
+                }
+                , FS_proto = FileSaver.prototype
+                , saveAs = function (blob, name, no_auto_bom) {
+                    return new FileSaver(blob, name, no_auto_bom)
+                };
+            if (typeof navigator !== "undefined" && navigator.msSaveOrOpenBlob) {
+                return function (blob, name, no_auto_bom) {
+                    if (!no_auto_bom) {
+                        blob = auto_bom(blob)
+                    }
+                    return navigator.msSaveOrOpenBlob(blob, name || "download")
+                }
+            }
+            FS_proto.abort = function () {
+                var filesaver = this;
+                filesaver.readyState = filesaver.DONE;
+                dispatch(filesaver, "abort")
+            }
+                ;
+            FS_proto.readyState = FS_proto.INIT = 0;
+            FS_proto.WRITING = 1;
+            FS_proto.DONE = 2;
+            FS_proto.error = FS_proto.onwritestart = FS_proto.onprogress = FS_proto.onwrite = FS_proto.onabort = FS_proto.onerror = FS_proto.onwriteend = null;
+            return saveAs
+        }(typeof self !== "undefined" && self || typeof window !== "undefined" && window || this.content);
+        if (typeof module !== "undefined" && module.exports) {
+            module.exports.saveAs = saveAs
+        } else if (typeof define !== "undefined" && define !== null && define.amd != null) {
+            define([], function () {
+                return saveAs
+            })
+        }
+
+
+        /* polyfill for canvas.toBlob() from https://developer.mozilla.org/en-US/docs/Web/API/HTMLCanvasElement/toBlob */
+        if (!HTMLCanvasElement.prototype.toBlob) {
+            Object.defineProperty(HTMLCanvasElement.prototype, 'toBlob', {
+                value: function (callback, type, quality) {
+                    var binStr = atob(this.toDataURL(type, quality).split(',')[1]),
+                        len = binStr.length,
+                        arr = new Uint8Array(len);
+                    for (var i = 0; i < len; i++) {
+                        arr[i] = binStr.charCodeAt(i);
+                    }
+                    callback(new Blob([arr], { type: type || 'image/png' }));
+                }
+            });
+        }
+
+        function process(img, color, hiRes) {
+            ds.style.display = 'none';
+
+            if (workers.length != 0) {
+                for (var i = 0; i < workers.length; i++) {
+                    workers[i].terminate();
+                }
+                workers = [];
+            }
+
+            var canvas = document.createElement('canvas');
+            var context = canvas.getContext('2d');
+            if (hiRes) {
+                if (img.width > img.height) {
+                    canvas.width = 1024;
+                    canvas.height = Math.floor(img.height / img.width * 1024);
+                } else {
+                    canvas.height = 1024;
+                    canvas.width = Math.floor(img.width / img.height * 1024);
+                }
+                display.width = canvas.width / 2;
+                display.height = canvas.height / 2;
+                lDisplay.width = canvas.width;
+                lDisplay.height = canvas.height;
+            } else {
+                if (img.width > img.height) {
+                    canvas.width = 512;
+                    canvas.height = Math.floor(img.height / img.width * 512);
+                } else {
+                    canvas.height = 512;
+                    canvas.width = Math.floor(img.width / img.height * 512);
+                }
+                display.width = canvas.width;
+                display.height = canvas.height;
+                lDisplay.width = canvas.width * 2 - 2;
+                lDisplay.height = canvas.height * 2 - 2;
+            }
+            cWidth = canvas.width;
+            cHeight = canvas.height;
+
+            if (add) {
+                context.fillStyle = '#000000';
+            } else {
+                context.fillStyle = '#FFFFFF';
+            }
+
+            context.fillRect(0, 0, 1024, 1024);
+            context.drawImage(img, 0, 0, canvas.width, canvas.height);
+            var imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+            var data = imageData.data;
+
+            lines = [];
+            linesDrawn = 0;
+
+            prepCanvas(hiRes);
+
+            if (color === false) {
+                totalProgress = numLines;
+                var gray = new Int16Array(data.length / 4);
+                // convert to grayscale
+                var total = 0;
+                for (var i = 0; i < data.length / 4; i++) {
+                    gray[i] = (Math.floor(0.21 * data[i * 4] + 0.72 * data[i * 4 + 1] + 0.07 * data[i * 4 + 2])) // grayscale using CIE luminance
+                    total += gray[i];
+                }
+
+                workers.push( new Worker( createWorkerFromId('worker') ) ); //'javascripts/workerv2.js'));
+                workers[0].addEventListener('message', drawLineMaker(0, hiRes), false);
+                workers[0].postMessage({ add: add, lineStep: lineStep, numLines: numLines, testLines: testLines, img: gray, width: imageData.width, height: imageData.height, total: total });
+
+            } else {
+                var red = new Int16Array(data.length / 4);
+                var green = new Int16Array(data.length / 4);
+                var blue = new Int16Array(data.length / 4);
+                var rTotal = 0;
+                var gTotal = 0;
+                var bTotal = 0;
+                for (var i = 0; i < data.length / 4; i++) {
+                    red[i] = (data[i * 4]);
+                    green[i] = (data[i * 4 + 1]);
+                    blue[i] = (data[i * 4 + 2]);
+                    rTotal += red[i];
+                    gTotal += green[i];
+                    bTotal += blue[i];
+                }
+
+                if (!add) {
+                    rTotal = data.length / 4 * 255 - rTotal;
+                    gTotal = data.length / 4 * 255 - gTotal;
+                    bTotal = data.length / 4 * 255 - bTotal;
+                }
+
+                if (rTotal >= gTotal && rTotal >= bTotal) {
+                    var rNum = numLines;
+                    var gNum = Math.floor(numLines * gTotal / rTotal);
+                    var bNum = Math.floor(numLines * bTotal / rTotal);
+                } else if (gTotal >= rTotal && gTotal >= bTotal) {
+                    var rNum = Math.floor(numLines * rTotal / gTotal);
+                    var gNum = numLines;
+                    var bNum = Math.floor(numLines * bTotal / gTotal);
+                } else if (bTotal >= rTotal && bTotal >= gTotal) {
+                    var rNum = Math.floor(numLines * rTotal / bTotal);
+                    var gNum = Math.floor(numLines * gTotal / bTotal);
+                    var bNum = numLines;
+                }
+
+                totalProgress = rNum + gNum + bNum;
+
+                workers.push(new Worker( createWorkerFromId('worker') ));
+                workers[0].addEventListener('message', drawLineMaker(1, hiRes), false);
+                workers[0].postMessage({ add: add, lineStep: lineStep, numLines: rNum, testLines: testLines, img: red, width: imageData.width, height: imageData.height });
+
+                workers.push(new Worker( createWorkerFromId('worker') ));
+                workers[1].addEventListener('message', drawLineMaker(2, hiRes), false);
+                workers[1].postMessage({ add: add, lineStep: lineStep, numLines: gNum, testLines: testLines, img: green, width: imageData.width, height: imageData.height });
+
+                workers.push(new Worker( createWorkerFromId('worker') ));
+                workers[2].addEventListener('message', drawLineMaker(3, hiRes), false);
+                workers[2].postMessage({ add: add, lineStep: lineStep, numLines: bNum, testLines: testLines, img: blue, width: imageData.width, height: imageData.height });
+            }
+        }
+
+        /* event handler for line from worker */
+        function drawLineMaker(color, hiRes) {
+            return function (e) {
+                linesDrawn++;
+                progress.style.width = linesDrawn / totalProgress * 100 + '%';
+                switch (color) {
+                    case 0:
+                        dContext.strokeStyle = 'rgba(' + lineStep + ',' + lineStep + ',' + lineStep + ',1)';
+                        lContext.strokeStyle = 'rgba(' + lineStep + ',' + lineStep + ',' + lineStep + ',1)';
+                        break;
+                    case 1:
+                        dContext.strokeStyle = 'rgba(' + lineStep + ',0,0,1)';
+                        lContext.strokeStyle = 'rgba(' + lineStep + ',0,0,1)';
+                        break;
+                    case 2:
+                        dContext.strokeStyle = 'rgba(0,' + lineStep + ',0,1)';
+                        lContext.strokeStyle = 'rgba(0,' + lineStep + ',0,1)';
+                        break;
+                    case 3:
+                        dContext.strokeStyle = 'rgba(0,0,' + lineStep + ',1)';
+                        lContext.strokeStyle = 'rgba(0,0,' + lineStep + ',1)';
+                        break;
+                }
+
+                var line = e.data;
+
+                if (hiRes) {
+                    lineToBitsHR(color, line);
+                    dContext.beginPath();
+                    dContext.moveTo(line[0] / 2 + 0.5, line[1] / 2 + 0.5);
+                    dContext.lineTo(line[2] / 2 + 0.5, line[3] / 2 + 0.5);
+                    dContext.stroke();
+
+                    lContext.beginPath();
+                    lContext.moveTo(line[0] + 0.5, line[1] + 0.5);
+                    lContext.lineTo(line[2] + 0.5, line[3] + 0.5);
+                    lContext.stroke();
+                } else {
+                    lineToBits(color, line);
+                    dContext.beginPath();
+                    dContext.moveTo(line[0] + 0.5, line[1] + 0.5);
+                    dContext.lineTo(line[2] + 0.5, line[3] + 0.5);
+                    dContext.stroke();
+
+                    lContext.beginPath();
+                    lContext.moveTo(line[0] * 2, line[1] * 2);
+                    lContext.lineTo(line[2] * 2, line[3] * 2);
+                    lContext.stroke();
+                }
+                if (linesDrawn / totalProgress == 1) {
+                    finishedDrawing();
+                }
+
+            }
+        }
+
+        function finishedDrawing() {
+            var bar = document.getElementById('barBack');
+            bar.style.visibility = 'hidden';
+
+            lines = new Uint8Array(lines); // convert lines to Uint8Array
+
+            ds.style.display = 'block';
+        }
+
+        function submitFunc(e) {
+            e.preventDefault();
+            form[10].innerHTML = '<i class="fa fa-cog fa-spin"></i> Draw!'
+            if (form.elements[3].checked === true) {
+                add = 1;
+            } else {
+                add = 0;
+            }
+
+            numLines = parseInt(form.elements[6].value, 10);
+            lineStep = parseInt(form.elements[7].value, 10);
+            testLines = parseInt(form.elements[8].value, 10);
+            storeSettings();
+
+            if (fileInput.files[0] != undefined) {
+                image.src = URL.createObjectURL(fileInput.files[0]);
+                cors = true; // in case of error
+            } else {
+                image.src = form.elements[0].value;
+                cors = false;
+            }
+        }
+
+        function dLinkFunc(e) {
+            e.preventDefault();
+            var now = new Date();
+            var string = now.toISOString();
+
+            lDisplay.toBlob(function (blob) {
+                saveAs(blob, 'linify_' + string.slice(0, 10) + '_' + string.slice(11, 13) + '-' + string.slice(14, 16) + '.png');
+            });
+        }
+
+        function sLinkFunc(e) {
+            if (shared === false) {
+                sLink.innerHTML = '<i class="fa fa-cog fa-spin"></i> Save';
+                shared = true;
+                lDisplay.toBlob(function (blob) {
+                    var formData = new FormData();
+                    formData.append('add', add);
+                    formData.append('lineStep', lineStep);
+                    formData.append('width', cWidth);
+                    formData.append('height', cHeight);
+                    formData.append('size', blob.size);
+                    formData.append('image', blob);
+                    formData.append('lines', new Blob([lines], { type: 'application/octet-stream' }));
+
+                    var req = new XMLHttpRequest();
+
+                    req.onreadystatechange = function () {
+                        if (req.readyState === XMLHttpRequest.DONE) {
+                            if (req.status === 200) {
+                                window.location.href = '/' + req.responseText;
+                            } else {
+                                shared = false;
+                                sLink.innerHTML = '<i class="fa fa-cloud-upload></i> Save';
+                            }
+                        }
+                    }
+
+                    req.open('POST', '/u', true);
+                    req.send(formData);
+                }, 'image/png');
+            }
+        }
+
+        function sizeFunc(e) {
+            display.style.display = 'none';
+            lDisplay.style.display = 'inline';
+            size.style.display = 'none';
+            rSize.style.display = 'inline-block';
+            if (typeof rLink !== 'undefined') {
+                prepCanvas(hiRes);
+                new reconstructLines(array);
+            }
+        }
+
+        function rSizeFunc(e) {
+            lDisplay.style.display = 'none';
+            display.style.display = 'inline';
+            rSize.style.display = 'none';
+            size.style.display = 'inline-block';
+            if (typeof rLink !== 'undefined') {
+                prepCanvas(hiRes);
+                new reconstructLines(array);
+            }
+        }
+
+        function getInspired() {
+            var req = new XMLHttpRequest();
+            req.onreadystatechange = function () {
+                if (req.readyState === XMLHttpRequest.DONE) {
+                    if (req.status === 200) {
+                        try {
+                            var data = JSON.parse(req.responseText);
+                            shuffle(data);
+                            var insp = document.getElementById('insp');
+                            for (var i = 0; i < data.length; i++) {
+                                var img = new Image();
+                                img.src = 'http://imgur.com/' + data[i] + 't.png';
+                                img.className = 'insp';
+                                var a = document.createElement('a');
+                                a.href = '/' + data[i];
+                                a.appendChild(img);
+                                insp.appendChild(a);
+                            }
+                        } catch (err) {
+                            console.log(err);
+                        }
+                    }
+                }
+            }
+            req.open('GET', '/i', true);
+            req.send();
+        }
+
+        /* adds line to array as bits */
+        function lineToBits(color, line) {
+            var start = pointToNum(line[0], line[1]);
+            lines.push((color << 6) | (start >> 5));
+
+            var end = pointToNum(line[2], line[3]);
+            lines.push((start << 3) | (end >> 8));
+            lines.push(end);
+        }
+
+        function lineToBitsHR(color, line) {
+            lines.push(color);
+            var start = pointToNum(line[0], line[1]);
+            var end = pointToNum(line[2], line[3]);
+            lines.push(start >> 4);
+            lines.push((start << 4) | (end >> 8));
+            lines.push(end);
+        }
+
+        /* take Uint8Array and draw to display */
+        function reconstructLines(array) {
+            playing = true; // prevents replay button from being pressed
+            rafID++;
+            this.rafID = rafID;
+            this.i = 0; // static variable passed through bind
+            if (hiRes) {
+                this.rate = array.length / 24000;
+                this.lastTime = performance.now();
+                if (display.style.display == 'none') {
+                    window.requestAnimationFrame(rLineLHR.bind(this, array));
+                } else {
+                    window.requestAnimationFrame(rLineHR.bind(this, array));
+                }
+            } else {
+                this.rate = array.length / 18000; // done over 6 seconds
+                this.lastTime = performance.now();
+                if (display.style.display == 'none') {
+                    window.requestAnimationFrame(rLineL.bind(this, array));
+                } else {
+                    window.requestAnimationFrame(rLine.bind(this, array));
+                }
+            }
+        }
+
+        /* helper function for reconstructLines, draw line in array*/
+        function rLine(array, time) {
+            var numDraw = Math.ceil((time - this.lastTime) * this.rate);
+            this.lastTime = time;
+            for (var j = 0; j < numDraw; j++) {
+                if (this.i < array.length / 3) {
+                    var color = array[this.i * 3] >> 6;
+                    var start = numToPoint(((array[this.i * 3] << 5) | (array[this.i * 3 + 1] >> 3)) & 2047);
+                    var end = numToPoint(((array[this.i * 3 + 1] << 8) | array[this.i * 3 + 2]) & 2047);
+
+                    switch (color) {
+                        case 0:
+                            dContext.strokeStyle = 'rgba(' + lineStep + ',' + lineStep + ',' + lineStep + ',1)';
+                            break;
+                        case 1:
+                            dContext.strokeStyle = 'rgba(' + lineStep + ',0,0,1)';
+                            break;
+                        case 2:
+                            dContext.strokeStyle = 'rgba(0,' + lineStep + ',0,1)';
+                            break;
+                        case 3:
+                            dContext.strokeStyle = 'rgba(0,0,' + lineStep + ',1)';
+                            break;
+                    }
+
+                    dContext.beginPath();
+                    dContext.moveTo(start[0] + 0.5, start[1] + 0.5);
+                    dContext.lineTo(end[0] + 0.5, end[1] + 0.5);
+                    dContext.stroke();
+
+                    this.i++;
+                }
+            }
+            if (this.i < array.length / 3 && rafID == this.rafID) {
+                window.requestAnimationFrame(rLine.bind(this, array));
+            } else {
+                playing = false;
+            }
+        }
+
+        function rLineL(array, time) {
+            var numDraw = Math.ceil((time - this.lastTime) * this.rate);
+            this.lastTime = time;
+            for (var j = 0; j < numDraw; j++) {
+                if (this.i < array.length / 3) {
+                    var color = array[this.i * 3] >> 6;
+                    var start = numToPoint(((array[this.i * 3] << 5) | (array[this.i * 3 + 1] >> 3)) & 2047);
+                    var end = numToPoint(((array[this.i * 3 + 1] << 8) | array[this.i * 3 + 2]) & 2047);
+
+                    switch (color) {
+                        case 0:
+                            lContext.strokeStyle = 'rgba(' + lineStep + ',' + lineStep + ',' + lineStep + ',1)';
+                            break;
+                        case 1:
+                            lContext.strokeStyle = 'rgba(' + lineStep + ',0,0,1)';
+                            break;
+                        case 2:
+                            lContext.strokeStyle = 'rgba(0,' + lineStep + ',0,1)';
+                            break;
+                        case 3:
+                            lContext.strokeStyle = 'rgba(0,0,' + lineStep + ',1)';
+                            break;
+                    }
+
+                    lContext.beginPath();
+                    lContext.moveTo(start[0] * 2, start[1] * 2);
+                    lContext.lineTo(end[0] * 2, end[1] * 2);
+                    lContext.stroke();
+
+                    this.i++;
+                }
+            }
+            if (this.i < array.length / 3 && rafID == this.rafID) {
+                window.requestAnimationFrame(rLineL.bind(this, array));
+            } else {
+                playing = false;
+            }
+        }
+
+        function rLineHR(array, time) {
+            var numDraw = Math.ceil((time - this.lastTime) * this.rate);
+            this.lastTime = time;
+            for (var j = 0; j < numDraw; j++) {
+                if (this.i < array.length / 4) {
+                    var color = array[this.i * 4];
+                    var start = numToPoint(((array[this.i * 4 + 1] << 4) | (array[this.i * 4 + 2] >> 4)) & 4095);
+                    var end = numToPoint(((array[this.i * 4 + 2] << 8) | array[this.i * 4 + 3]) & 4095);
+
+                    switch (color) {
+                        case 0:
+                            dContext.strokeStyle = 'rgba(' + lineStep + ',' + lineStep + ',' + lineStep + ',1)';
+                            break;
+                        case 1:
+                            dContext.strokeStyle = 'rgba(' + lineStep + ',0,0,1)';
+                            break;
+                        case 2:
+                            dContext.strokeStyle = 'rgba(0,' + lineStep + ',0,1)';
+                            break;
+                        case 3:
+                            dContext.strokeStyle = 'rgba(0,0,' + lineStep + ',1)';
+                            break;
+                    }
+
+                    dContext.beginPath();
+                    dContext.moveTo(start[0] / 2 + 0.5, start[1] / 2 + 0.5);
+                    dContext.lineTo(end[0] / 2 + 0.5, end[1] / 2 + 0.5);
+                    dContext.stroke();
+
+                    this.i++;
+                }
+            }
+            if (this.i < array.length / 4 && rafID == this.rafID) {
+                window.requestAnimationFrame(rLineHR.bind(this, array));
+            } else {
+                playing = false;
+            }
+        }
+
+        function rLineLHR(array, time) {
+            var numDraw = Math.ceil((time - this.lastTime) * this.rate);
+            this.lastTime = time;
+            for (var j = 0; j < numDraw; j++) {
+                if (this.i < array.length / 4) {
+                    var color = array[this.i * 4];
+                    var start = numToPoint(((array[this.i * 4 + 1] << 4) | (array[this.i * 4 + 2] >> 4)) & 4095);
+                    var end = numToPoint(((array[this.i * 4 + 2] << 8) | array[this.i * 4 + 3]) & 4095);
+
+                    switch (color) {
+                        case 0:
+                            lContext.strokeStyle = 'rgba(' + lineStep + ',' + lineStep + ',' + lineStep + ',1)';
+                            break;
+                        case 1:
+                            lContext.strokeStyle = 'rgba(' + lineStep + ',0,0,1)';
+                            break;
+                        case 2:
+                            lContext.strokeStyle = 'rgba(0,' + lineStep + ',0,1)';
+                            break;
+                        case 3:
+                            lContext.strokeStyle = 'rgba(0,0,' + lineStep + ',1)';
+                            break;
+                    }
+
+                    lContext.beginPath();
+                    lContext.moveTo(start[0], start[1]);
+                    lContext.lineTo(end[0], end[1]);
+                    lContext.stroke();
+
+                    this.i++;
+                }
+            }
+            if (this.i < array.length / 4 && rafID == this.rafID) {
+                window.requestAnimationFrame(rLineLHR.bind(this, array));
+            } else {
+                playing = false;
+            }
+        }
+
+        /* wipes canvas, fills in background color */
+        function prepCanvas(hiRes) {
+            dContext.clearRect(0, 0, display.width, display.height);
+            lContext.clearRect(0, 0, lDisplay.width, lDisplay.height);
+            if (hiRes) {
+                dContext.lineWidth = 0.5;
+                lContext.lineWidth = 1;
+            } else {
+                dContext.lineWidth = 1;
+                lContext.lineWidth = 2;
+            }
+
+            if (add) {
+                dContext.fillStyle = '#000000';
+                dContext.fillRect(0, 0, 512, 512);
+                dContext.globalCompositeOperation = 'lighter';
+
+                lContext.fillStyle = '#000000';
+                lContext.fillRect(0, 0, 1024, 1024);
+                lContext.globalCompositeOperation = 'lighter';
+            } else {
+                dContext.fillStyle = '#FFFFFF';
+                dContext.fillRect(0, 0, 512, 512);
+                dContext.globalCompositeOperation = 'difference';
+
+                lContext.fillStyle = '#FFFFFF';
+                lContext.fillRect(0, 0, 1024, 1024);
+                lContext.globalCompositeOperation = 'difference';
+            }
+        }
+
+        /* tries to store color, add, numLines, lineStep, and testLines */
+        function storeSettings() {
+            try {
+                localStorage.setItem('lineStep', lineStep.toString());
+                localStorage.setItem('numLines', numLines.toString());
+                localStorage.setItem('testLines', testLines.toString());
+                localStorage.setItem('add', add.toString());
+                if (form.elements[2].checked === true) {
+                    var color = '1';
+                } else {
+                    var color = '0';
+                }
+                localStorage.setItem('color', color);
+                if (form.elements[9].checked === true) {
+                    var hiRes = '1';
+                } else {
+                    var hiRes = '0';
+                }
+                localStorage.setItem('hiRes', hiRes);
+            } catch (e) {
+                console.log(e);
+                return;
+            }
+        }
+
+        function getSettings() {
+            try {
+                if (localStorage.length != 0) {
+                    document.getElementById('numLines').value = localStorage.getItem('numLines');
+                    document.getElementById('lineStep').value = localStorage.getItem('lineStep');
+                    document.getElementById('testLines').value = localStorage.getItem('testLines');
+
+                    if (parseInt(localStorage.getItem('color'), 10)) {
+                        form.elements[2].checked = true;
+                    } else {
+                        form.elements[4].checked = true;
+                    }
+                    if (parseInt(localStorage.getItem('add'), 10)) {
+                        form.elements[3].checked = true;
+                    } else {
+                        form.elements[5].checked = true;
+                    }
+                    if (parseInt(localStorage.getItem('hiRes'), 10)) {
+                        form.elements[9].checked = true;
+                    }
+                }
+            } catch (e) {
+                console.log(e);
+                return;
+            }
+        }
+
+        /* takes point, returns number based on clockwise border numeration */
+        function pointToNum(x, y) {
+            var width = cWidth - 1;
+            var height = cHeight - 1;
+            if (y == 0) {
+                return x;
+            }
+            if (x == width) {
+                return width + y;
+            }
+            if (y == height) {
+                return width * 2 + height - x;
+            }
+            return width * 2 + height * 2 - y;
+        }
+
+        /* takes number, returns point */
+        function numToPoint(num) {
+            // width height needs fixing
+            var width = cWidth;
+            var height = cHeight;
+            if (num <= width) {
+                return [num, 0];
+            }
+            if (num <= width + height) {
+                return [width, num - width];
+            }
+            if (num <= width * 2 + height) {
+                return [width * 2 + height - num, height];
+            }
+            return [0, width * 2 + height * 2 - num];
+        }
+
+        /* Fisher-Yates Shuffle taken from http://stackoverflow.com/questions/2450954/how-to-randomize-shuffle-a-javascript-array */
+        function shuffle(array) {
+            var currentIndex = array.length, temporaryValue, randomIndex;
+
+            // While there remain elements to shuffle...
+            while (0 !== currentIndex) {
+
+                // Pick a remaining element...
+                randomIndex = Math.floor(Math.random() * currentIndex);
+                currentIndex -= 1;
+
+                // And swap it with the current element.
+                temporaryValue = array[currentIndex];
+                array[currentIndex] = array[randomIndex];
+                array[randomIndex] = temporaryValue;
+            }
+
+            return array;
+        }
+
+
+
+    </script>
+    <script>getInspired();</script>
+
+
+    <script>
+        var form = document.getElementById('form');
+        form.addEventListener('submit', submitFunc, false);
+        getSettings();
+
+        var lineStep = 0; // darkness of lines
+        var numLines = 0; // number of lines drawn
+        var testLines = 0; // number of lines to test for selection
+        var linesDrawn = 0;
+        var add = null;
+        var lines = [];
+        var totalProgress = numLines; // number of lines to receive for use in progress
+        var cors = false;
+        var workers = [];
+        var playing = false;
+        var shared = false;
+
+        var cWidth = 0;
+        var cHeight = 0;
+
+        var lDisplay = document.getElementById('lCanvas');
+        var lContext = lDisplay.getContext('2d');
+        lDisplay.width = 1024;
+        lDisplay.height = 1024;
+
+        var progress = document.getElementById('progress');
+        var display = document.getElementById('canvas');
+        display.width = 512;
+        display.height = 512;
+        var dContext = display.getContext('2d');
+
+        var size = document.getElementById('size');
+        size.addEventListener('click', sizeFunc, false);
+
+        var rSize = document.getElementById('rSize');
+        rSize.addEventListener('click', rSizeFunc, false);
+
+        var image = new Image();
+        image.crossOrigin = 'anonymous';
+        image.onload = function () {
+            var bar = document.getElementById('barBack');
+            bar.style.visibility = 'visible';
+
+            if (form.elements[2].checked === true) {
+                var color = true;
+            } else {
+                var color = false;
+            }
+
+            if (form.elements[9].checked === true) {
+                var hiRes = true;
+            } else {
+                var hiRes = false;
+            }
+            form[10].innerHTML = '<i class="fa fa-paint-brush"></i> Draw!'
+            process(image, color, hiRes);
+            URL.revokeObjectURL(image.src);
+        }
+        image.addEventListener('error', function (e) {
+            e.preventDefault();
+            if (cors === false) {
+                image.src = '/p/' + url.value;
+            }
+            if (cors === true) {
+                if (workers.length != 0) {
+                    for (var i = 0; i < workers.length; i++) {
+                        workers[i].terminate();
+                    }
+                    workers = [];
+                }
+                dContext.save();
+                dContext.clearRect(0, 0, 512, 512);
+                dContext.font = "36px sans-serif";
+                dContext.globalCompositeOperation = 'source-over';
+                dContext.fillStyle = 'red';
+                dContext.fillText("Error: Please ensure URL or file is an image", 10, 35, 490)
+                dContext.restore();
+
+                lContext.save();
+                lContext.clearRect(0, 0, 1024, 1024);
+                lContext.font = "36px sans-serif";
+                lContext.globalCompositeOperation = 'source-over';
+                lContext.fillStyle = 'red';
+                lContext.fillText("Error: Please ensure URL or file is an image", 10, 35, 490)
+                lContext.restore();
+
+                form[10].innerHTML = '<i class="fa fa-paint-brush"></i> Draw!'
+            }
+            cors = true;
+        }, false);
+
+        var fileInput = document.getElementById('file');
+        var fileLabel = document.getElementById('fileLabel');
+        fileInput.addEventListener('change', function (e) {
+            if (this.files.length) {
+                fileLabel.innerHTML = '<i class="fa fa-file-image-o"></i> ' + e.target.value.split('\\').pop();
+            } else {
+                fileLabel.innerHTML = '<i class="fa fa-file-image-o"></i> Import Image';
+            }
+
+        }, false);
+
+        var ds = document.getElementById('ds');
+
+        var dLink = document.getElementById('dLink');
+        dLink.href = 'Download';
+        dLink.addEventListener('click', dLinkFunc, false);
+
+        var sLink = document.getElementById('sLink');
+        sLink.addEventListener('click', sLinkFunc, false);
+    </script>
+
+</body>
+
+</html>

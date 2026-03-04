@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/0.7.2/p5.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/0.7.2/addons/p5.dom.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/0.7.2/addons/p5.sound.min.js"></script>
+    <script src="https://unpkg.com/p5.createloop@0.3.1/dist/p5.createloop.js"></script>
+    <style>
+        html,
+        body {
+            margin: 0;
+            padding: 0;
+        }
+
+        canvas {
+            display: block;
+        }
+    </style>
+
+</head>
+
+<body>
+    <script>
+        function setup() {
+            createCanvas(400, 400)
+            fill(0)
+            frameRate(30)
+            createLoop({ duration: 3, gif: true })
+        }
+
+        function draw() {
+            background(255)
+            translate(width / 2, height / 2)
+            const radius = height / 3
+            const x = cos(animLoop.theta) * radius
+            const y = sin(animLoop.theta) * radius
+            ellipse(x, y, 50, 50)
+        }
+
+    </script>
+</body>
+
+</html>

@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/0.7.2/p5.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/0.7.2/addons/p5.dom.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/0.7.2/addons/p5.sound.min.js"></script>
+    <script src='../js/c2.js'></script>
+    <script src="../js/p5.marching.js"></script>
+</head>
+
+<body>
+
+    <canvas id='c2' />
+    <script>
+
+
+        let resolution = 32;//be careful, it makes your computer hang
+
+        let pixels = [];
+        function setup() {
+            // put setup code here
+            createCanvas(windowWidth, windowHeight);
+            background(127, 127, 127);
+
+
+        }
+
+        function draw() {
+            noStroke();
+            strokeWeight(0.2);
+
+            let halfres = resolution * 0.5;
+
+            let locX1 = cos(frameCount * 0.02) * halfres + halfres;
+            let locY1 = sin(frameCount * 0.03) * halfres + halfres;
+
+            //let locX2 = - sin(frameCount * 0.05) * halfres + halfres;
+            //let locY2 = - cos(frameCount * 0.07) * halfres + halfres;
+
+
+            pixels = [];
+            for (let y = 0; y < resolution; y++) {
+                let xRow = [];
+                for (let x = 0; x < resolution; x++) {
+                    xRow.push(noise(x * 0.05, y * 0.05, frameCount * 0.1) * 2);
+                }
+                pixels.push(xRow);
+            }
+
+
+            // put drawing code here
+            scale(10);
+            for (let y = 0; y < resolution; y++) {
+                let xRow = [];
+                for (let x = 0; x < resolution; x++) {
+                    fill(pixels[y][x] * 128);
+                    rect(x, y, 1, 1);
+                }
+            }
+
+            stroke(0, 255, 255);
+            noFill();
+            //strokeWeight(1.0/32.0);
+            let lines = marchingSquares(pixels, 1.0);
+            lines.map(function (a) {
+                line(a[0], a[1], a[2], a[3]);
+            });
+
+        }
+
+        // dynamically adjust the canvas to the window
+        function windowResized() {
+            resizeCanvas(windowWidth, windowHeight);
+            background(127, 127, 127);
+        }
+    </script>
+
+    <scriptZ>
+        /**
+        this example aims to show the simplest hello world code possible
+        for marching.
+        */
+
+        function setup() {
+        // put setup code here
+        createCanvas(100, 100);
+
+        background(0);
+        fill(255);
+        noStroke();
+        ellipse(40, 40, 40, 40);
+        ellipse(60, 60, 40, 40);
+
+
+        //construct a 2d numeric array of pixel brightnesses, row by row
+        let pixels = [];
+        for (let y = 0; y < height; y++) { let xRow=[]; for (let x=0; x < width; x++) { xRow.push(brightness(get(x,
+            y))); } pixels.push(xRow); } //call and draw marching vectors stroke(0, 255, 255); noFill(); let
+            lines=marchingSquares(pixels); lines.map(function (a) { line(a[0], a[1], a[2], a[3]); }); } </scriptX>
+</body>
+
+</html>

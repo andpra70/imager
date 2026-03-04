@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.6.0/p5.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.6.0/addons/p5.sound.min.js"></script>
+  <script src="https://unpkg.com/ml5@latest/dist/ml5.min.js"></script>
+  <link rel="stylesheet" type="text/css" href="style.css">
+  <meta charset="utf-8" />
+
+</head>
+
+<body>
+  <main>
+  </main>
+  <script>
+
+    let myNN;
+
+    function setup() {
+      createCanvas(400, 400);
+
+      const option = {
+        task: "classification",
+        input: 1,
+        output: 1,
+        debug: true,
+      };
+      // 1. create the model
+      myNN = ml5.neuralNetwork(option);
+      console.log("myNN", myNN);
+
+      // 2. add data
+      for (let i = 0; i < 400; i++) {
+        // x: [0-400], ["left" / "right"]
+        const x = Math.random() * 400;
+        const y = x > 200 ? "right" : "left";
+        myNN.addData([x], [y]);
+      }
+      myNN.normalizeData();
+
+      // 3. train
+      const trainOption = { batchSize: 24, epochs: 32 };
+      myNN.train(trainOption, doneTrain);
+    }
+
+    function doneTrain() {
+      myNN.classify([14], gotResults);
+      myNN.classify([200], gotResults);
+      myNN.classify([201], gotResults);
+      myNN.classify([300], gotResults);
+    }
+
+    function gotResults(err, results) {
+      console.log("results", results);
+    }
+
+    function draw() {
+      background(220);
+      line(200, 0, 200, 400);
+      ellipse(14, 200, 10, 10);
+      ellipse(200, 200, 10, 10);
+      ellipse(201, 200, 10, 10);
+      ellipse(300, 200, 10, 10);
+    }
+
+
+  </script>
+</body>
+
+</html>

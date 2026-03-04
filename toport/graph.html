@@ -1,0 +1,142 @@
+<html>
+
+<head>
+  <script type="text/javascript" src="js/litegraph.js"></script>
+</head>
+
+<body>
+
+
+  <button onclick="load()">Load</button>
+  <button onclick="save()">Save</button>
+
+  <canvas id='mycanvas' width='1024' height='720' style='border: 1px solid;'></canvas>
+
+  <script>
+    var el = document.getElementById("mycanvas");
+    el.width = window.innerWidth;
+    el.height = window.innerHeight;
+
+    //node constructor class
+    function MyAddNode() {
+      this.addInput("A", "number");
+      this.addInput("B", "number");
+      this.addOutput("A+B", "number");
+      this.properties = { precision: 1 };
+    }
+
+    //name to show
+    MyAddNode.title = "Sum";
+
+    //function to call when the node is executed
+    MyAddNode.prototype.onExecute = function () {
+      var A = this.getInputData(0);
+      if (A === undefined)
+        A = 0;
+      var B = this.getInputData(1);
+      if (B === undefined)
+        B = 0;
+      this.setOutputData(0, A + B);
+    }
+
+    //register in the system
+    LiteGraph.registerNodeType("basic/sum", MyAddNode);
+
+  </script>
+
+  <script>
+    var graph = new LGraph("test");
+
+    var canvas = new LGraphCanvas("#mycanvas", graph);
+
+    var node_file = LiteGraph.createNode("basic/file");
+    node_file.pos = [200, 500];
+    graph.add(node_file);
+    //node_file.setValue(4.5);
+
+    var node_dl = LiteGraph.createNode("basic/download");
+    node_dl.pos = [700, 500];
+    graph.add(node_dl);
+    //node_file.setValue(4.5);
+
+    var node_const = LiteGraph.createNode("basic/const");
+    node_const.title = "Ciccio";
+    node_const.pos = [200, 200];
+    graph.add(node_const);
+    node_const.setValue(4.5);
+
+    var node_const2 = LiteGraph.createNode("basic/const");
+    node_const2.pos = [200, 400];
+    graph.add(node_const2);
+    node_const.setValue(4.5);
+
+    var node_watch = LiteGraph.createNode("basic/watch");
+    node_watch.pos = [700, 300];
+    graph.add(node_watch);
+
+    var node_sum = LiteGraph.createNode("basic/sum");
+    node_sum.pos = [450, 300];
+    graph.add(node_sum);
+
+    node_const.connect(0, node_sum, 0);
+    node_const2.connect(0, node_sum, 1);
+    node_sum.connect(0, node_watch, 0);
+
+    graph.start();
+
+    console.log(graph.serialize());
+
+    function save() {
+      graph.saveFile();
+    }
+    function load() {
+      graph.loadFile();
+    }
+
+    function sum(a, b) {
+      return a + b;
+    }
+
+    LiteGraph.wrapFunctionAsNode("math/sum2", sum, ["Number", "Number"], "Number");
+
+  </script>
+
+
+  <script>
+    if (typeof Editor === "undefined") {
+      window.Editor = { polymerElement: Polymer, log: console.log };
+    }
+
+    var litegraph;
+
+    Editor.polymerElement({
+      ready: function () {
+        litegraph = this;
+        LiteGraph.nodeImagesPath = "nodes/";
+        var editor = new LiteGraph.Editor("main");
+        window.graphcanvas = editor.graphcanvas;
+        window.graph = editor.graph;
+        window.addEventListener("resize", function () { editor.graphcanvas.resize(); });
+
+        // Load the example
+        JSONGraph();
+      },
+      trace: function (a) { // eslint-disable-line no-unused-vars
+        if (typeof (console) == "object") {
+          console.log(a);
+        }
+      },
+      setTransform: function (s, r, n, t) {
+        s = 1, r = 1, n = 0, t = 0;
+        this.style.transform = "matrix(" +
+          s + ", 0, 0, " +
+          r + ", " +
+          Math.round(n + 0.5 * this.offsetWidth * (s - 1)) + ", " +
+          Math.round(t + 0.5 * this.offsetHeight * (r - 1)) + ")";
+      }
+    });
+  </script>
+
+</body>
+
+</html>

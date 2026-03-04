@@ -1,0 +1,52 @@
+<html>
+    <body>
+
+    </body>
+
+
+    <script>
+
+const canvas = document.createElement('canvas');
+const ctx = canvas.getContext('2d');
+const img = new Image();
+img.src = '../img/giacometti.jpg';
+img.onload = function() {
+  canvas.width = img.width;
+  canvas.height = img.height;
+  ctx.drawImage(img, 0, 0);
+  generateStippledGrid();
+};
+
+function generateStippledGrid() {
+  const gridSize = 50; // Dimensione della griglia (numero di celle per riga/colonna)
+  const cellSize = canvas.width / gridSize;
+
+  const gridCanvas = document.createElement('canvas');
+  gridCanvas.width = canvas.width;
+  gridCanvas.height = canvas.height;
+  const gridCtx = gridCanvas.getContext('2d');
+
+  for (let y = 0; y < gridSize; y++) {
+    for (let x = 0; x < gridSize; x++) {
+      const cellX = x * cellSize;
+      const cellY = y * cellSize;
+
+      const pixel = ctx.getImageData(cellX, cellY, 1, 1).data;
+      const grayValue = (pixel[0] + pixel[1] + pixel[2]) / 3;
+
+      const dotRadius = (grayValue / 255) * (cellSize / 2); // Proporzionale alla luminanza
+
+      gridCtx.fillStyle = 'black';
+      gridCtx.beginPath();
+      gridCtx.arc(cellX + cellSize / 2, cellY + cellSize / 2, dotRadius, 0, 2 * Math.PI);
+      gridCtx.fill();
+    }
+  }
+
+  // Inserisci la griglia nel DOM o esegui altre operazioni
+  document.body.appendChild(gridCanvas);
+}
+
+
+    </script>
+</html>

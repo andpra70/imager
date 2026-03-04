@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/0.7.2/p5.min.js"></script>
+  <script src="https://unpkg.com/p5.js-svg@1.5.1"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/0.7.2/addons/p5.dom.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/0.7.2/addons/p5.sound.min.js"></script>
+  <style>
+    html,
+    body {
+      margin: 0;
+      padding: 0;
+    }
+
+    canvas {
+      display: block;
+    }
+  </style>
+
+</head>
+
+<body>
+  <script>
+
+    let pos;
+    let vel;
+    let angle = 0;
+    let path = [];
+
+    let count = 1;
+    let rx = 0;
+    let ry = 0;
+    let activeRotate = false;
+
+    let rxSlider, rySlider;
+
+    function setup() {
+      randomSeed(0);
+      noiseSeed(0);
+      createCanvas(900, 600, SVG);
+      pos = createVector(random(50, width - 50), random(50, height - 50));
+      vel = createVector(cos(angle), sin(angle));
+      path.push(pos.copy());
+      background(255);
+      rxSlider = createSlider(0, 20, 0);
+      rySlider = createSlider(0, 20, 0);
+
+    }
+
+    function draw() {
+      background(255);
+      translate(width / 2, height / 2);
+      stroke(0);
+      noFill();
+      strokeWeight(3);
+      vel.x = cos(angle) * rx;
+      vel.y = sin(angle) * ry;
+      if (count % 1 == 0) {
+        angle = radians(map(noise(count * 0.01), 0, 1, -180, 180) * 10);
+        rx = map(noise(pos.x, pos.y), 0, 1, 0, 15);
+        ry = map(noise(pos.x, pos.y), 0, 1, 0, 15);
+        //         rx = map(noise(angle * 0.01, count * 0.001), 0, 1, 0, 15);
+        //     ry = map(noise(angle * 0.01, count * 0.001), 0, 1, 0, 15);
+        let tempPos = pos
+          .copy()
+          .add(createVector(cos(angle) * rx, sin(angle) * ry));
+
+        if (
+          tempPos.x >= 50 &&
+          tempPos.x <= width - 50 &&
+          tempPos.y >= 50 &&
+          tempPos.y <= height - 50
+        ) {
+          pos = tempPos.copy();
+
+          if (path.length <= 2000) {
+            path.push(pos.copy());
+
+          } else {
+            print("empty");
+            path = [];
+            pos.x = random(50, width - 50);
+            pos.y = random(50, height - 50);
+          }
+        } else {
+          vel.mult(-1);
+        }
+      }
+      push();
+
+      if (activeRotate) {
+        rotate(-angle - 90);
+        if (path.length > 1) {
+          translate(
+            -path[path.length - 1].x + width / 2,
+            -path[path.length - 1].y + height / 2
+          );
+        }
+      }
+      beginShape();
+      for (let i = 0; i < path.length; i++) {
+        curveVertex(path[i].x - width / 2, path[i].y - height / 2);
+      }
+      endShape();
+
+      count++;
+      stroke(255, 0, 0);
+      pop();
+    }
+
+    function mouseClicked() {
+      activeRotate = !activeRotate;
+    }
+
+    function keyPressed() {
+      if (key === "j") {
+        save("randomWalkerPath" + path.length + ".svg"); // give file name
+      }
+    }
+
+
+  </script>
+</body>
+
+</html>

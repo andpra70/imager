@@ -1,0 +1,72 @@
+<html>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"
+  integrity="sha512-M7nHCiNUOwFt6Us3r8alutZLm9qMt4s9951uo8jqO4UwJ1hziseL6O3ndFyigx6+LREfZqnhHxYjKRJ8ZQ69DQ=="
+  crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+
+
+<body>
+
+</body>
+
+<script>
+
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d');
+  const img = new Image();
+  
+  img.src = './img/car1.jpg';
+
+  img.onload = function () {
+    canvas.width = img.width;
+    canvas.height = img.height;
+    ctx.drawImage(img, 0, 0);
+    generateDelaunayTriangles();
+  };
+
+  function generateDelaunayTriangles() {
+    const points = []; // Array per i punti di campionamento (coordinate x e y)
+    const gridSize = 256; // Dimensione della griglia (numero di celle per riga/colonna)
+    const cellSize = canvas.width / gridSize;
+
+    for (let y = 0; y < gridSize; y++) {
+      for (let x = 0; x < gridSize; x++) {
+        const cellX = x * cellSize;
+        const cellY = y * cellSize;
+
+        const pixel = ctx.getImageData(cellX, cellY, 1, 1).data;
+        const grayValue = (pixel[0] + pixel[1] + pixel[2]) / 3;
+
+        points.push({ x: cellX , y: cellY , value: grayValue });
+      }
+    }
+
+    var delaunay = d3.Delaunay.from(points, d => d.x, d => d.y);
+    var triangles = delaunay.trianglePolygons();
+
+    let S=3;
+    const outputCanvas = document.createElement('canvas');
+    outputCanvas.width = canvas.width*S;
+    outputCanvas.height = canvas.height*S;
+    const outputCtx = outputCanvas.getContext('2d');
+
+    outputCtx.strokeStyle = 'black';
+    outputCtx.lineWidth = 1;
+    triangles = Array.from(triangles);
+    triangles.forEach(triangle => {
+      outputCtx.beginPath();
+      outputCtx.moveTo(triangle[0][0]*S, triangle[0][1]*S);
+      outputCtx.lineTo(triangle[1][0]*S, triangle[1][1]*S);
+      outputCtx.lineTo(triangle[2][0]*S, triangle[2][1]*S);
+      outputCtx.closePath();
+      outputCtx.stroke();
+    });
+
+    // Inserisci il risultato nel DOM o esegui altre operazioni
+    document.body.appendChild(outputCanvas);
+  }
+
+
+</script>
+
+</html>

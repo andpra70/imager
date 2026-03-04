@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.7.0/p5.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.7.0/addons/p5.sound.min.js"></script>
+  <link rel="stylesheet" type="text/css" href="style.css">
+  <meta charset="utf-8" />
+
+</head>
+
+<body>
+  <main>
+  </main>
+  <script>
+    let img;
+    let pxH = 160;
+    let pxW = 120;
+    let abc = '@%#{}[]()<>^*+=~-:. '; //'@%#=+-:. '
+
+    this.asciiChars = {
+      minimalist: "#+-.",
+      normal: "@%#*+=-:.",
+      normal2: "&$Xx+;:.",
+      alphabetic: "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+      alphanumeric: "ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890abcdefghijklmnopqrstuvwxyz",
+      numerical: "0896452317",
+      extended: "@%#{}[]()<>^*+=~-:. ",
+      math: "+-\xd7\xf7=≠≈∞√π",
+      arrow: "↑↗→↘↓↙←↖",
+      grayscale: "@$BWM#*oahkbdpwmZO0QCJYXzcvnxrjft/|()1{}[]-_+~<>i!lI;:,\"^`'.",
+      max: "\xc6\xd1\xcaŒ\xd8M\xc9\xcb\xc8\xc3\xc2WQB\xc5\xe6#N\xc1\xfeE\xc4\xc0HKRŽœXg\xd0\xeaq\xdbŠ\xd5\xd4A€\xdfpm\xe3\xe2G\xb6\xf8\xf0\xe98\xda\xdc$\xebd\xd9\xfd\xe8\xd3\xde\xd6\xe5\xff\xd2b\xa5FD\xf1\xe1ZP\xe4š\xc7\xe0h\xfb\xa7\xddkŸ\xaeS9žUTe6\xb5Oyx\xce\xbef4\xf55\xf4\xfa&a\xfc™2\xf9\xe7w\xa9Y\xa30V\xcdL\xb13\xcf\xcc\xf3C@n\xf6\xf2s\xa2u‰\xbd\xbc‡zJƒ%\xa4Itoc\xeerjv1l\xed=\xef\xec<>i7†[\xbf?\xd7}*{+()/\xbb\xab•\xac|!\xa1\xf7\xa6\xaf—^\xaa„”“~\xb3\xba\xb2–\xb0\xad\xb9‹›;:’‘‚’˜ˆ\xb8…\xb7\xa8\xb4`",
+      codepage437: "█▓▒░",
+      blockelement: "█"
+    };
+
+    function preload() {
+      img = loadImage("../img/car7.jpg");
+    }
+
+    function setup() {
+      createCanvas(900, 900);
+      img.resize(pxW, pxH);
+      img.filter(GRAY);
+      textFont('monospace')
+      textSize(width / pxW * 1.2)
+      // image(img, 0, 0, width, height);
+      for (let j = 0; j < pxH; j++) {
+        for (let i = 0; i < pxW; i++) {
+          let w = width / pxW
+          let h = height / pxH
+          let x = i * w
+          let y = j * h
+          let shade = img.get(i, j)[0]
+          console.log(shade)
+          // fill(shade)
+          // rect(x,y,w,h)
+          let index = floor(shade / 256 * abc.length)
+          text(abc[index], x, y)
+        }
+      }
+    }
+
+  </script>
+</body>
+
+</html>

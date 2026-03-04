@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <link href="../js/litegraph.css" rel="stylesheet" />
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.8.0/p5.js"></script>
+  <script type="text/javascript" src="../js/litegraph.js"></script>
+  <script src="../js/p5.gui.js"></script>
+  <script src="../js/p5.rast.js"></script>
+  <script src="../js/p5.nodes.js"></script>
+
+</head>
+
+<body>
+  <button onclick="load()">Load</button>
+  <button onclick="save()">Save</button>
+  <hr>
+  <main id="container">
+  </main>
+  <hr>
+  <canvas id='mycanvas' width='1200' height='1200' style='border: 1px solid;'></canvas>
+
+  <script>
+
+    var el = document.getElementById("mycanvas");
+    el.width = window.innerWidth;
+    el.height = window.innerHeight / 2;
+
+    //
+    // graph
+    //
+    var graph = new LGraph("test");
+    function save() {
+      graph.saveFile();
+    }
+    function load() {
+      graph.loadFile();
+    }
+
+    var canvas = new LGraphCanvas("#mycanvas", graph);
+
+
+    var rimage = LiteGraph.createNode("rast/image");
+    rimage.pos = [10, 100];
+    graph.add(rimage);
+
+    var rimage2 = LiteGraph.createNode("rast/image");
+    rimage2.pos = [10, 300];
+    graph.add(rimage2);
+
+    var blend = LiteGraph.createNode("rast/blend");
+    blend.pos = [300, 200];
+    graph.add(blend);
+
+    var frame = LiteGraph.createNode("rast/frame");
+    frame.pos = [500, 100];
+    graph.add(frame);
+
+    rimage.connect(0, blend, 0);
+    rimage2.connect(0, blend, 1);
+    blend.connect(0, frame, 0);
+
+
+    var rp5 = LiteGraph.createNode("rast/p5");
+    graph.add(rp5);
+
+
+    /*
+    var a = LiteGraph.createNode("basic/const");
+    a.title = "A";
+    a.pos = [200, 200];
+    graph.add(a);
+    a.setValue(4.5);
+
+    var b = LiteGraph.createNode("basic/const");
+    b.title = "B";
+    b.pos = [200, 400];
+    graph.add(b);
+    b.setValue(4.5);
+
+    var node_sum = LiteGraph.createNode("rast/sum");
+    node_sum.pos = [500, 200];
+    graph.add(node_sum);
+
+
+    var node_watch = LiteGraph.createNode("basic/watch");
+    node_watch.pos = [700, 300];
+    graph.add(node_watch);
+
+    a.connect(0, node_sum, 0);
+    b.connect(0, node_sum, 1);
+    node_sum.connect(0, node_watch, 0);
+    */
+
+    graph.start();
+
+    /*
+    let rast;
+    let rast2;
+    let rast3;
+
+    function preload() {
+      rast = new Rast();
+      rast.load('../img/car40.jpg');
+    }
+
+    function setup() {
+
+      myCanvas = createCanvas(rast.img.width*10, rast.img.height);
+      noLoop();
+
+      rast2=rast.clone();
+
+
+      rastFn1=new RastFn(rast2);
+      rastFn_Gray=new RastFn_Gray(rast);
+      rastFn_Gray.transform();
+      rastFn_Threshold=new RastFn_Threshold(rastFn_Gray.output);
+      rastFn_Threshold.transform();
+      rastFn_Blur=new RastFn_Blur(rastFn1.output);
+      rastFn_Blur.transform();
+      rastFn_Blur=new RastFn_Blur(rastFn_Blur.output);
+      rastFn_Blur.transform();
+
+    }
+
+    function draw() {
+      background(0);
+      // strokeWeight(20);
+      var x=0;
+      var w=rast.w;
+      image(rast.layer, x*w, 0);
+      x++;
+      image(rast2.layer, x*w, 0);
+      x++;
+      image(rastFn1.output.layer, x*w, 0);
+      x++;
+      image(rastFn_Gray.output.layer, x*w, 0);
+      x++;
+      image(rastFn_Threshold.output.layer, x*w, 0);
+      x++;
+      image(rastFn_Blur.output.layer, x*w, 0);
+      x++;
+    }
+    */
+
+  </script>
+</body>
+
+</html>

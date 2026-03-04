@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.8.0/p5.js"></script>
+  <script src="https://mrdoob.github.io/stats.js/build/stats.min.js"></script>
+
+</head>
+
+<body>
+  <main>
+  </main>
+  <script>
+    const samples = 10;
+    const frag = `
+precision highp float;
+
+uniform sampler2D tex0;
+varying vec2 vTexCoord;
+uniform vec2 res;
+uniform float samples;
+uniform vec2 axis;
+
+float gauss(float x, float e){
+    return exp(-pow(x, 2.)/e); 
+}
+
+void main() {
+  vec2 uv = vTexCoord;
+  // vec2 texel =  1.0 / res;
+
+  const float maxSamples = 50.0;
+
+  float s = floor(samples);
+  vec4 sum = vec4(0.0);
+  float total = 0.0;
+
+  for(float i = 0.0; i<maxSamples; i++){
+    if(i>=floor(s)) break;
+    float x2 =  (i - samples * 0.5);
+    vec2 ipos = uv + vec2(x2 / res.x, x2 / res.y) * axis;
+    float g = gauss(x2, float(20.0*samples)*0.5);
+    sum += g * texture2D(tex0, ipos);
+    total += g;
+  }
+
+  sum /= total;
+
+
+  gl_FragColor = sum;
+}
+`;
+
+    let s;
+    function preload() {
+      img = loadImage('../img/car1.jpg') // bricks.jpg
+    }
+    function setup() {
+      createCanvas(img.width, img.height, WEBGL);
+      s = createFilterShader(frag);
+    }
+
+    function draw() {
+      clear()
+      image(img, -width / 2, -height / 2, width, height);
+
+
+      s.setUniform('res', [width, height]);
+      s.setUniform('texel', [1 / width, 1 / height]);
+      s.setUniform('samples', samples);
+
+      s.setUniform('axis', [1, 0]);
+      filter(s);
+
+      s.setUniform('axis', [0, 1]);
+      filter(s);
+
+      // noLoop();
+    }
+
+  </script>
+  <script>
+    stats = new Stats()
+    document.body.appendChild(stats.dom)
+    requestAnimationFrame(function loop() {
+      stats.update();
+      requestAnimationFrame(loop)
+    })
+  </script>
+</body>
+
+</html>

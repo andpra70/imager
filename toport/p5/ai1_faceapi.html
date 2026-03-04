@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.5.0/p5.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.5.0/addons/p5.sound.min.js"></script>
+  <script src="https://unpkg.com/ml5@latest/dist/ml5.min.js"></script>
+  <link rel="stylesheet" type="text/css" href="style.css">
+  <meta charset="utf-8" />
+
+</head>
+
+<body>
+  <main>
+  </main>
+  <script>
+
+
+    let video;
+    let myFaceAPI;
+    let myResults = [];
+
+    const detectionOptions = {
+      withLandmarks: true,
+      withDescriptors: false,
+    };
+
+    function setup() {
+      video = createCapture(VIDEO);
+      video.size(640, 480);
+      video.hide();
+      createCanvas(640, 480);
+
+      myFaceAPI = ml5.faceApi(video, detectionOptions, modelLoaded);
+
+      noFill();
+      stroke(255, 100, 0);
+      textAlign(CENTER);
+    }
+
+    function modelLoaded() {
+      console.log("modelLoaded", myFaceAPI);
+      myFaceAPI.detect(gotResults);
+    }
+
+    function gotResults(err, results) {
+      if (err) {
+        console.error(err);
+      }
+      if (results) {
+        myResults = results;
+        console.log("results", results);
+
+        image(video, 0, 0, width, height);
+        if (myResults[0]) {
+          const box = myResults[0].alignedRect._box;
+          rect(box._x, box._y, box._width, box._height);
+
+          fill(255, 0, 0);
+          noStroke();
+          textSize(20);
+          text(`${box._x.toFixed(0)}, ${box._y.toFixed(0)}`, box._x, box._y);
+          noFill();
+          stroke(255, 100, 0);
+
+          const mouth = myResults[0].parts.mouth[10];
+          const leftMouth = myResults[0].parts.mouth[0];
+          const rightMouth = myResults[0].parts.mouth[6];
+          ellipse(leftMouth._x, leftMouth._y, 10, 10);
+          ellipse(rightMouth._x, rightMouth._y, 10, 10);
+          const mouthSize = dist(
+            leftMouth._x,
+            leftMouth._y,
+            rightMouth._x,
+            rightMouth._y
+          );
+          textSize(mouthSize * 1.2);
+          text("👄", mouth._x + 5, mouth._y + 10);
+
+          const leftEye = myResults[0].parts.leftEye[3];
+          const rightEye = myResults[0].parts.rightEye[3];
+          text("👁️", leftEye._x, leftEye._y + 10);
+          text("👁️", rightEye._x, rightEye._y + 10);
+
+          const nose = myResults[0].parts.nose[3];
+          text("🐽", nose._x, nose._y + 10);
+        }
+
+        myFaceAPI.detect(gotResults);
+      }
+    }
+
+
+  </script>
+</body>
+
+</html>

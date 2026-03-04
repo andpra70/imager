@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/addons/p5.sound.min.js"></script>
+  <link rel="stylesheet" type="text/css" href="style.css">
+  <meta charset="utf-8" />
+
+</head>
+
+<body>
+  <main>
+  </main>
+  <script>
+
+
+    function setup() {
+      createCanvas(800, 600);
+      background(220);
+      makeTriangle(0, 0, width, height, 0);
+    }
+
+    function makeTriangle(x, y, w, h, depth) {
+      stroke(255, depth * 30, 0);
+      if (depth > 7) {
+        return;
+      }
+      strokeWeight(3 / depth);
+      triangle(x, y + h, x + w / 2, y, x + w, y + h);
+
+
+      makeTriangle(x, y + h / 2, w / 2, h / 2, depth + 1);
+      makeTriangle(x + w / 4, y, w / 2, h / 2, depth + 1);
+      makeTriangle(x + w / 2, y + h / 2, w / 2, h / 2, depth + 1);
+    }
+  </script>
+</body>
+
+</html>
