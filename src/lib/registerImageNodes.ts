@@ -5513,6 +5513,194 @@ class SeargeantToolNode {
   }
 }
 
+class CrosshatchBnToolNode {
+  size: [number, number] = [280, 520];
+  properties!: Record<string, unknown>;
+  preview: GraphImage | null = null;
+  svg: GraphSvg | null = null;
+  status = "idle";
+  progress = 0;
+  lineCount = 0;
+  outputWidth = 0;
+  outputHeight = 0;
+  isRendering = false;
+  executionMs: number | null = null;
+  lastSignature = "";
+  lastOptionsSignature = "";
+  renderToken = 0;
+
+  constructor() {
+    const node = this as unknown as PreviewAwareNode & CrosshatchBnToolNode;
+    node.title = createToolTitle("Crosshatch BN");
+    node.properties = {
+      maxWidth: 700,
+      levels: 8,
+      upscale: 2,
+      whiteThreshold: 250,
+      lineSpacing: 5,
+      lineThickness: 1,
+      lineColor: "#000000",
+      lineAlpha: 1,
+    };
+    node.addInput("image", "image");
+    node.addOutput("image", "image");
+    node.addOutput("svg", "svg");
+    node.addWidget("slider", "Max width", 700, (value) => {
+      node.properties.maxWidth = Math.round(Number(value));
+      notifyGraphStateChange(node);
+    }, { min: 128, max: 2400, step: 8 });
+    node.addWidget("slider", "Levels", 8, (value) => {
+      node.properties.levels = Math.round(Number(value));
+      notifyGraphStateChange(node);
+    }, { min: 2, max: 128, step: 1 });
+    node.addWidget("slider", "Upscale", 2, (value) => {
+      node.properties.upscale = Math.round(Number(value));
+      notifyGraphStateChange(node);
+    }, { min: 1, max: 10, step: 1 });
+    node.addWidget("slider", "White thr", 250, (value) => {
+      node.properties.whiteThreshold = Math.round(Number(value));
+      notifyGraphStateChange(node);
+    }, { min: 0, max: 255, step: 1 });
+    node.addWidget("slider", "Spacing", 5, (value) => {
+      node.properties.lineSpacing = Math.round(Number(value));
+      notifyGraphStateChange(node);
+    }, { min: 1, max: 24, step: 1 });
+    node.addWidget("slider", "Thickness", 1, (value) => {
+      node.properties.lineThickness = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0.1, max: 8, step: 0.1, precision: 1 });
+    node.addWidget("text", "Line color", "#000000", (value) => {
+      node.properties.lineColor = normalizeHexColor(String(value));
+      notifyGraphStateChange(node);
+    });
+    node.addWidget("slider", "Line alpha", 1, (value) => {
+      node.properties.lineAlpha = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0, max: 1, step: 0.01, precision: 2 });
+    node.refreshPreviewLayout = () => {
+      refreshNode(node, node.preview, 4);
+    };
+    node.refreshPreviewLayout();
+  }
+
+  onExecute(this: PreviewAwareNode & CrosshatchBnToolNode) {
+    const inputValue = this.getInputData(0);
+    const input = isGraphImageReady(inputValue) ? inputValue : null;
+    if (!input) {
+      this.preview = null;
+      this.svg = null;
+      this.status = "waiting valid image";
+      this.progress = 0;
+      this.lineCount = 0;
+      this.outputWidth = 0;
+      this.outputHeight = 0;
+      this.executionMs = null;
+      this.isRendering = false;
+      this.lastSignature = "";
+      this.lastOptionsSignature = "";
+      this.setOutputData(0, null);
+      this.setOutputData(1, null);
+      this.refreshPreviewLayout();
+      return;
+    }
+
+    const options = {
+      maxWidth: clamp(Math.round(Number(this.properties.maxWidth ?? 700)), 128, 2400),
+      levels: clamp(Math.round(Number(this.properties.levels ?? 8)), 2, 128),
+      upscale: clamp(Math.round(Number(this.properties.upscale ?? 2)), 1, 10),
+      whiteThreshold: clamp(Math.round(Number(this.properties.whiteThreshold ?? 250)), 0, 255),
+      lineSpacing: clamp(Math.round(Number(this.properties.lineSpacing ?? 5)), 1, 24),
+      lineThickness: clamp(Number(this.properties.lineThickness ?? 1), 0.1, 8),
+      lineColor: normalizeHexColor(String(this.properties.lineColor ?? "#000000")),
+      lineAlpha: clamp(Number(this.properties.lineAlpha ?? 1), 0, 1),
+    };
+    const signature = getGraphImageSignature(input);
+    const optionsSignature = JSON.stringify(options);
+    if (signature !== this.lastSignature || optionsSignature !== this.lastOptionsSignature) {
+      this.lastSignature = signature;
+      this.lastOptionsSignature = optionsSignature;
+      const renderToken = ++this.renderToken;
+      const start = performance.now();
+      this.isRendering = true;
+      this.progress = 0;
+      this.status = "generating crosshatch...";
+      this.setDirtyCanvas(true, true);
+
+      const shouldCancel = () => renderToken !== this.renderToken;
+      const updateProgress = (value: number, status?: string) => {
+        this.progress = clamp(value, 0, 1);
+        if (status) {
+          this.status = status;
+        }
+        this.setDirtyCanvas(true, true);
+      };
+
+      void generateCrosshatchBnSvg(input, options, shouldCancel, updateProgress)
+        .then((result) => {
+          if (renderToken !== this.renderToken || !result) {
+            return null;
+          }
+          this.svg = result.svg;
+          this.lineCount = result.lineCount;
+          this.outputWidth = result.outputWidth;
+          this.outputHeight = result.outputHeight;
+          this.status = `lines ${result.lineCount}`;
+          return rasterizeGraphSvg(result.svg);
+        })
+        .then((preview) => {
+          if (renderToken !== this.renderToken) {
+            return;
+          }
+          this.preview = preview ?? null;
+          this.progress = 1;
+          this.executionMs = performance.now() - start;
+          this.status = "ready";
+          this.isRendering = false;
+          this.setDirtyCanvas(true, true);
+        })
+        .catch((error) => {
+          if (renderToken !== this.renderToken) {
+            return;
+          }
+          this.preview = input;
+          this.svg = null;
+          this.lineCount = 0;
+          this.outputWidth = 0;
+          this.outputHeight = 0;
+          this.progress = 0;
+          this.status = error instanceof Error ? error.message : "crosshatch error";
+          this.executionMs = null;
+          this.isRendering = false;
+          this.setDirtyCanvas(true, true);
+        });
+    }
+
+    this.setOutputData(0, this.preview ?? input);
+    this.setOutputData(1, this.svg);
+    this.refreshPreviewLayout();
+  }
+
+  onDrawBackground(this: PreviewAwareNode & CrosshatchBnToolNode, context: CanvasRenderingContext2D) {
+    const layout = drawImagePreview(context, this, this.preview, { footerLines: 4 });
+    context.save();
+    context.fillStyle = "rgba(255,255,255,0.65)";
+    context.font = "12px sans-serif";
+    context.fillText(`${this.status}${this.isRendering ? "..." : ""}`, 10, layout.footerTop + 12);
+    context.fillText(
+      `progress ${Math.round(this.progress * 100)}% | lines ${this.lineCount}`,
+      10,
+      layout.footerTop + 30,
+    );
+    context.fillText(
+      `out ${this.outputWidth || "-"}x${this.outputHeight || "-"}`,
+      10,
+      layout.footerTop + 48,
+    );
+    context.fillText(formatExecutionInfo(this.executionMs), 10, layout.footerTop + 66);
+    context.restore();
+  }
+}
+
 class FaceLandmarkerToolNode {
   size: [number, number] = [280, 540];
   properties!: Record<string, unknown>;
@@ -6445,6 +6633,7 @@ export function registerImageNodes() {
   LiteGraph.registerNodeType("tools/boldini", BoldiniToolNode as unknown as NodeCtor);
   LiteGraph.registerNodeType("tools/seargeant", SeargeantToolNode as unknown as NodeCtor);
   LiteGraph.registerNodeType("tools/carboncino", CarboncinoToolNode as unknown as NodeCtor);
+  LiteGraph.registerNodeType("tools/crosshatch-bn", CrosshatchBnToolNode as unknown as NodeCtor);
   LiteGraph.registerNodeType("tools/pose-detect", PoseDetectToolNode as unknown as NodeCtor);
   LiteGraph.registerNodeType("tools/face-landmarker", FaceLandmarkerToolNode as unknown as NodeCtor);
   LiteGraph.registerNodeType("tools/bg-remove", BgRemoveToolNode as unknown as NodeCtor);
