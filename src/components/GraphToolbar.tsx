@@ -15,6 +15,8 @@ interface GraphToolbarProps {
   previewWidthMin: number;
   statusMessage: string;
   onCollapseChange: (collapsed: boolean) => void;
+  themeMode: "light" | "mid" | "dark";
+  onThemeModeChange: (mode: "light" | "mid" | "dark") => void;
 }
 
 function GraphToolbar({
@@ -31,6 +33,8 @@ function GraphToolbar({
   previewWidthMin,
   statusMessage,
   onCollapseChange,
+  themeMode,
+  onThemeModeChange,
 }: GraphToolbarProps) {
   const [collapsed, setCollapsed] = useState(false);
   const actionButtons = [
@@ -146,6 +150,21 @@ function GraphToolbar({
               type="number"
               value={previewWidth}
             />
+          </label>
+          <label className="toolbar-setting">
+            <span className="toolbar-setting-label" title="Tema interfaccia">
+              T
+            </span>
+            <select
+              className="toolbar-input"
+              onChange={(event) => onThemeModeChange(event.target.value as "light" | "mid" | "dark")}
+              title="Tema interfaccia"
+              value={themeMode}
+            >
+              <option value="light">Chiaro</option>
+              <option value="mid">Medio</option>
+              <option value="dark">Scuro</option>
+            </select>
           </label>
           <p className="toolbar-status">{statusMessage}</p>
         </>

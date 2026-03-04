@@ -1,10 +1,75 @@
 :root {
-  color: #f2eadf;
+  --app-text: #f2eadf;
+  --app-bg-base: #111111;
+  --app-radial-a: rgba(191, 87, 0, 0.32);
+  --app-radial-b: rgba(36, 85, 110, 0.35);
+  --panel-border: rgba(242, 234, 223, 0.14);
+  --panel-bg: rgba(17, 17, 17, 0.92);
+  --panel-text: #f2eadf;
+  --panel-muted: rgba(242, 234, 223, 0.78);
+  --button-border: rgba(242, 234, 223, 0.18);
+  --button-bg: rgba(242, 234, 223, 0.06);
+  --button-text: #f2eadf;
+  --button-hover-bg: rgba(242, 166, 90, 0.16);
+  --button-hover-border: rgba(242, 166, 90, 0.45);
+  --danger-hover-bg: rgba(190, 63, 63, 0.16);
+  --danger-hover-border: rgba(190, 63, 63, 0.45);
+  --glyph-bg: rgba(242, 166, 90, 0.14);
+  --glyph-text: #f2a65a;
+  --input-bg: rgba(242, 234, 223, 0.06);
+  --input-border: rgba(242, 234, 223, 0.18);
+  --tooltip-bg: rgba(10, 10, 10, 0.95);
+  --tooltip-text: #f2eadf;
+  color: var(--app-text);
   background:
-    radial-gradient(circle at top left, rgba(191, 87, 0, 0.32), transparent 30%),
-    radial-gradient(circle at bottom right, rgba(36, 85, 110, 0.35), transparent 35%),
-    #111111;
+    radial-gradient(circle at top left, var(--app-radial-a), transparent 30%),
+    radial-gradient(circle at bottom right, var(--app-radial-b), transparent 35%),
+    var(--app-bg-base);
   font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+}
+
+:root[data-theme="mid"] {
+  --app-text: #ececec;
+  --app-bg-base: #2d2f33;
+  --app-radial-a: rgba(57, 114, 150, 0.35);
+  --app-radial-b: rgba(164, 130, 75, 0.3);
+  --panel-border: rgba(255, 255, 255, 0.18);
+  --panel-bg: rgba(35, 37, 41, 0.9);
+  --panel-muted: rgba(241, 241, 241, 0.8);
+  --button-border: rgba(255, 255, 255, 0.22);
+  --button-bg: rgba(255, 255, 255, 0.08);
+  --button-hover-bg: rgba(124, 195, 240, 0.2);
+  --button-hover-border: rgba(124, 195, 240, 0.55);
+  --glyph-bg: rgba(124, 195, 240, 0.2);
+  --glyph-text: #8fd8ff;
+  --input-bg: rgba(255, 255, 255, 0.08);
+  --input-border: rgba(255, 255, 255, 0.28);
+  --tooltip-bg: rgba(20, 21, 24, 0.96);
+  --tooltip-text: #ececec;
+}
+
+:root[data-theme="light"] {
+  --app-text: #20252b;
+  --app-bg-base: #eceff3;
+  --app-radial-a: rgba(70, 124, 168, 0.2);
+  --app-radial-b: rgba(196, 152, 88, 0.22);
+  --panel-border: rgba(32, 37, 43, 0.16);
+  --panel-bg: rgba(250, 252, 255, 0.92);
+  --panel-text: #1f2630;
+  --panel-muted: rgba(31, 38, 48, 0.75);
+  --button-border: rgba(31, 38, 48, 0.24);
+  --button-bg: rgba(31, 38, 48, 0.06);
+  --button-text: #1f2630;
+  --button-hover-bg: rgba(61, 126, 179, 0.16);
+  --button-hover-border: rgba(61, 126, 179, 0.45);
+  --danger-hover-bg: rgba(196, 56, 56, 0.14);
+  --danger-hover-border: rgba(196, 56, 56, 0.42);
+  --glyph-bg: rgba(61, 126, 179, 0.18);
+  --glyph-text: #255f8b;
+  --input-bg: rgba(31, 38, 48, 0.06);
+  --input-border: rgba(31, 38, 48, 0.22);
+  --tooltip-bg: rgba(28, 34, 41, 0.96);
+  --tooltip-text: #f4f7fb;
 }
 
 * {
@@ -43,8 +108,8 @@ body {
   gap: 0.4rem;
   align-items: stretch;
   padding: 0.45rem;
-  border-right: 1px solid rgba(242, 234, 223, 0.14);
-  background: rgba(17, 17, 17, 0.92);
+  border-right: 1px solid var(--panel-border);
+  background: var(--panel-bg);
   backdrop-filter: blur(10px);
   overflow: hidden;
 }
@@ -74,25 +139,25 @@ body {
 .toolbar-title {
   font-size: 0.74rem;
   font-weight: 700;
-  color: rgba(242, 234, 223, 0.85);
+  color: var(--panel-muted);
   letter-spacing: 0.04em;
 }
 
 .toolbar-collapse-button {
   width: 1.6rem;
   height: 1.6rem;
-  border: 1px solid rgba(242, 234, 223, 0.2);
+  border: 1px solid var(--button-border);
   border-radius: 8px;
-  background: rgba(242, 234, 223, 0.06);
-  color: #f2eadf;
+  background: var(--button-bg);
+  color: var(--button-text);
   cursor: pointer;
   font-size: 0.8rem;
   line-height: 1;
 }
 
 .toolbar-collapse-button:hover {
-  border-color: rgba(242, 166, 90, 0.45);
-  background: rgba(242, 166, 90, 0.16);
+  border-color: var(--button-hover-border);
+  background: var(--button-hover-bg);
 }
 
 .toolbar-group {
@@ -114,7 +179,7 @@ body {
   display: flex;
   align-items: center;
   gap: 0.4rem;
-  color: rgba(242, 234, 223, 0.88);
+  color: var(--panel-muted);
   font-size: 0.82rem;
 }
 
@@ -124,18 +189,18 @@ body {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid rgba(242, 234, 223, 0.12);
+  border: 1px solid var(--panel-border);
   border-radius: 999px;
-  background: rgba(242, 234, 223, 0.05);
+  background: var(--button-bg);
 }
 
 .toolbar-input {
   width: 100%;
-  border: 1px solid rgba(242, 234, 223, 0.18);
+  border: 1px solid var(--input-border);
   border-radius: 999px;
   padding: 0.42rem 0.65rem;
-  background: rgba(242, 234, 223, 0.06);
-  color: #f2eadf;
+  background: var(--input-bg);
+  color: var(--panel-text);
   font: inherit;
 }
 
@@ -148,11 +213,11 @@ body {
   align-items: center;
   justify-content: center;
   gap: 0.35rem;
-  border: 1px solid rgba(242, 234, 223, 0.18);
+  border: 1px solid var(--button-border);
   border-radius: 999px;
   padding: 0 0.3rem;
-  background: rgba(242, 234, 223, 0.06);
-  color: #f2eadf;
+  background: var(--button-bg);
+  color: var(--button-text);
   cursor: pointer;
   font: inherit;
   font-size: 0.62rem;
@@ -170,8 +235,8 @@ body {
   min-width: 1.2rem;
   padding: 0.06rem 0.2rem;
   border-radius: 999px;
-  background: rgba(242, 166, 90, 0.14);
-  color: #f2a65a;
+  background: var(--glyph-bg);
+  color: var(--glyph-text);
   font-size: 0.56rem;
   font-weight: 700;
   letter-spacing: 0.04em;
@@ -183,13 +248,13 @@ body {
 
 .toolbar-icon-button:hover {
   transform: translateY(-1px);
-  background: rgba(242, 166, 90, 0.16);
-  border-color: rgba(242, 166, 90, 0.45);
+  background: var(--button-hover-bg);
+  border-color: var(--button-hover-border);
 }
 
 .toolbar-icon-button.danger:hover {
-  background: rgba(190, 63, 63, 0.16);
-  border-color: rgba(190, 63, 63, 0.45);
+  background: var(--danger-hover-bg);
+  border-color: var(--danger-hover-border);
 }
 
 .toolbar-icon-button::after {
@@ -203,8 +268,8 @@ body {
   white-space: nowrap;
   padding: 0.35rem 0.5rem;
   border-radius: 8px;
-  background: rgba(10, 10, 10, 0.95);
-  color: #f2eadf;
+  background: var(--tooltip-bg);
+  color: var(--tooltip-text);
   font-size: 0.74rem;
   font-weight: 400;
   box-shadow: 0 10px 25px rgba(0, 0, 0, 0.28);
@@ -222,7 +287,7 @@ body {
 
 .toolbar-status {
   margin: 0;
-  color: rgba(242, 234, 223, 0.78);
+  color: var(--panel-muted);
   font-size: 0.65rem;
 }
 
@@ -262,7 +327,7 @@ body {
     width: auto;
     min-width: 0;
     max-width: none;
-    border-right: 1px solid rgba(242, 234, 223, 0.14);
+    border-right: 1px solid var(--panel-border);
     margin: 1rem;
     flex-direction: row;
     flex-wrap: wrap;
