@@ -34,7 +34,7 @@ function createCanvas(size: GraphImageSize): GraphImage {
 }
 
 function with2dContext<T>(canvas: GraphImage, action: (context: CanvasRenderingContext2D) => T): T {
-  const context = canvas.getContext("2d");
+  const context = canvas.getContext("2d", { willReadFrequently: true });
   if (!context) {
     throw new Error("2D context not available.");
   }
@@ -90,6 +90,29 @@ export function drawSourceToCanvas(source: CanvasImageSource): GraphImage {
   const size = imageSizeFromSource(source);
   return createImageCanvas(size, (context) => {
     context.drawImage(source, 0, 0, size.width, size.height);
+  });
+}
+
+export function graphImageToUint32Array(source: GraphImage) {
+  return with2dContext(source, (context) => {
+    const imageData = context.getImageData(0, 0, source.width, source.height);
+    return new Uint32Array(imageData.data.buffer.slice(0));
+  });
+}
+
+export function uint32ArrayToGraphImage(
+  pixels: Uint32Array,
+  size: GraphImageSize,
+) {
+  return createImageCanvas(size, (context) => {
+    const rgba = new Uint8ClampedArray(pixels.byteLength);
+    rgba.set(new Uint8ClampedArray(pixels.buffer, pixels.byteOffset, pixels.byteLength));
+    const imageData = new ImageData(
+      rgba,
+      size.width,
+      size.height,
+    );
+    context.putImageData(imageData, 0, 0);
   });
 }
 

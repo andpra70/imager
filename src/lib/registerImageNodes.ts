@@ -1,7 +1,11 @@
-import * as ImageTracerModule from "../vendor/imagetracer.1.2.6.js";
+import "../vendor/bluenoise.js";
+import "../vendor/imagetracer.1.2.6.js";
+import "../vendor/pnnquant.js";
 import type { ImageTracerOptions } from "../vendor/imagetracer.1.2.6.js";
+import type { PnnQuantOptions, PnnQuantResult } from "../vendor/pnnquant.js";
 import { LiteGraph } from "litegraph.js";
 import type { GraphImage } from "../models/graphImage";
+import type { GraphPalette } from "../models/graphPalette";
 import type { GraphSvg } from "../models/graphSvg";
 import {
   blendGraphImages,
@@ -12,12 +16,14 @@ import {
   downloadGraphImage,
   drawImagePreview,
   drawSourceToCanvas,
+  graphImageToUint32Array,
   grayscaleGraphImage,
   invertGraphImage,
   rasterizeGraphSvg,
   resizeNodeForPreview,
   serializeCompressedGraphImage,
   thresholdGraphImage,
+  uint32ArrayToGraphImage,
 } from "./imageUtils";
 
 type LiteNode = {
@@ -57,7 +63,55 @@ interface ImageTracerApi {
   checkoptions: (options?: string | ImageTracerOptions) => ImageTracerOptions;
 }
 
-const ImageTracer = ImageTracerModule as unknown as ImageTracerApi;
+interface PnnQuantInstance {
+  getResult(): Promise<PnnQuantResult>;
+}
+
+interface PnnQuantConstructor {
+  new (options: PnnQuantOptions): PnnQuantInstance;
+}
+
+interface BlueNoiseInstance {
+  diffuse: (
+    pixel: number,
+    palettePixel: number,
+    strength: number,
+    x: number,
+    y: number,
+  ) => number;
+}
+
+interface BlueNoiseConstructor {
+  new (options: { weight: number }): BlueNoiseInstance;
+}
+
+function getImageTracer() {
+  const imageTracer = (globalThis as { ImageTracer?: ImageTracerApi }).ImageTracer;
+  if (!imageTracer) {
+    throw new Error("ImageTracer global is not available.");
+  }
+
+  return imageTracer;
+}
+
+function getPnnQuant() {
+  const runtime = globalThis as {
+    PnnQuant?: PnnQuantConstructor;
+    TELL_BLUE_NOISE?: Int16Array;
+    BlueNoise?: BlueNoiseConstructor;
+  };
+
+  const pnnQuant = runtime.PnnQuant;
+  if (!pnnQuant) {
+    throw new Error("PnnQuant global is not available.");
+  }
+
+  if (!runtime.TELL_BLUE_NOISE || !runtime.BlueNoise) {
+    throw new Error("BlueNoise runtime is not available.");
+  }
+
+  return pnnQuant;
+}
 
 function refreshNode(node: PreviewAwareNode, image: CanvasImageSource | null, footerLines = 0) {
   resizeNodeForPreview(node, image, { footerLines });
@@ -77,7 +131,7 @@ function getGraphImageSignature(image: GraphImage | null) {
     return "none";
   }
 
-  const context = image.getContext("2d");
+  const context = image.getContext("2d", { willReadFrequently: true });
   if (!context) {
     return `${image.width}x${image.height}:nocontent`;
   }
@@ -101,6 +155,84 @@ function getGraphImageSignature(image: GraphImage | null) {
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
+}
+
+function paletteBufferToHexColors(buffer: ArrayBuffer) {
+  const palette = new Uint32Array(buffer);
+  return Array.from(palette, (value) => {
+    const r = value & 0xff;
+    const g = (value >>> 8) & 0xff;
+    const b = (value >>> 16) & 0xff;
+    const a = (value >>> 24) & 0xff;
+    return `#${r.toString(16).padStart(2, "0")}${g
+      .toString(16)
+      .padStart(2, "0")}${b.toString(16).padStart(2, "0")}${a
+      .toString(16)
+      .padStart(2, "0")}`;
+  });
+}
+
+function drawPalettePreview(
+  context: CanvasRenderingContext2D,
+  node: PreviewAwareNode,
+  palette: GraphPalette | null,
+  footerText?: string,
+) {
+  const swatches = palette ?? [];
+  const columns = Math.max(1, Math.min(8, Math.ceil(Math.sqrt(Math.max(swatches.length, 1)))));
+  const rows = Math.max(1, Math.ceil(Math.max(swatches.length, 1) / columns));
+  const padding = 10;
+  const headerHeight = 34 + (node.widgets?.length ?? 0) * 28;
+  const swatchGap = 4;
+  const swatchWidth = 30;
+  const swatchHeight = 24;
+  const previewWidth = columns * swatchWidth + (columns - 1) * swatchGap;
+  const previewHeight = rows * swatchHeight + (rows - 1) * swatchGap;
+  const footerLines = footerText ? 1 : 0;
+  node.size = [
+    previewWidth + padding * 2,
+    headerHeight + previewHeight + padding * 2 + footerLines * 18,
+  ];
+
+  context.save();
+  context.fillStyle = "#161616";
+  context.fillRect(padding, headerHeight, previewWidth, previewHeight);
+
+  if (!swatches.length) {
+    context.fillStyle = "rgba(255,255,255,0.45)";
+    context.font = "12px sans-serif";
+    context.fillText("No palette", padding + 10, headerHeight + 20);
+  } else {
+    swatches.forEach((color, index) => {
+      const column = index % columns;
+      const row = Math.floor(index / columns);
+      const x = padding + column * (swatchWidth + swatchGap);
+      const y = headerHeight + row * (swatchHeight + swatchGap);
+      context.fillStyle = color;
+      context.fillRect(x, y, swatchWidth, swatchHeight);
+      context.strokeStyle = "rgba(255,255,255,0.18)";
+      context.strokeRect(x + 0.5, y + 0.5, swatchWidth - 1, swatchHeight - 1);
+    });
+  }
+
+  if (footerText) {
+    context.fillStyle = "rgba(255,255,255,0.65)";
+    context.font = "12px sans-serif";
+    context.fillText(footerText, 10, headerHeight + previewHeight + padding + 12);
+  }
+  context.restore();
+}
+
+function downloadGraphPalette(palette: GraphPalette, filename: string) {
+  const blob = new Blob([JSON.stringify(palette, null, 2)], {
+    type: "application/json",
+  });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
 }
 
 function getSerializedImageFromConfig(data: Record<string, unknown>) {
@@ -371,6 +503,7 @@ class InvertToolNode {
     node.refreshPreviewLayout = () => {
       refreshNode(node, node.preview);
     };
+    getImageTracer();
     node.refreshPreviewLayout();
   }
 
@@ -494,6 +627,167 @@ class BlurToolNode {
   }
 }
 
+class QuantizeToolNode {
+  size: [number, number] = [280, 420];
+  preview: GraphImage | null = null;
+  palette: GraphPalette | null = null;
+  lastSignature = "";
+  lastOptionsSignature = "";
+  renderToken = 0;
+  isRendering = false;
+
+  constructor() {
+    const node = this as unknown as PreviewAwareNode & QuantizeToolNode;
+    getPnnQuant();
+    node.title = createToolTitle("Quantize");
+    node.properties = {
+      colors: 16,
+      dithering: true,
+      weight: 0.55,
+      alphaThreshold: 15,
+    };
+    node.addInput("image", "image");
+    node.addOutput("image", "image");
+    node.addOutput("palette", "palette");
+    node.addWidget(
+      "slider",
+      "Colors",
+      16,
+      (value) => {
+        node.properties.colors = Math.round(Number(value));
+        notifyGraphStateChange(node);
+      },
+      { min: 2, max: 256, step: 1 },
+    );
+    node.addWidget("toggle", "Dither", true, (value) => {
+      node.properties.dithering = Boolean(value);
+      notifyGraphStateChange(node);
+    });
+    node.addWidget(
+      "slider",
+      "Weight",
+      0.55,
+      (value) => {
+        node.properties.weight = Number(value);
+        notifyGraphStateChange(node);
+      },
+      { min: 0.001, max: 1, step: 0.001, precision: 3 },
+    );
+    node.addWidget(
+      "slider",
+      "Alpha thr",
+      15,
+      (value) => {
+        node.properties.alphaThreshold = Number(value);
+        notifyGraphStateChange(node);
+      },
+      { min: 0, max: 255, step: 1 },
+    );
+    node.refreshPreviewLayout = () => {
+      refreshNode(node, node.preview, 1);
+    };
+    node.refreshPreviewLayout();
+  }
+
+  getQuantizeOptions(this: PreviewAwareNode & QuantizeToolNode, input: GraphImage): PnnQuantOptions {
+    return {
+      pixels: graphImageToUint32Array(input),
+      width: input.width,
+      height: input.height,
+      colors: clamp(Math.round(Number(this.properties.colors ?? 16)), 2, 256),
+      dithering: Boolean(this.properties.dithering ?? true),
+      alphaThreshold: clamp(Number(this.properties.alphaThreshold ?? 15), 0, 255),
+      weight: Number(this.properties.weight ?? 0.55),
+    };
+  }
+
+  onExecute(this: PreviewAwareNode & QuantizeToolNode) {
+    const input = this.getInputData(0) ?? null;
+    if (!input) {
+      this.preview = null;
+      this.palette = null;
+      this.lastSignature = "";
+      this.lastOptionsSignature = "";
+      this.setOutputData(0, null);
+      this.setOutputData(1, null);
+      this.refreshPreviewLayout();
+      return;
+    }
+
+    const signature = getGraphImageSignature(input);
+    const options = this.getQuantizeOptions(input);
+    const optionsSignature = JSON.stringify({
+      colors: options.colors,
+      dithering: options.dithering,
+      alphaThreshold: options.alphaThreshold,
+      weight: options.weight,
+    });
+
+    if (signature !== this.lastSignature || optionsSignature !== this.lastOptionsSignature) {
+      this.lastSignature = signature;
+      this.lastOptionsSignature = optionsSignature;
+      this.isRendering = true;
+      const PnnQuant = getPnnQuant();
+      const quantizer = new PnnQuant(options);
+      const renderToken = ++this.renderToken;
+
+      void quantizer
+        .getResult()
+        .then((result: PnnQuantResult) => {
+          if (renderToken !== this.renderToken) {
+            return;
+          }
+
+          if (result.img8) {
+            this.preview = uint32ArrayToGraphImage(result.img8, {
+              width: input.width,
+              height: input.height,
+            });
+            this.palette = result.pal8 ? paletteBufferToHexColors(result.pal8) : null;
+            this.isRendering = false;
+            this.setDirtyCanvas(true, true);
+          }
+        })
+        .catch(() => {
+          if (renderToken !== this.renderToken) {
+            return;
+          }
+
+          this.preview = null;
+          this.palette = null;
+          this.isRendering = false;
+          this.lastSignature = "";
+          this.lastOptionsSignature = "";
+          this.setDirtyCanvas(true, true);
+        });
+    }
+
+    this.setOutputData(0, this.preview);
+    this.setOutputData(1, this.palette);
+    this.refreshPreviewLayout();
+  }
+
+  onDrawBackground(this: PreviewAwareNode & QuantizeToolNode, context: CanvasRenderingContext2D) {
+    const layout = drawImagePreview(context, this, this.preview, { footerLines: 1 });
+    context.save();
+    context.fillStyle = "rgba(255,255,255,0.65)";
+    context.font = "12px sans-serif";
+    context.fillText(`palette: ${this.palette?.length ?? 0} colors`, 10, layout.footerTop + 12);
+    context.restore();
+  }
+
+  onSerialize(this: QuantizeToolNode, data: Record<string, unknown>) {
+    data.palette = this.palette;
+  }
+
+  onConfigure(this: PreviewAwareNode & QuantizeToolNode, data: Record<string, unknown>) {
+    this.palette = Array.isArray(data.palette)
+      ? data.palette.filter((item): item is string => typeof item === "string")
+      : null;
+    this.refreshPreviewLayout();
+  }
+}
+
 class BlendToolNode {
   size: [number, number] = [280, 420];
   preview: GraphImage | null = null;
@@ -611,9 +905,11 @@ class VectorizeToolNode {
   lastOptionsSignature = "";
   renderToken = 0;
   properties!: Record<string, unknown>;
+  isRendering = false;
 
   constructor() {
     const node = this as unknown as PreviewAwareNode & VectorizeToolNode;
+    const imageTracer = getImageTracer();
     node.title = createToolTitle("Vectorize");
     node.properties = {
       preset: "default",
@@ -642,12 +938,12 @@ class VectorizeToolNode {
       (value) => {
         const preset = String(value);
         node.properties.preset = preset;
-        const presetOptions = ImageTracer.checkoptions(preset);
+        const presetOptions = imageTracer.checkoptions(preset);
         Object.assign(node.properties, presetOptions, { preset });
         notifyGraphStateChange(node);
       },
       {
-        values: Object.keys(ImageTracer.optionpresets),
+        values: Object.keys(imageTracer.optionpresets),
       },
     );
     node.addWidget("slider", "Colors", 16, (value) => {
@@ -749,13 +1045,14 @@ class VectorizeToolNode {
     const optionsSignature = JSON.stringify(options);
 
     if (signature !== this.lastSignature || optionsSignature !== this.lastOptionsSignature) {
-      const context = input.getContext("2d");
+      this.lastSignature = signature;
+      this.lastOptionsSignature = optionsSignature;
+      this.isRendering = true;
+      const context = input.getContext("2d", { willReadFrequently: true });
       if (context) {
         const imageData = context.getImageData(0, 0, input.width, input.height);
-        const svg = ImageTracer.imagedataToSVG(imageData, options);
+        const svg = getImageTracer().imagedataToSVG(imageData, options);
         this.svg = svg;
-        this.lastSignature = signature;
-        this.lastOptionsSignature = optionsSignature;
 
         const renderToken = ++this.renderToken;
         void rasterizeGraphSvg(svg)
@@ -764,6 +1061,7 @@ class VectorizeToolNode {
               return;
             }
             this.preview = preview;
+            this.isRendering = false;
             this.setDirtyCanvas(true, true);
           })
           .catch(() => {
@@ -771,6 +1069,10 @@ class VectorizeToolNode {
               return;
             }
             this.preview = null;
+            this.svg = null;
+            this.isRendering = false;
+            this.lastSignature = "";
+            this.lastOptionsSignature = "";
             this.setDirtyCanvas(true, true);
           });
       }
@@ -878,6 +1180,39 @@ class OutputSvgNode {
   }
 }
 
+class OutputPaletteNode {
+  palette: GraphPalette | null = null;
+  size: [number, number] = [320, 220];
+
+  constructor() {
+    const node = this as unknown as PreviewAwareNode & OutputPaletteNode;
+    node.title = "PALETTE";
+    node.properties = {};
+    node.addInput("palette", "palette");
+    node.addWidget("button", "Save palette", null, () => {
+      if (node.palette?.length) {
+        downloadGraphPalette(node.palette, "plotterfun-palette.json");
+      }
+    });
+    node.refreshPreviewLayout = () => {
+      node.setDirtyCanvas(true, true);
+    };
+    node.refreshPreviewLayout();
+  }
+
+  onExecute(this: PreviewAwareNode & OutputPaletteNode) {
+    const palette = this.getInputData(0);
+    this.palette = Array.isArray(palette)
+      ? palette.filter((item): item is string => typeof item === "string")
+      : null;
+    this.refreshPreviewLayout();
+  }
+
+  onDrawBackground(this: PreviewAwareNode & OutputPaletteNode, context: CanvasRenderingContext2D) {
+    drawPalettePreview(context, this, this.palette, `${this.palette?.length ?? 0} colors`);
+  }
+}
+
 export function registerImageNodes() {
   if (registered) {
     return;
@@ -889,9 +1224,11 @@ export function registerImageNodes() {
   LiteGraph.registerNodeType("tools/grayscale", GrayscaleToolNode as unknown as NodeCtor);
   LiteGraph.registerNodeType("tools/threshold", ThresholdToolNode as unknown as NodeCtor);
   LiteGraph.registerNodeType("tools/blur", BlurToolNode as unknown as NodeCtor);
+  LiteGraph.registerNodeType("tools/quantize", QuantizeToolNode as unknown as NodeCtor);
   LiteGraph.registerNodeType("tools/blend", BlendToolNode as unknown as NodeCtor);
   LiteGraph.registerNodeType("tools/vectorize", VectorizeToolNode as unknown as NodeCtor);
   LiteGraph.registerNodeType("output/image", OutputImageNode as unknown as NodeCtor);
+  LiteGraph.registerNodeType("output/palette", OutputPaletteNode as unknown as NodeCtor);
   LiteGraph.registerNodeType("output/svg", OutputSvgNode as unknown as NodeCtor);
   registered = true;
 }
