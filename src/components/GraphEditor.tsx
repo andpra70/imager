@@ -9,6 +9,7 @@ import {
   getPreviewWidthBounds,
   setPreviewWidth,
 } from "../lib/nodePreviewSettings";
+import sampleGraph from "../data/sample.json";
 
 const GRAPH_STORAGE_KEY = "plotterfun.graph";
 const AUTO_SAVE_INTERVAL_MS = 60_000;
@@ -400,12 +401,24 @@ function GraphEditor() {
         graph.configure(JSON.parse(savedGraph) as SerializedGraph);
         setStatusMessage("Saved graph restored from localStorage.");
       } catch {
-        createDefaultGraph(graph);
-        persistGraph("Saved graph was invalid. Default graph restored.");
+        try {
+          graph.configure(sampleGraph as SerializedGraph);
+          setStatusMessage("Saved graph invalid. Loaded sample graph.");
+          persistGraph();
+        } catch {
+          createDefaultGraph(graph);
+          persistGraph("Saved graph invalid and sample graph unavailable. Default graph restored.");
+        }
       }
     } else {
-      createDefaultGraph(graph);
-      persistGraph();
+      try {
+        graph.configure(sampleGraph as SerializedGraph);
+        setStatusMessage("Sample graph loaded.");
+        persistGraph();
+      } catch {
+        createDefaultGraph(graph);
+        persistGraph("Sample graph unavailable. Default graph restored.");
+      }
     }
 
     const resizeCanvas = () => {
