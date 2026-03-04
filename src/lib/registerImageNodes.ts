@@ -1,14 +1,18 @@
 import "../vendor/bluenoise.js";
 import "../vendor/imagetracer.1.2.6.js";
 import "../vendor/pnnquant.js";
+import "../vendor/simplify.js";
 import type { ImageTracerOptions } from "../vendor/imagetracer.1.2.6.js";
 import type { PnnQuantOptions, PnnQuantResult } from "../vendor/pnnquant.js";
+import roughRuntime, { type RoughPathOptions, type RoughApi } from "../vendor/rough-runtime";
+import marchingSquaresRuntime, { type MarchingSquaresFn } from "../vendor/p5-marching-runtime";
 import { LiteGraph } from "litegraph.js";
 import type { GraphImage } from "../models/graphImage";
 import type { GraphPalette } from "../models/graphPalette";
 import type { GraphSvg } from "../models/graphSvg";
 import {
   blendGraphImages,
+  brightnessContrastGraphImage,
   type BlendMode,
   blurGraphImage,
   deserializeGraphImage,
@@ -20,7 +24,9 @@ import {
   grayscaleGraphImage,
   invertGraphImage,
   rasterizeGraphSvg,
+  rotateGraphImage,
   resizeNodeForPreview,
+  scaleGraphImage,
   serializeCompressedGraphImage,
   thresholdGraphImage,
   uint32ArrayToGraphImage,
@@ -85,6 +91,34 @@ interface BlueNoiseConstructor {
   new (options: { weight: number }): BlueNoiseInstance;
 }
 
+interface RoughTransformResult {
+  svg: GraphSvg;
+  pathCount: number;
+}
+
+interface SimplifyPoint {
+  x: number;
+  y: number;
+}
+
+type SimplifyFn = (
+  points: SimplifyPoint[],
+  tolerance?: number,
+  highestQuality?: boolean,
+) => SimplifyPoint[];
+
+interface SvgSimplifyResult {
+  svg: GraphSvg;
+  pathCount: number;
+}
+
+interface MarchingResult {
+  svg: GraphSvg;
+  pathCount: number;
+  sampledWidth: number;
+  sampledHeight: number;
+}
+
 function getImageTracer() {
   const imageTracer = (globalThis as { ImageTracer?: ImageTracerApi }).ImageTracer;
   if (!imageTracer) {
@@ -111,6 +145,37 @@ function getPnnQuant() {
   }
 
   return pnnQuant;
+}
+
+function getRough() {
+  if (!roughRuntime || typeof (roughRuntime as RoughApi).svg !== "function") {
+    throw new Error("Rough global is not available.");
+  }
+
+  return roughRuntime as RoughApi;
+}
+
+function getSimplify() {
+  const simplify = (globalThis as { simplify?: SimplifyFn }).simplify;
+  if (!simplify) {
+    throw new Error("simplify.js global is not available.");
+  }
+
+  return simplify;
+}
+
+function getMarchingSquares() {
+  if (!marchingSquaresRuntime || typeof (marchingSquaresRuntime as MarchingSquaresFn) !== "function") {
+    throw new Error("p5.marching runtime is not available.");
+  }
+
+  return marchingSquaresRuntime as MarchingSquaresFn;
+}
+
+function yieldToUi() {
+  return new Promise<void>((resolve) => {
+    window.setTimeout(resolve, 0);
+  });
 }
 
 function refreshNode(node: PreviewAwareNode, image: CanvasImageSource | null, footerLines = 0) {
@@ -153,8 +218,623 @@ function getGraphImageSignature(image: GraphImage | null) {
   return `${image.width}x${image.height}:${values}`;
 }
 
+function estimateGraphImageColorCount(image: GraphImage) {
+  const maxSide = 256;
+  const scale = Math.min(1, maxSide / Math.max(image.width, image.height));
+  const sampleWidth = Math.max(1, Math.round(image.width * scale));
+  const sampleHeight = Math.max(1, Math.round(image.height * scale));
+
+  const sampleCanvas = document.createElement("canvas");
+  sampleCanvas.width = sampleWidth;
+  sampleCanvas.height = sampleHeight;
+  const sampleContext = sampleCanvas.getContext("2d", { willReadFrequently: true });
+  if (!sampleContext) {
+    return { count: 0, isEstimated: true };
+  }
+
+  sampleContext.drawImage(image, 0, 0, sampleWidth, sampleHeight);
+  const pixels = sampleContext.getImageData(0, 0, sampleWidth, sampleHeight).data;
+  const unique = new Set<number>();
+  for (let index = 0; index < pixels.length; index += 4) {
+    const packed =
+      pixels[index] |
+      (pixels[index + 1] << 8) |
+      (pixels[index + 2] << 16) |
+      (pixels[index + 3] << 24);
+    unique.add(packed >>> 0);
+  }
+
+  return {
+    count: unique.size,
+    isEstimated: sampleWidth !== image.width || sampleHeight !== image.height,
+  };
+}
+
+function formatGraphImageInfo(image: GraphImage | null) {
+  if (!image) {
+    return "no image";
+  }
+
+  const colorInfo = estimateGraphImageColorCount(image);
+  return `${image.width}x${image.height} | ${colorInfo.isEstimated ? "~" : ""}${colorInfo.count} colors`;
+}
+
+function formatExecutionInfo(executionMs: number | null) {
+  if (executionMs === null || !Number.isFinite(executionMs)) {
+    return "[-- ms]";
+  }
+  return `[${executionMs.toFixed(2)} ms]`;
+}
+
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
+}
+
+function parseSvgLength(value: string | null) {
+  if (!value) {
+    return null;
+  }
+
+  const parsed = Number.parseFloat(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return null;
+  }
+
+  return parsed;
+}
+
+function parseSvgRoot(svg: GraphSvg): SVGSVGElement | null {
+  const document = new DOMParser().parseFromString(svg, "image/svg+xml");
+  const root = document.documentElement;
+  if (!root || root.tagName.toLowerCase() === "parsererror") {
+    return null;
+  }
+
+  if (root.tagName.toLowerCase() === "svg") {
+    return root as unknown as SVGSVGElement;
+  }
+
+  return document.querySelector("svg") as SVGSVGElement | null;
+}
+
+function parsePaintFromStyle(style: string | null, property: "fill" | "stroke") {
+  if (!style) {
+    return null;
+  }
+
+  const match = style.match(new RegExp(`${property}\\s*:\\s*([^;]+)`, "i"));
+  return match?.[1]?.trim() ?? null;
+}
+
+function getSvgPaint(path: SVGPathElement, property: "fill" | "stroke") {
+  const attrValue = path.getAttribute(property);
+  if (attrValue) {
+    return attrValue;
+  }
+
+  return parsePaintFromStyle(path.getAttribute("style"), property);
+}
+
+function roundWithPrecision(value: number, precision: number) {
+  const factor = 10 ** precision;
+  return Math.round(value * factor) / factor;
+}
+
+function roundNumbersInString(value: string, precision: number) {
+  return value.replace(/-?\d*\.?\d+(?:e[-+]?\d+)?/gi, (match) => {
+    const parsed = Number(match);
+    if (!Number.isFinite(parsed)) {
+      return match;
+    }
+    const rounded = roundWithPrecision(parsed, precision);
+    return Number.isInteger(rounded) ? String(rounded) : String(rounded);
+  });
+}
+
+function buildPolylinePath(points: SimplifyPoint[], precision: number, closed: boolean) {
+  if (!points.length) {
+    return "";
+  }
+
+  const toCoord = (value: number) => {
+    const rounded = roundWithPrecision(value, precision);
+    return Number.isInteger(rounded) ? String(rounded) : String(rounded);
+  };
+  const commands = points.map((point, index) => {
+    const x = toCoord(point.x);
+    const y = toCoord(point.y);
+    return `${index === 0 ? "M" : "L"}${x} ${y}`;
+  });
+  if (closed) {
+    commands.push("Z");
+  }
+  return commands.join(" ");
+}
+
+function simplifyPathD(
+  pathData: string,
+  simplify: SimplifyFn,
+  options: { tolerance: number; sampleStep: number; highQuality: boolean; precision: number },
+) {
+  const pathTokenCount = pathData.match(/[Mm]/g)?.length ?? 0;
+  if (pathTokenCount > 1) {
+    return roundNumbersInString(pathData, options.precision).replace(/\s+/g, " ").trim();
+  }
+
+  const parserDocument = document.implementation.createDocument("http://www.w3.org/2000/svg", "svg", null);
+  const parserPath = parserDocument.createElementNS("http://www.w3.org/2000/svg", "path");
+  parserPath.setAttribute("d", pathData);
+  parserDocument.documentElement.appendChild(parserPath);
+
+  let length = 0;
+  try {
+    length = parserPath.getTotalLength();
+  } catch {
+    return roundNumbersInString(pathData, options.precision).replace(/\s+/g, " ").trim();
+  }
+
+  if (!Number.isFinite(length) || length <= 0) {
+    return roundNumbersInString(pathData, options.precision).replace(/\s+/g, " ").trim();
+  }
+
+  const sampleCount = Math.max(10, Math.ceil(length / Math.max(0.25, options.sampleStep)));
+  const points: SimplifyPoint[] = [];
+  for (let index = 0; index <= sampleCount; index += 1) {
+    const point = parserPath.getPointAtLength((length * index) / sampleCount);
+    points.push({ x: point.x, y: point.y });
+  }
+
+  const deduped: SimplifyPoint[] = [];
+  points.forEach((point) => {
+    const last = deduped[deduped.length - 1];
+    if (!last || last.x !== point.x || last.y !== point.y) {
+      deduped.push(point);
+    }
+  });
+
+  const simplified = simplify(
+    deduped,
+    Math.max(0, options.tolerance),
+    options.highQuality,
+  );
+  if (simplified.length < 2) {
+    return roundNumbersInString(pathData, options.precision).replace(/\s+/g, " ").trim();
+  }
+
+  const closed = /[zZ]\s*$/.test(pathData.trim());
+  const normalized = [...simplified];
+  if (closed && normalized.length > 2) {
+    const first = normalized[0];
+    const last = normalized[normalized.length - 1];
+    if (first.x === last.x && first.y === last.y) {
+      normalized.pop();
+    }
+  }
+
+  return buildPolylinePath(normalized, options.precision, closed);
+}
+
+function simplifyGraphSvg(
+  inputSvg: GraphSvg,
+  options: {
+    tolerance: number;
+    sampleStep: number;
+    precision: number;
+    highQuality: boolean;
+    minify: boolean;
+  },
+): SvgSimplifyResult {
+  const inputRoot = parseSvgRoot(inputSvg);
+  if (!inputRoot) {
+    throw new Error("Invalid SVG input.");
+  }
+
+  const outputRoot = inputRoot.cloneNode(true) as SVGSVGElement;
+  const simplify = getSimplify();
+  let pathCount = 0;
+
+  Array.from(outputRoot.querySelectorAll("path")).forEach((path) => {
+    const current = path.getAttribute("d");
+    if (!current) {
+      return;
+    }
+
+    const simplified = simplifyPathD(current, simplify, options);
+    if (simplified) {
+      path.setAttribute("d", simplified);
+      pathCount += 1;
+    }
+  });
+
+  if (options.minify) {
+    const numericAttributes = [
+      "d",
+      "points",
+      "x",
+      "y",
+      "x1",
+      "y1",
+      "x2",
+      "y2",
+      "cx",
+      "cy",
+      "r",
+      "rx",
+      "ry",
+      "width",
+      "height",
+      "viewBox",
+      "transform",
+      "stroke-width",
+      "stroke-dasharray",
+      "stroke-dashoffset",
+      "opacity",
+      "fill-opacity",
+      "stroke-opacity",
+    ];
+    outputRoot.querySelectorAll("*").forEach((element) => {
+      numericAttributes.forEach((attribute) => {
+        const value = element.getAttribute(attribute);
+        if (!value) {
+          return;
+        }
+        element.setAttribute(
+          attribute,
+          roundNumbersInString(value, options.precision).replace(/\s+/g, " ").trim(),
+        );
+      });
+    });
+  }
+
+  const svg = new XMLSerializer()
+    .serializeToString(outputRoot)
+    .replace(/>\s+</g, "><")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+
+  return { svg, pathCount };
+}
+
+function roughenGraphSvg(
+  inputSvg: GraphSvg,
+  options: RoughPathOptions & {
+    preserveStroke: boolean;
+    preserveFill: boolean;
+    fallbackStroke: string;
+    fallbackFill: string;
+  },
+): RoughTransformResult {
+  const inputRoot = parseSvgRoot(inputSvg);
+  if (!inputRoot) {
+    throw new Error("Invalid SVG input.");
+  }
+
+  const outputDocument = document.implementation.createDocument("http://www.w3.org/2000/svg", "svg", null);
+  const outputRoot = outputDocument.documentElement as unknown as SVGSVGElement;
+  outputRoot.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+
+  const viewBox = inputRoot.getAttribute("viewBox");
+  const width = parseSvgLength(inputRoot.getAttribute("width"));
+  const height = parseSvgLength(inputRoot.getAttribute("height"));
+  if (viewBox) {
+    outputRoot.setAttribute("viewBox", viewBox);
+  } else if (width && height) {
+    outputRoot.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  }
+  if (width) {
+    outputRoot.setAttribute("width", String(width));
+  }
+  if (height) {
+    outputRoot.setAttribute("height", String(height));
+  }
+
+  const roughSvg = getRough().svg(outputRoot);
+  const sourcePaths = Array.from(inputRoot.querySelectorAll("path"));
+  let pathCount = 0;
+
+  sourcePaths.forEach((sourcePath) => {
+    const d = sourcePath.getAttribute("d");
+    if (!d) {
+      return;
+    }
+
+    const stroke = options.preserveStroke
+      ? (getSvgPaint(sourcePath, "stroke") ?? options.fallbackStroke)
+      : options.fallbackStroke;
+    const fill = options.preserveFill
+      ? (getSvgPaint(sourcePath, "fill") ?? options.fallbackFill)
+      : options.fallbackFill;
+
+    const roughPath = roughSvg.path(d, {
+      roughness: options.roughness,
+      bowing: options.bowing,
+      strokeWidth: options.strokeWidth,
+      fillStyle: options.fillStyle,
+      hachureAngle: options.hachureAngle,
+      hachureGap: options.hachureGap,
+      fillWeight: options.fillWeight,
+      simplification: options.simplification,
+      curveStepCount: options.curveStepCount,
+      maxRandomnessOffset: options.maxRandomnessOffset,
+      seed: options.seed,
+      disableMultiStroke: options.disableMultiStroke,
+      stroke,
+      fill,
+    });
+
+    const transform = sourcePath.getAttribute("transform");
+    if (transform) {
+      roughPath.setAttribute("transform", transform);
+    }
+
+    outputRoot.appendChild(roughPath);
+    pathCount += 1;
+  });
+
+  if (!pathCount) {
+    throw new Error("No SVG paths available for rough transform.");
+  }
+
+  return {
+    svg: new XMLSerializer().serializeToString(outputRoot),
+    pathCount,
+  };
+}
+
+function segmentEndpointKey(point: SimplifyPoint) {
+  return `${point.x.toFixed(3)},${point.y.toFixed(3)}`;
+}
+
+function stitchMarchingSegments(
+  segments: number[][],
+  scale: number,
+): SimplifyPoint[][] {
+  if (!segments.length) {
+    return [];
+  }
+
+  const normalized = segments.map((segment) => {
+    const a: SimplifyPoint = { x: segment[0] * scale, y: segment[1] * scale };
+    const b: SimplifyPoint = { x: segment[2] * scale, y: segment[3] * scale };
+    return { a, b };
+  });
+
+  const endpointMap = new Map<string, Set<number>>();
+  normalized.forEach((segment, index) => {
+    [segmentEndpointKey(segment.a), segmentEndpointKey(segment.b)].forEach((key) => {
+      const current = endpointMap.get(key) ?? new Set<number>();
+      current.add(index);
+      endpointMap.set(key, current);
+    });
+  });
+
+  const used = new Set<number>();
+  const polylines: SimplifyPoint[][] = [];
+
+  const grow = (
+    polyline: SimplifyPoint[],
+    atHead: boolean,
+  ) => {
+    while (true) {
+      const pivot = atHead ? polyline[0] : polyline[polyline.length - 1];
+      const pivotKey = segmentEndpointKey(pivot);
+      const candidates = endpointMap.get(pivotKey);
+      if (!candidates) {
+        break;
+      }
+
+      let nextIndex: number | null = null;
+      candidates.forEach((candidate) => {
+        if (nextIndex !== null || used.has(candidate)) {
+          return;
+        }
+        nextIndex = candidate;
+      });
+
+      if (nextIndex === null) {
+        break;
+      }
+
+      used.add(nextIndex);
+      const segment = normalized[nextIndex];
+      const keyA = segmentEndpointKey(segment.a);
+      const nextPoint = keyA === pivotKey ? segment.b : segment.a;
+      if (atHead) {
+        polyline.unshift(nextPoint);
+      } else {
+        polyline.push(nextPoint);
+      }
+    }
+  };
+
+  normalized.forEach((segment, index) => {
+    if (used.has(index)) {
+      return;
+    }
+
+    used.add(index);
+    const polyline = [segment.a, segment.b];
+    grow(polyline, false);
+    grow(polyline, true);
+    polylines.push(polyline);
+  });
+
+  return polylines.filter((polyline) => polyline.length >= 2);
+}
+
+function toHexColorChannel(value: number) {
+  return clamp(Math.round(value), 0, 255).toString(16).padStart(2, "0");
+}
+
+async function marchingGraphImage(
+  input: GraphImage,
+  options: {
+    levels: number;
+    thresholdMin: number;
+    thresholdMax: number;
+    downscale: number;
+    blur: number;
+    simplify: number;
+    highQuality: boolean;
+    lineWidth: number;
+    opacity: number;
+    invert: boolean;
+    colorMode: "gray" | "source";
+  },
+  shouldCancel?: () => boolean,
+): Promise<MarchingResult | null> {
+  const requestedScale = clamp(Math.round(options.downscale), 1, 8);
+  const maxSampleSide = 96;
+  const maxProcessingCells = options.highQuality ? 1400 : 900;
+  const adaptiveScale = Math.max(
+    requestedScale,
+    Math.ceil(Math.max(input.width, input.height) / maxSampleSide),
+  );
+  let sampleScale = clamp(adaptiveScale, 1, 24);
+  let sampledWidth = Math.max(8, Math.round(input.width / sampleScale));
+  let sampledHeight = Math.max(8, Math.round(input.height / sampleScale));
+  while (sampledWidth * sampledHeight > maxProcessingCells && sampleScale < 64) {
+    sampleScale += 1;
+    sampledWidth = Math.max(8, Math.round(input.width / sampleScale));
+    sampledHeight = Math.max(8, Math.round(input.height / sampleScale));
+  }
+  const levels = clamp(Math.round(options.levels), 2, 8);
+  const thresholdMin = clamp(options.thresholdMin, 0, 1);
+  const thresholdMax = clamp(options.thresholdMax, thresholdMin, 1);
+  const thresholdRange = Math.max(0.0001, thresholdMax - thresholdMin);
+
+  const sampledCanvas = document.createElement("canvas");
+  sampledCanvas.width = sampledWidth;
+  sampledCanvas.height = sampledHeight;
+  const sampledContext = sampledCanvas.getContext("2d", { willReadFrequently: true });
+  if (!sampledContext) {
+    throw new Error("2D context not available.");
+  }
+
+  if (shouldCancel?.()) {
+    return null;
+  }
+
+  sampledContext.clearRect(0, 0, sampledWidth, sampledHeight);
+  sampledContext.filter = options.blur > 0 ? `blur(${options.blur}px)` : "none";
+  sampledContext.drawImage(input, 0, 0, sampledWidth, sampledHeight);
+  sampledContext.filter = "none";
+  const imageData = sampledContext.getImageData(0, 0, sampledWidth, sampledHeight).data;
+
+  const field: number[][] = [];
+  const colorBins = Array.from({ length: levels }, () => ({
+    r: 0,
+    g: 0,
+    b: 0,
+    count: 0,
+  }));
+
+  let lastYieldTime = performance.now();
+  for (let y = 0; y < sampledHeight; y += 1) {
+    if (shouldCancel?.()) {
+      return null;
+    }
+
+    const row: number[] = [];
+    for (let x = 0; x < sampledWidth; x += 1) {
+      const offset = (y * sampledWidth + x) * 4;
+      const r = imageData[offset];
+      const g = imageData[offset + 1];
+      const b = imageData[offset + 2];
+      const a = imageData[offset + 3] / 255;
+      const luminance = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+      const tone = clamp(options.invert ? 1 - luminance * a : luminance * a, 0, 1);
+      row.push(tone);
+
+      const normalized = clamp((tone - thresholdMin) / thresholdRange, 0, 1);
+      const binIndex = clamp(Math.round(normalized * (levels - 1)), 0, levels - 1);
+      const bin = colorBins[binIndex];
+      bin.r += r;
+      bin.g += g;
+      bin.b += b;
+      bin.count += 1;
+    }
+    field.push(row);
+
+    if (performance.now() - lastYieldTime > 12) {
+      await yieldToUi();
+      if (shouldCancel?.()) {
+        return null;
+      }
+      lastYieldTime = performance.now();
+    }
+  }
+
+  const marchingSquares = getMarchingSquares();
+  const simplifyFn = getSimplify();
+  const outputDocument = document.implementation.createDocument("http://www.w3.org/2000/svg", "svg", null);
+  const outputRoot = outputDocument.documentElement as unknown as SVGSVGElement;
+  outputRoot.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+  outputRoot.setAttribute("width", String(input.width));
+  outputRoot.setAttribute("height", String(input.height));
+  outputRoot.setAttribute("viewBox", `0 0 ${input.width} ${input.height}`);
+  outputRoot.setAttribute("fill", "none");
+
+  let pathCount = 0;
+  for (let index = 0; index < levels; index += 1) {
+    if (shouldCancel?.()) {
+      return null;
+    }
+
+    const t = thresholdMin + (thresholdRange * index) / Math.max(1, levels - 1);
+    const segments = marchingSquares(field, t);
+    if (!segments.length) {
+      continue;
+    }
+
+    const polylines = stitchMarchingSegments(segments, sampleScale).map((polyline) => {
+      if (options.simplify > 0 && polyline.length > 2) {
+        return simplifyFn(polyline, options.simplify, options.highQuality);
+      }
+      return polyline;
+    });
+
+    const pathD = polylines
+      .filter((polyline) => polyline.length >= 2)
+      .map((polyline) => buildPolylinePath(polyline, 2, false))
+      .join(" ");
+    if (!pathD) {
+      continue;
+    }
+
+    const bin = colorBins[index];
+    const sourceColor =
+      bin.count > 0
+        ? `#${toHexColorChannel(bin.r / bin.count)}${toHexColorChannel(bin.g / bin.count)}${toHexColorChannel(bin.b / bin.count)}`
+        : null;
+    const gray = clamp(Math.round((options.invert ? 1 - t : t) * 255), 0, 255);
+    const grayColor = `#${toHexColorChannel(gray)}${toHexColorChannel(gray)}${toHexColorChannel(gray)}`;
+
+    const path = outputDocument.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", pathD);
+    path.setAttribute("stroke", options.colorMode === "source" ? (sourceColor ?? grayColor) : grayColor);
+    path.setAttribute("stroke-opacity", String(clamp(options.opacity, 0, 1)));
+    path.setAttribute("stroke-width", String(Math.max(0.1, options.lineWidth)));
+    path.setAttribute("stroke-linecap", "round");
+    path.setAttribute("stroke-linejoin", "round");
+    outputRoot.appendChild(path);
+    pathCount += 1;
+
+    if (performance.now() - lastYieldTime > 12) {
+      await yieldToUi();
+      if (shouldCancel?.()) {
+        return null;
+      }
+      lastYieldTime = performance.now();
+    }
+  }
+
+  return {
+    svg: new XMLSerializer().serializeToString(outputRoot),
+    pathCount,
+    sampledWidth,
+    sampledHeight,
+  };
 }
 
 function paletteBufferToHexColors(buffer: ArrayBuffer) {
@@ -254,6 +934,7 @@ class InputImageNode {
   size: [number, number] = [280, 280];
   objectUrl: string | null = null;
   serializedImage: string | null = null;
+  infoText = "no image";
 
   constructor() {
     const node = this as unknown as PreviewAwareNode & InputImageNode;
@@ -277,7 +958,7 @@ class InputImageNode {
     });
 
     node.refreshPreviewLayout = () => {
-      refreshNode(node, node.image);
+      refreshNode(node, node.image, 1);
     };
 
     document.body.appendChild(node.fileInput);
@@ -299,6 +980,7 @@ class InputImageNode {
     image.onload = () => {
       this.image = drawSourceToCanvas(image);
       this.serializedImage = serializeCompressedGraphImage(this.image);
+      this.infoText = formatGraphImageInfo(this.image);
       this.refreshPreviewLayout();
       notifyGraphStateChange(this);
       URL.revokeObjectURL(objectUrl);
@@ -331,6 +1013,7 @@ class InputImageNode {
 
     if (!serializedImage) {
       this.image = null;
+      this.infoText = "no image";
       this.refreshPreviewLayout();
       return;
     }
@@ -339,12 +1022,14 @@ class InputImageNode {
       .then((image) => {
         this.image = image;
         this.serializedImage = serializedImage;
+        this.infoText = formatGraphImageInfo(this.image);
         this.refreshPreviewLayout();
         notifyGraphStateChange(this);
       })
       .catch(() => {
         this.image = null;
         this.serializedImage = null;
+        this.infoText = "no image";
         this.refreshPreviewLayout();
       });
   }
@@ -354,7 +1039,12 @@ class InputImageNode {
   }
 
   onDrawBackground(this: PreviewAwareNode & InputImageNode, context: CanvasRenderingContext2D) {
-    drawImagePreview(context, this, this.image);
+    const layout = drawImagePreview(context, this, this.image, { footerLines: 1 });
+    context.save();
+    context.fillStyle = "rgba(255,255,255,0.65)";
+    context.font = "12px sans-serif";
+    context.fillText(this.infoText, 10, layout.footerTop + 12);
+    context.restore();
   }
 
   onRemoved(this: InputImageNode) {
@@ -493,6 +1183,7 @@ class WebcamImageNode {
 class InvertToolNode {
   size: [number, number] = [280, 280];
   preview: GraphImage | null = null;
+  executionMs: number | null = null;
 
   constructor() {
     const node = this as unknown as PreviewAwareNode & InvertToolNode;
@@ -508,20 +1199,28 @@ class InvertToolNode {
   }
 
   onExecute(this: PreviewAwareNode & InvertToolNode) {
+    const start = performance.now();
     const input = this.getInputData(0);
     this.preview = input ? invertGraphImage(input) : null;
+    this.executionMs = performance.now() - start;
     this.setOutputData(0, this.preview);
     this.refreshPreviewLayout();
   }
 
   onDrawBackground(this: PreviewAwareNode & InvertToolNode, context: CanvasRenderingContext2D) {
-    drawImagePreview(context, this, this.preview);
+    const layout = drawImagePreview(context, this, this.preview, { footerLines: 1 });
+    context.save();
+    context.fillStyle = "rgba(255,255,255,0.65)";
+    context.font = "12px sans-serif";
+    context.fillText(formatExecutionInfo(this.executionMs), 10, layout.footerTop + 12);
+    context.restore();
   }
 }
 
 class GrayscaleToolNode {
   size: [number, number] = [280, 280];
   preview: GraphImage | null = null;
+  executionMs: number | null = null;
 
   constructor() {
     const node = this as unknown as PreviewAwareNode & GrayscaleToolNode;
@@ -536,20 +1235,28 @@ class GrayscaleToolNode {
   }
 
   onExecute(this: PreviewAwareNode & GrayscaleToolNode) {
+    const start = performance.now();
     const input = this.getInputData(0);
     this.preview = input ? grayscaleGraphImage(input) : null;
+    this.executionMs = performance.now() - start;
     this.setOutputData(0, this.preview);
     this.refreshPreviewLayout();
   }
 
   onDrawBackground(this: PreviewAwareNode & GrayscaleToolNode, context: CanvasRenderingContext2D) {
-    drawImagePreview(context, this, this.preview);
+    const layout = drawImagePreview(context, this, this.preview, { footerLines: 1 });
+    context.save();
+    context.fillStyle = "rgba(255,255,255,0.65)";
+    context.font = "12px sans-serif";
+    context.fillText(formatExecutionInfo(this.executionMs), 10, layout.footerTop + 12);
+    context.restore();
   }
 }
 
 class ThresholdToolNode {
   size: [number, number] = [280, 320];
   preview: GraphImage | null = null;
+  executionMs: number | null = null;
 
   constructor() {
     const node = this as unknown as PreviewAwareNode & ThresholdToolNode;
@@ -575,21 +1282,29 @@ class ThresholdToolNode {
   }
 
   onExecute(this: PreviewAwareNode & ThresholdToolNode) {
+    const start = performance.now();
     const input = this.getInputData(0);
     const threshold = Number(this.properties.threshold ?? 128);
     this.preview = input ? thresholdGraphImage(input, threshold) : null;
+    this.executionMs = performance.now() - start;
     this.setOutputData(0, this.preview);
     this.refreshPreviewLayout();
   }
 
   onDrawBackground(this: PreviewAwareNode & ThresholdToolNode, context: CanvasRenderingContext2D) {
-    drawImagePreview(context, this, this.preview);
+    const layout = drawImagePreview(context, this, this.preview, { footerLines: 1 });
+    context.save();
+    context.fillStyle = "rgba(255,255,255,0.65)";
+    context.font = "12px sans-serif";
+    context.fillText(formatExecutionInfo(this.executionMs), 10, layout.footerTop + 12);
+    context.restore();
   }
 }
 
 class BlurToolNode {
   size: [number, number] = [280, 320];
   preview: GraphImage | null = null;
+  executionMs: number | null = null;
 
   constructor() {
     const node = this as unknown as PreviewAwareNode & BlurToolNode;
@@ -615,15 +1330,189 @@ class BlurToolNode {
   }
 
   onExecute(this: PreviewAwareNode & BlurToolNode) {
+    const start = performance.now();
     const input = this.getInputData(0);
     const radius = Number(this.properties.radius ?? 4);
     this.preview = input ? blurGraphImage(input, radius) : null;
+    this.executionMs = performance.now() - start;
     this.setOutputData(0, this.preview);
     this.refreshPreviewLayout();
   }
 
   onDrawBackground(this: PreviewAwareNode & BlurToolNode, context: CanvasRenderingContext2D) {
-    drawImagePreview(context, this, this.preview);
+    const layout = drawImagePreview(context, this, this.preview, { footerLines: 1 });
+    context.save();
+    context.fillStyle = "rgba(255,255,255,0.65)";
+    context.font = "12px sans-serif";
+    context.fillText(formatExecutionInfo(this.executionMs), 10, layout.footerTop + 12);
+    context.restore();
+  }
+}
+
+class ScaleToolNode {
+  size: [number, number] = [280, 320];
+  preview: GraphImage | null = null;
+  executionMs: number | null = null;
+
+  constructor() {
+    const node = this as unknown as PreviewAwareNode & ScaleToolNode;
+    node.title = createToolTitle("Scale");
+    node.properties = { percent: 100 };
+    node.addInput("image", "image");
+    node.addOutput("image", "image");
+    node.addWidget(
+      "slider",
+      "Scale %",
+      100,
+      (value) => {
+        node.properties.percent = Number(value);
+        node.setDirtyCanvas(true, true);
+        notifyGraphStateChange(node);
+      },
+      { min: 1, max: 400, step: 1 },
+    );
+    node.refreshPreviewLayout = () => {
+      refreshNode(node, node.preview, 1);
+    };
+    node.refreshPreviewLayout();
+  }
+
+  onExecute(this: PreviewAwareNode & ScaleToolNode) {
+    const start = performance.now();
+    const input = this.getInputData(0);
+    const percent = Number(this.properties.percent ?? 100);
+    this.preview = input ? scaleGraphImage(input, percent) : null;
+    this.executionMs = performance.now() - start;
+    this.setOutputData(0, this.preview);
+    this.refreshPreviewLayout();
+  }
+
+  onDrawBackground(this: PreviewAwareNode & ScaleToolNode, context: CanvasRenderingContext2D) {
+    const layout = drawImagePreview(context, this, this.preview, { footerLines: 2 });
+    context.save();
+    context.fillStyle = "rgba(255,255,255,0.65)";
+    context.font = "12px sans-serif";
+    context.fillText(
+      this.preview ? `${this.preview.width}x${this.preview.height}` : "no output",
+      10,
+      layout.footerTop + 12,
+    );
+    context.fillText(formatExecutionInfo(this.executionMs), 10, layout.footerTop + 30);
+    context.restore();
+  }
+}
+
+class RotateToolNode {
+  size: [number, number] = [280, 320];
+  preview: GraphImage | null = null;
+  executionMs: number | null = null;
+
+  constructor() {
+    const node = this as unknown as PreviewAwareNode & RotateToolNode;
+    node.title = createToolTitle("Rotate");
+    node.properties = { angle: 0 };
+    node.addInput("image", "image");
+    node.addOutput("image", "image");
+    node.addWidget(
+      "slider",
+      "Angle",
+      0,
+      (value) => {
+        node.properties.angle = Number(value);
+        node.setDirtyCanvas(true, true);
+        notifyGraphStateChange(node);
+      },
+      { min: -180, max: 180, step: 1 },
+    );
+    node.refreshPreviewLayout = () => {
+      refreshNode(node, node.preview, 1);
+    };
+    node.refreshPreviewLayout();
+  }
+
+  onExecute(this: PreviewAwareNode & RotateToolNode) {
+    const start = performance.now();
+    const input = this.getInputData(0);
+    const angle = Number(this.properties.angle ?? 0);
+    this.preview = input ? rotateGraphImage(input, angle) : null;
+    this.executionMs = performance.now() - start;
+    this.setOutputData(0, this.preview);
+    this.refreshPreviewLayout();
+  }
+
+  onDrawBackground(this: PreviewAwareNode & RotateToolNode, context: CanvasRenderingContext2D) {
+    const layout = drawImagePreview(context, this, this.preview, { footerLines: 2 });
+    context.save();
+    context.fillStyle = "rgba(255,255,255,0.65)";
+    context.font = "12px sans-serif";
+    context.fillText(`${Number(this.properties.angle ?? 0).toFixed(0)} deg`, 10, layout.footerTop + 12);
+    context.fillText(formatExecutionInfo(this.executionMs), 10, layout.footerTop + 30);
+    context.restore();
+  }
+}
+
+class BrightnessContrastToolNode {
+  size: [number, number] = [280, 360];
+  preview: GraphImage | null = null;
+  executionMs: number | null = null;
+
+  constructor() {
+    const node = this as unknown as PreviewAwareNode & BrightnessContrastToolNode;
+    node.title = createToolTitle("Brightness/Contrast");
+    node.properties = { brightness: 0, contrast: 0 };
+    node.addInput("image", "image");
+    node.addOutput("image", "image");
+    node.addWidget(
+      "slider",
+      "Brightness",
+      0,
+      (value) => {
+        node.properties.brightness = Number(value);
+        node.setDirtyCanvas(true, true);
+        notifyGraphStateChange(node);
+      },
+      { min: -100, max: 100, step: 1 },
+    );
+    node.addWidget(
+      "slider",
+      "Contrast",
+      0,
+      (value) => {
+        node.properties.contrast = Number(value);
+        node.setDirtyCanvas(true, true);
+        notifyGraphStateChange(node);
+      },
+      { min: -100, max: 100, step: 1 },
+    );
+    node.refreshPreviewLayout = () => {
+      refreshNode(node, node.preview, 1);
+    };
+    node.refreshPreviewLayout();
+  }
+
+  onExecute(this: PreviewAwareNode & BrightnessContrastToolNode) {
+    const start = performance.now();
+    const input = this.getInputData(0);
+    const brightness = Number(this.properties.brightness ?? 0);
+    const contrast = Number(this.properties.contrast ?? 0);
+    this.preview = input ? brightnessContrastGraphImage(input, brightness, contrast) : null;
+    this.executionMs = performance.now() - start;
+    this.setOutputData(0, this.preview);
+    this.refreshPreviewLayout();
+  }
+
+  onDrawBackground(this: PreviewAwareNode & BrightnessContrastToolNode, context: CanvasRenderingContext2D) {
+    const layout = drawImagePreview(context, this, this.preview, { footerLines: 2 });
+    context.save();
+    context.fillStyle = "rgba(255,255,255,0.65)";
+    context.font = "12px sans-serif";
+    context.fillText(
+      `B ${Number(this.properties.brightness ?? 0)} | C ${Number(this.properties.contrast ?? 0)}`,
+      10,
+      layout.footerTop + 12,
+    );
+    context.fillText(formatExecutionInfo(this.executionMs), 10, layout.footerTop + 30);
+    context.restore();
   }
 }
 
@@ -635,6 +1524,7 @@ class QuantizeToolNode {
   lastOptionsSignature = "";
   renderToken = 0;
   isRendering = false;
+  executionMs: number | null = null;
 
   constructor() {
     const node = this as unknown as PreviewAwareNode & QuantizeToolNode;
@@ -702,6 +1592,7 @@ class QuantizeToolNode {
   }
 
   onExecute(this: PreviewAwareNode & QuantizeToolNode) {
+    const start = performance.now();
     const input = this.getInputData(0) ?? null;
     if (!input) {
       this.preview = null;
@@ -710,6 +1601,7 @@ class QuantizeToolNode {
       this.lastOptionsSignature = "";
       this.setOutputData(0, null);
       this.setOutputData(1, null);
+      this.executionMs = performance.now() - start;
       this.refreshPreviewLayout();
       return;
     }
@@ -745,6 +1637,7 @@ class QuantizeToolNode {
             });
             this.palette = result.pal8 ? paletteBufferToHexColors(result.pal8) : null;
             this.isRendering = false;
+            this.executionMs = performance.now() - start;
             this.setDirtyCanvas(true, true);
           }
         })
@@ -756,6 +1649,7 @@ class QuantizeToolNode {
           this.preview = null;
           this.palette = null;
           this.isRendering = false;
+          this.executionMs = null;
           this.lastSignature = "";
           this.lastOptionsSignature = "";
           this.setDirtyCanvas(true, true);
@@ -768,11 +1662,12 @@ class QuantizeToolNode {
   }
 
   onDrawBackground(this: PreviewAwareNode & QuantizeToolNode, context: CanvasRenderingContext2D) {
-    const layout = drawImagePreview(context, this, this.preview, { footerLines: 1 });
+    const layout = drawImagePreview(context, this, this.preview, { footerLines: 2 });
     context.save();
     context.fillStyle = "rgba(255,255,255,0.65)";
     context.font = "12px sans-serif";
     context.fillText(`palette: ${this.palette?.length ?? 0} colors`, 10, layout.footerTop + 12);
+    context.fillText(formatExecutionInfo(this.executionMs), 10, layout.footerTop + 30);
     context.restore();
   }
 
@@ -791,6 +1686,7 @@ class QuantizeToolNode {
 class BlendToolNode {
   size: [number, number] = [280, 420];
   preview: GraphImage | null = null;
+  executionMs: number | null = null;
 
   constructor() {
     const node = this as unknown as PreviewAwareNode & BlendToolNode;
@@ -864,11 +1760,13 @@ class BlendToolNode {
   }
 
   onExecute(this: PreviewAwareNode & BlendToolNode) {
+    const start = performance.now();
     const baseImage = this.getInputData(0);
     const layerImage = this.getInputData(1);
 
     if (!baseImage) {
       this.preview = null;
+      this.executionMs = performance.now() - start;
       this.setOutputData(0, null);
       this.refreshPreviewLayout();
       return;
@@ -876,6 +1774,7 @@ class BlendToolNode {
 
     if (!layerImage) {
       this.preview = baseImage;
+      this.executionMs = performance.now() - start;
       this.setOutputData(0, baseImage);
       this.refreshPreviewLayout();
       return;
@@ -888,12 +1787,18 @@ class BlendToolNode {
       offsetY: Number(this.properties.offsetY ?? 0),
       scale: Number(this.properties.scale ?? 1),
     });
+    this.executionMs = performance.now() - start;
     this.setOutputData(0, this.preview);
     this.refreshPreviewLayout();
   }
 
   onDrawBackground(this: PreviewAwareNode & BlendToolNode, context: CanvasRenderingContext2D) {
-    drawImagePreview(context, this, this.preview);
+    const layout = drawImagePreview(context, this, this.preview, { footerLines: 1 });
+    context.save();
+    context.fillStyle = "rgba(255,255,255,0.65)";
+    context.font = "12px sans-serif";
+    context.fillText(formatExecutionInfo(this.executionMs), 10, layout.footerTop + 12);
+    context.restore();
   }
 }
 
@@ -906,6 +1811,7 @@ class VectorizeToolNode {
   renderToken = 0;
   properties!: Record<string, unknown>;
   isRendering = false;
+  executionMs: number | null = null;
 
   constructor() {
     const node = this as unknown as PreviewAwareNode & VectorizeToolNode;
@@ -1028,6 +1934,7 @@ class VectorizeToolNode {
   }
 
   onExecute(this: PreviewAwareNode & VectorizeToolNode) {
+    const start = performance.now();
     const input = this.getInputData(0) ?? null;
     if (!input) {
       this.preview = null;
@@ -1036,6 +1943,7 @@ class VectorizeToolNode {
       this.lastOptionsSignature = "";
       this.setOutputData(0, null);
       this.setOutputData(1, null);
+      this.executionMs = performance.now() - start;
       this.refreshPreviewLayout();
       return;
     }
@@ -1062,6 +1970,7 @@ class VectorizeToolNode {
             }
             this.preview = preview;
             this.isRendering = false;
+            this.executionMs = performance.now() - start;
             this.setDirtyCanvas(true, true);
           })
           .catch(() => {
@@ -1071,6 +1980,7 @@ class VectorizeToolNode {
             this.preview = null;
             this.svg = null;
             this.isRendering = false;
+            this.executionMs = null;
             this.lastSignature = "";
             this.lastOptionsSignature = "";
             this.setDirtyCanvas(true, true);
@@ -1084,13 +1994,640 @@ class VectorizeToolNode {
   }
 
   onDrawBackground(this: PreviewAwareNode & VectorizeToolNode, context: CanvasRenderingContext2D) {
-    drawImagePreview(context, this, this.preview);
+    const layout = drawImagePreview(context, this, this.preview, { footerLines: 1 });
+    context.save();
+    context.fillStyle = "rgba(255,255,255,0.65)";
+    context.font = "12px sans-serif";
+    context.fillText(formatExecutionInfo(this.executionMs), 10, layout.footerTop + 12);
+    context.restore();
+  }
+}
+
+class MarchingToolNode {
+  size: [number, number] = [280, 520];
+  preview: GraphImage | null = null;
+  svg: GraphSvg | null = null;
+  pathCount = 0;
+  sampledWidth = 0;
+  sampledHeight = 0;
+  isRendering = false;
+  executionMs: number | null = null;
+  lastSignature = "";
+  lastOptionsSignature = "";
+  renderToken = 0;
+
+  setWidgetValue(this: MarchingToolNode, name: string, value: unknown) {
+    const widgets = (this as unknown as LiteNode).widgets;
+    if (!widgets?.length) {
+      return;
+    }
+    const widget = widgets.find((item) => {
+      if (!item || typeof item !== "object") {
+        return false;
+      }
+      return (item as { name?: unknown }).name === name;
+    }) as { value?: unknown } | undefined;
+    if (widget) {
+      widget.value = value;
+    }
+  }
+
+  applyPreset(
+    this: PreviewAwareNode & MarchingToolNode,
+    preset: "fast" | "quality",
+    notify = true,
+  ) {
+    const values =
+      preset === "fast"
+        ? {
+            levels: 4,
+            thresholdMin: 0.14,
+            thresholdMax: 0.9,
+            downscale: 4,
+            blur: 0.4,
+            simplify: 1.8,
+            highQuality: false,
+            lineWidth: 1.3,
+            opacity: 0.82,
+          }
+        : {
+            levels: 8,
+            thresholdMin: 0.06,
+            thresholdMax: 0.94,
+            downscale: 2,
+            blur: 1.1,
+            simplify: 0.5,
+            highQuality: true,
+            lineWidth: 1.2,
+            opacity: 0.78,
+          };
+
+    Object.assign(this.properties, values, { preset });
+    this.setWidgetValue("Levels", values.levels);
+    this.setWidgetValue("Thr min", values.thresholdMin);
+    this.setWidgetValue("Thr max", values.thresholdMax);
+    this.setWidgetValue("Downscale", values.downscale);
+    this.setWidgetValue("Blur", values.blur);
+    this.setWidgetValue("Simplify", values.simplify);
+    this.setWidgetValue("Line width", values.lineWidth);
+    this.setWidgetValue("Opacity", values.opacity);
+    this.setWidgetValue("HQ simplify", values.highQuality);
+    this.setWidgetValue("Mode", preset);
+    if (notify) {
+      notifyGraphStateChange(this);
+    }
+    this.setDirtyCanvas(true, true);
+  }
+
+  markCustom(this: PreviewAwareNode & MarchingToolNode) {
+    if (String(this.properties.preset ?? "quality") !== "custom") {
+      this.properties.preset = "custom";
+      this.setWidgetValue("Mode", "custom");
+    }
+  }
+
+  constructor() {
+    const node = this as unknown as PreviewAwareNode & MarchingToolNode;
+    getMarchingSquares();
+    node.title = createToolTitle("Marching");
+    node.properties = {
+      preset: "quality",
+      levels: 6,
+      thresholdMin: 0.1,
+      thresholdMax: 0.9,
+      downscale: 2,
+      blur: 0.8,
+      simplify: 0.7,
+      highQuality: true,
+      lineWidth: 1.4,
+      opacity: 0.8,
+      invert: false,
+      colorMode: "source",
+    };
+    node.addInput("image", "image");
+    node.addOutput("image", "image");
+    node.addOutput("svg", "svg");
+    node.addWidget("combo", "Mode", "quality", (value) => {
+      const mode = String(value);
+      if (mode === "fast" || mode === "quality") {
+        node.applyPreset(mode, true);
+      } else {
+        node.properties.preset = "custom";
+        node.setDirtyCanvas(true, true);
+        notifyGraphStateChange(node);
+      }
+    }, { values: ["quality", "fast", "custom"] });
+    node.addWidget("button", "Apply preset", null, () => {
+      const selected = String(node.properties.preset ?? "quality");
+      const preset = selected === "fast" ? "fast" : "quality";
+      node.applyPreset(preset, true);
+    });
+    node.addWidget("slider", "Levels", 6, (value) => {
+      node.properties.levels = Math.round(Number(value));
+      node.markCustom();
+      notifyGraphStateChange(node);
+    }, { min: 2, max: 8, step: 1 });
+    node.addWidget("slider", "Thr min", 0.1, (value) => {
+      node.properties.thresholdMin = Number(value);
+      node.markCustom();
+      notifyGraphStateChange(node);
+    }, { min: 0, max: 1, step: 0.01, precision: 2 });
+    node.addWidget("slider", "Thr max", 0.9, (value) => {
+      node.properties.thresholdMax = Number(value);
+      node.markCustom();
+      notifyGraphStateChange(node);
+    }, { min: 0, max: 1, step: 0.01, precision: 2 });
+    node.addWidget("slider", "Downscale", 2, (value) => {
+      node.properties.downscale = Math.round(Number(value));
+      node.markCustom();
+      notifyGraphStateChange(node);
+    }, { min: 1, max: 8, step: 1 });
+    node.addWidget("slider", "Blur", 0.8, (value) => {
+      node.properties.blur = Number(value);
+      node.markCustom();
+      notifyGraphStateChange(node);
+    }, { min: 0, max: 4, step: 0.1, precision: 1 });
+    node.addWidget("slider", "Simplify", 0.7, (value) => {
+      node.properties.simplify = Number(value);
+      node.markCustom();
+      notifyGraphStateChange(node);
+    }, { min: 0, max: 8, step: 0.1, precision: 1 });
+    node.addWidget("slider", "Line width", 1.4, (value) => {
+      node.properties.lineWidth = Number(value);
+      node.markCustom();
+      notifyGraphStateChange(node);
+    }, { min: 0.1, max: 8, step: 0.1, precision: 1 });
+    node.addWidget("slider", "Opacity", 0.8, (value) => {
+      node.properties.opacity = Number(value);
+      node.markCustom();
+      notifyGraphStateChange(node);
+    }, { min: 0.05, max: 1, step: 0.05, precision: 2 });
+    node.addWidget("combo", "Colors", "source", (value) => {
+      node.properties.colorMode = String(value);
+      node.markCustom();
+      notifyGraphStateChange(node);
+    }, { values: ["source", "gray"] });
+    node.addWidget("toggle", "Invert", false, (value) => {
+      node.properties.invert = Boolean(value);
+      node.markCustom();
+      notifyGraphStateChange(node);
+    });
+    node.addWidget("toggle", "HQ simplify", true, (value) => {
+      node.properties.highQuality = Boolean(value);
+      node.markCustom();
+      notifyGraphStateChange(node);
+    });
+
+    node.refreshPreviewLayout = () => {
+      refreshNode(node, node.preview, 2);
+    };
+    node.applyPreset("quality", false);
+    node.refreshPreviewLayout();
+  }
+
+  getMarchingOptions(this: PreviewAwareNode & MarchingToolNode) {
+    return {
+      levels: Math.round(Number(this.properties.levels ?? 6)),
+      thresholdMin: Number(this.properties.thresholdMin ?? 0.1),
+      thresholdMax: Number(this.properties.thresholdMax ?? 0.9),
+      downscale: Math.round(Number(this.properties.downscale ?? 2)),
+      blur: Number(this.properties.blur ?? 0.8),
+      simplify: Number(this.properties.simplify ?? 0.7),
+      highQuality: Boolean(this.properties.highQuality ?? true),
+      lineWidth: Number(this.properties.lineWidth ?? 1.4),
+      opacity: Number(this.properties.opacity ?? 0.8),
+      invert: Boolean(this.properties.invert ?? false),
+      colorMode: String(this.properties.colorMode ?? "source") as "gray" | "source",
+    };
+  }
+
+  onExecute(this: PreviewAwareNode & MarchingToolNode) {
+    const input = this.getInputData(0) ?? null;
+    if (!input) {
+      this.preview = null;
+      this.svg = null;
+      this.pathCount = 0;
+      this.sampledWidth = 0;
+      this.sampledHeight = 0;
+      this.isRendering = false;
+      this.executionMs = null;
+      this.lastSignature = "";
+      this.lastOptionsSignature = "";
+      this.setOutputData(0, null);
+      this.setOutputData(1, null);
+      this.refreshPreviewLayout();
+      return;
+    }
+
+    const signature = getGraphImageSignature(input);
+    const options = this.getMarchingOptions();
+    const optionsSignature = JSON.stringify(options);
+    if (signature !== this.lastSignature || optionsSignature !== this.lastOptionsSignature) {
+      this.lastSignature = signature;
+      this.lastOptionsSignature = optionsSignature;
+      const renderToken = ++this.renderToken;
+      this.isRendering = true;
+      const start = performance.now();
+      this.setDirtyCanvas(true, true);
+
+      void marchingGraphImage(input, options, () => renderToken !== this.renderToken)
+        .then((result) => {
+          if (renderToken !== this.renderToken) {
+            return;
+          }
+          if (!result) {
+            return;
+          }
+          this.svg = result.svg;
+          this.pathCount = result.pathCount;
+          this.sampledWidth = result.sampledWidth;
+          this.sampledHeight = result.sampledHeight;
+          this.executionMs = performance.now() - start;
+          return rasterizeGraphSvg(result.svg);
+        })
+        .then((preview) => {
+          if (renderToken !== this.renderToken) {
+            return;
+          }
+          this.preview = preview ?? null;
+          this.isRendering = false;
+          this.setDirtyCanvas(true, true);
+        })
+        .catch(() => {
+          if (renderToken !== this.renderToken) {
+            return;
+          }
+          this.preview = null;
+          this.svg = null;
+          this.pathCount = 0;
+          this.sampledWidth = 0;
+          this.sampledHeight = 0;
+          this.isRendering = false;
+          this.executionMs = null;
+          this.lastSignature = "";
+          this.lastOptionsSignature = "";
+          this.setDirtyCanvas(true, true);
+        });
+    }
+
+    this.setOutputData(0, this.preview);
+    this.setOutputData(1, this.svg);
+    this.refreshPreviewLayout();
+  }
+
+  onDrawBackground(this: PreviewAwareNode & MarchingToolNode, context: CanvasRenderingContext2D) {
+    const layout = drawImagePreview(context, this, this.preview, { footerLines: 3 });
+    context.save();
+    context.fillStyle = "rgba(255,255,255,0.65)";
+    context.font = "12px sans-serif";
+    const status = this.isRendering ? "rendering..." : "ready";
+    const mode = String(this.properties.preset ?? "custom");
+    context.fillText(`isolines: ${this.pathCount} | ${status} | ${mode}`, 10, layout.footerTop + 12);
+    context.fillText(
+      `sample: ${this.sampledWidth || "-"}x${this.sampledHeight || "-"}`,
+      10,
+      layout.footerTop + 30,
+    );
+    context.fillText(formatExecutionInfo(this.executionMs), 10, layout.footerTop + 48);
+    context.restore();
+  }
+}
+
+class RoughToolNode {
+  size: [number, number] = [280, 540];
+  preview: GraphImage | null = null;
+  svg: GraphSvg | null = null;
+  lastSvg = "";
+  lastOptionsSignature = "";
+  renderToken = 0;
+  pathCount = 0;
+  executionMs: number | null = null;
+
+  constructor() {
+    const node = this as unknown as PreviewAwareNode & RoughToolNode;
+    getRough();
+    node.title = createToolTitle("Rough");
+    node.properties = {
+      roughness: 1.5,
+      bowing: 1,
+      strokeWidth: 1.2,
+      fillStyle: "hachure",
+      hachureAngle: -41,
+      hachureGap: 4,
+      fillWeight: 1,
+      simplification: 0,
+      curveStepCount: 9,
+      maxRandomnessOffset: 2,
+      seed: 1,
+      disableMultiStroke: false,
+      preserveStroke: true,
+      preserveFill: true,
+    };
+    node.addInput("svg", "svg");
+    node.addOutput("svg", "svg");
+    node.addWidget("slider", "Roughness", 1.5, (value) => {
+      node.properties.roughness = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0, max: 4, step: 0.05, precision: 2 });
+    node.addWidget("slider", "Bowing", 1, (value) => {
+      node.properties.bowing = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0, max: 4, step: 0.05, precision: 2 });
+    node.addWidget("slider", "Stroke", 1.2, (value) => {
+      node.properties.strokeWidth = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0.1, max: 8, step: 0.1, precision: 1 });
+    node.addWidget("combo", "Fill style", "hachure", (value) => {
+      node.properties.fillStyle = String(value);
+      notifyGraphStateChange(node);
+    }, { values: ["hachure", "solid", "zigzag", "cross-hatch", "dots", "dashed", "zigzag-line"] });
+    node.addWidget("slider", "Hach gap", 4, (value) => {
+      node.properties.hachureGap = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0, max: 24, step: 0.5, precision: 1 });
+    node.addWidget("slider", "Hach angle", -41, (value) => {
+      node.properties.hachureAngle = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: -180, max: 180, step: 1 });
+    node.addWidget("slider", "Fill weight", 1, (value) => {
+      node.properties.fillWeight = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0, max: 8, step: 0.1, precision: 1 });
+    node.addWidget("slider", "Simplify", 0, (value) => {
+      node.properties.simplification = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0, max: 1, step: 0.01, precision: 2 });
+    node.addWidget("slider", "Curve steps", 9, (value) => {
+      node.properties.curveStepCount = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 4, max: 30, step: 1 });
+    node.addWidget("slider", "Random off", 2, (value) => {
+      node.properties.maxRandomnessOffset = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0, max: 16, step: 0.1, precision: 1 });
+    node.addWidget("slider", "Seed", 1, (value) => {
+      node.properties.seed = Math.round(Number(value));
+      notifyGraphStateChange(node);
+    }, { min: 1, max: 9999, step: 1 });
+    node.addWidget("toggle", "Mono stroke", false, (value) => {
+      node.properties.disableMultiStroke = Boolean(value);
+      notifyGraphStateChange(node);
+    });
+    node.addWidget("toggle", "Keep stroke", true, (value) => {
+      node.properties.preserveStroke = Boolean(value);
+      notifyGraphStateChange(node);
+    });
+    node.addWidget("toggle", "Keep fill", true, (value) => {
+      node.properties.preserveFill = Boolean(value);
+      notifyGraphStateChange(node);
+    });
+    node.refreshPreviewLayout = () => {
+      refreshNode(node, node.preview, 1);
+    };
+    node.refreshPreviewLayout();
+  }
+
+  getRoughOptions(this: PreviewAwareNode & RoughToolNode) {
+    return {
+      roughness: Number(this.properties.roughness ?? 1.5),
+      bowing: Number(this.properties.bowing ?? 1),
+      strokeWidth: Number(this.properties.strokeWidth ?? 1.2),
+      fillStyle: String(this.properties.fillStyle ?? "hachure") as RoughPathOptions["fillStyle"],
+      hachureAngle: Number(this.properties.hachureAngle ?? -41),
+      hachureGap: Number(this.properties.hachureGap ?? 4),
+      fillWeight: Number(this.properties.fillWeight ?? 1),
+      simplification: Number(this.properties.simplification ?? 0),
+      curveStepCount: Math.round(Number(this.properties.curveStepCount ?? 9)),
+      maxRandomnessOffset: Number(this.properties.maxRandomnessOffset ?? 2),
+      seed: Math.round(Number(this.properties.seed ?? 1)),
+      disableMultiStroke: Boolean(this.properties.disableMultiStroke ?? false),
+      preserveStroke: Boolean(this.properties.preserveStroke ?? true),
+      preserveFill: Boolean(this.properties.preserveFill ?? true),
+      fallbackStroke: "#101010",
+      fallbackFill: "none",
+    };
+  }
+
+  onExecute(this: PreviewAwareNode & RoughToolNode) {
+    const start = performance.now();
+    const svg = this.getInputData(0);
+    const inputSvg = typeof svg === "string" ? svg : null;
+    if (!inputSvg) {
+      this.svg = null;
+      this.preview = null;
+      this.pathCount = 0;
+      this.lastSvg = "";
+      this.lastOptionsSignature = "";
+      this.executionMs = performance.now() - start;
+      this.setOutputData(0, null);
+      this.refreshPreviewLayout();
+      return;
+    }
+
+    const options = this.getRoughOptions();
+    const optionsSignature = JSON.stringify(options);
+
+    if (inputSvg !== this.lastSvg || optionsSignature !== this.lastOptionsSignature) {
+      this.lastSvg = inputSvg;
+      this.lastOptionsSignature = optionsSignature;
+      const renderToken = ++this.renderToken;
+
+      try {
+        const transformed = roughenGraphSvg(inputSvg, options);
+        this.svg = transformed.svg;
+        this.pathCount = transformed.pathCount;
+        void rasterizeGraphSvg(transformed.svg)
+          .then((preview) => {
+            if (renderToken !== this.renderToken) {
+              return;
+            }
+            this.preview = preview;
+            this.executionMs = performance.now() - start;
+            this.setDirtyCanvas(true, true);
+          })
+          .catch(() => {
+            if (renderToken !== this.renderToken) {
+              return;
+            }
+            this.preview = null;
+            this.executionMs = null;
+            this.setDirtyCanvas(true, true);
+          });
+      } catch {
+        this.svg = null;
+        this.preview = null;
+        this.pathCount = 0;
+        this.executionMs = null;
+        this.lastSvg = "";
+        this.lastOptionsSignature = "";
+      }
+    }
+
+    this.setOutputData(0, this.svg);
+    this.refreshPreviewLayout();
+  }
+
+  onDrawBackground(this: PreviewAwareNode & RoughToolNode, context: CanvasRenderingContext2D) {
+    const layout = drawImagePreview(context, this, this.preview, { footerLines: 2 });
+    context.save();
+    context.fillStyle = "rgba(255,255,255,0.65)";
+    context.font = "12px sans-serif";
+    context.fillText(`rough paths: ${this.pathCount}`, 10, layout.footerTop + 12);
+    context.fillText(formatExecutionInfo(this.executionMs), 10, layout.footerTop + 30);
+    context.restore();
+  }
+}
+
+class SvgSimplifyToolNode {
+  size: [number, number] = [280, 420];
+  preview: GraphImage | null = null;
+  svg: GraphSvg | null = null;
+  pathCount = 0;
+  inputBytes = 0;
+  outputBytes = 0;
+  lastSvg = "";
+  lastOptionsSignature = "";
+  renderToken = 0;
+  executionMs: number | null = null;
+
+  constructor() {
+    const node = this as unknown as PreviewAwareNode & SvgSimplifyToolNode;
+    getSimplify();
+    node.title = createToolTitle("SVG Simplify");
+    node.properties = {
+      tolerance: 1.2,
+      sampleStep: 2.5,
+      precision: 2,
+      highQuality: true,
+      minify: true,
+    };
+    node.addInput("svg", "svg");
+    node.addOutput("svg", "svg");
+    node.addWidget("slider", "Tolerance", 1.2, (value) => {
+      node.properties.tolerance = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0, max: 8, step: 0.05, precision: 2 });
+    node.addWidget("slider", "Sample step", 2.5, (value) => {
+      node.properties.sampleStep = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0.5, max: 12, step: 0.1, precision: 1 });
+    node.addWidget("slider", "Precision", 2, (value) => {
+      node.properties.precision = Math.round(Number(value));
+      notifyGraphStateChange(node);
+    }, { min: 0, max: 5, step: 1 });
+    node.addWidget("toggle", "High quality", true, (value) => {
+      node.properties.highQuality = Boolean(value);
+      notifyGraphStateChange(node);
+    });
+    node.addWidget("toggle", "Minify", true, (value) => {
+      node.properties.minify = Boolean(value);
+      notifyGraphStateChange(node);
+    });
+    node.refreshPreviewLayout = () => {
+      refreshNode(node, node.preview, 2);
+    };
+    node.refreshPreviewLayout();
+  }
+
+  getSimplifyOptions(this: PreviewAwareNode & SvgSimplifyToolNode) {
+    return {
+      tolerance: Number(this.properties.tolerance ?? 1.2),
+      sampleStep: Number(this.properties.sampleStep ?? 2.5),
+      precision: Math.round(Number(this.properties.precision ?? 2)),
+      highQuality: Boolean(this.properties.highQuality ?? true),
+      minify: Boolean(this.properties.minify ?? true),
+    };
+  }
+
+  onExecute(this: PreviewAwareNode & SvgSimplifyToolNode) {
+    const start = performance.now();
+    const input = this.getInputData(0);
+    const inputSvg = typeof input === "string" ? input : null;
+    if (!inputSvg) {
+      this.svg = null;
+      this.preview = null;
+      this.pathCount = 0;
+      this.inputBytes = 0;
+      this.outputBytes = 0;
+      this.lastSvg = "";
+      this.lastOptionsSignature = "";
+      this.setOutputData(0, null);
+      this.executionMs = performance.now() - start;
+      this.refreshPreviewLayout();
+      return;
+    }
+
+    const options = this.getSimplifyOptions();
+    const optionsSignature = JSON.stringify(options);
+    this.inputBytes = new Blob([inputSvg]).size;
+
+    if (inputSvg !== this.lastSvg || optionsSignature !== this.lastOptionsSignature) {
+      this.lastSvg = inputSvg;
+      this.lastOptionsSignature = optionsSignature;
+      const renderToken = ++this.renderToken;
+
+      try {
+        const result = simplifyGraphSvg(inputSvg, options);
+        this.svg = result.svg;
+        this.pathCount = result.pathCount;
+        this.outputBytes = new Blob([result.svg]).size;
+        void rasterizeGraphSvg(result.svg)
+          .then((preview) => {
+            if (renderToken !== this.renderToken) {
+              return;
+            }
+            this.preview = preview;
+            this.executionMs = performance.now() - start;
+            this.setDirtyCanvas(true, true);
+          })
+          .catch(() => {
+            if (renderToken !== this.renderToken) {
+              return;
+            }
+            this.preview = null;
+            this.executionMs = null;
+            this.setDirtyCanvas(true, true);
+          });
+      } catch {
+        this.svg = null;
+        this.preview = null;
+        this.pathCount = 0;
+        this.outputBytes = 0;
+        this.executionMs = null;
+        this.lastSvg = "";
+        this.lastOptionsSignature = "";
+      }
+    }
+
+    this.setOutputData(0, this.svg);
+    this.refreshPreviewLayout();
+  }
+
+  onDrawBackground(this: PreviewAwareNode & SvgSimplifyToolNode, context: CanvasRenderingContext2D) {
+    const layout = drawImagePreview(context, this, this.preview, { footerLines: 3 });
+    const gain =
+      this.inputBytes > 0
+        ? Math.max(0, ((this.inputBytes - this.outputBytes) / this.inputBytes) * 100)
+        : 0;
+    context.save();
+    context.fillStyle = "rgba(255,255,255,0.65)";
+    context.font = "12px sans-serif";
+    context.fillText(
+      `${this.pathCount} paths | ${this.inputBytes} -> ${this.outputBytes} bytes`,
+      10,
+      layout.footerTop + 12,
+    );
+    context.fillText(`size reduction: ${gain.toFixed(1)}%`, 10, layout.footerTop + 30);
+    context.fillText(formatExecutionInfo(this.executionMs), 10, layout.footerTop + 48);
+    context.restore();
   }
 }
 
 class OutputImageNode {
   image: GraphImage | null = null;
   size: [number, number] = [320, 300];
+  infoText = "no image";
+  lastSignature = "";
 
   constructor() {
     const node = this as unknown as PreviewAwareNode & OutputImageNode;
@@ -1103,18 +2640,28 @@ class OutputImageNode {
       }
     });
     node.refreshPreviewLayout = () => {
-      refreshNode(node, node.image);
+      refreshNode(node, node.image, 1);
     };
     node.refreshPreviewLayout();
   }
 
   onExecute(this: PreviewAwareNode & OutputImageNode) {
     this.image = this.getInputData(0) ?? null;
+    const signature = getGraphImageSignature(this.image);
+    if (signature !== this.lastSignature) {
+      this.lastSignature = signature;
+      this.infoText = formatGraphImageInfo(this.image);
+    }
     this.refreshPreviewLayout();
   }
 
   onDrawBackground(this: PreviewAwareNode & OutputImageNode, context: CanvasRenderingContext2D) {
-    drawImagePreview(context, this, this.image);
+    const layout = drawImagePreview(context, this, this.image, { footerLines: 1 });
+    context.save();
+    context.fillStyle = "rgba(255,255,255,0.65)";
+    context.font = "12px sans-serif";
+    context.fillText(this.infoText, 10, layout.footerTop + 12);
+    context.restore();
   }
 }
 
@@ -1224,9 +2771,15 @@ export function registerImageNodes() {
   LiteGraph.registerNodeType("tools/grayscale", GrayscaleToolNode as unknown as NodeCtor);
   LiteGraph.registerNodeType("tools/threshold", ThresholdToolNode as unknown as NodeCtor);
   LiteGraph.registerNodeType("tools/blur", BlurToolNode as unknown as NodeCtor);
+  LiteGraph.registerNodeType("tools/scale", ScaleToolNode as unknown as NodeCtor);
+  LiteGraph.registerNodeType("tools/rotate", RotateToolNode as unknown as NodeCtor);
+  LiteGraph.registerNodeType("tools/brightness-contrast", BrightnessContrastToolNode as unknown as NodeCtor);
   LiteGraph.registerNodeType("tools/quantize", QuantizeToolNode as unknown as NodeCtor);
   LiteGraph.registerNodeType("tools/blend", BlendToolNode as unknown as NodeCtor);
   LiteGraph.registerNodeType("tools/vectorize", VectorizeToolNode as unknown as NodeCtor);
+  LiteGraph.registerNodeType("tools/marching", MarchingToolNode as unknown as NodeCtor);
+  LiteGraph.registerNodeType("tools/rough", RoughToolNode as unknown as NodeCtor);
+  LiteGraph.registerNodeType("tools/svg-simplify", SvgSimplifyToolNode as unknown as NodeCtor);
   LiteGraph.registerNodeType("output/image", OutputImageNode as unknown as NodeCtor);
   LiteGraph.registerNodeType("output/palette", OutputPaletteNode as unknown as NodeCtor);
   LiteGraph.registerNodeType("output/svg", OutputSvgNode as unknown as NodeCtor);

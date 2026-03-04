@@ -191,6 +191,58 @@ const blendModeToCompositeOperation: Record<BlendMode, GlobalCompositeOperation>
   difference: "difference",
 };
 
+function clampByte(value: number) {
+  return Math.max(0, Math.min(255, value));
+}
+
+export function scaleGraphImage(source: GraphImage, scalePercent: number): GraphImage {
+  const scale = Math.max(0.01, scalePercent / 100);
+  const width = Math.max(1, Math.round(source.width * scale));
+  const height = Math.max(1, Math.round(source.height * scale));
+
+  return createImageCanvas({ width, height }, (context) => {
+    context.imageSmoothingEnabled = true;
+    context.imageSmoothingQuality = "high";
+    context.drawImage(source, 0, 0, width, height);
+  });
+}
+
+export function rotateGraphImage(source: GraphImage, angleDeg: number): GraphImage {
+  const angleRad = (angleDeg * Math.PI) / 180;
+  const cos = Math.abs(Math.cos(angleRad));
+  const sin = Math.abs(Math.sin(angleRad));
+  const width = Math.max(1, Math.round(source.width * cos + source.height * sin));
+  const height = Math.max(1, Math.round(source.width * sin + source.height * cos));
+
+  return createImageCanvas({ width, height }, (context) => {
+    context.translate(width / 2, height / 2);
+    context.rotate(angleRad);
+    context.drawImage(source, -source.width / 2, -source.height / 2);
+  });
+}
+
+export function brightnessContrastGraphImage(
+  source: GraphImage,
+  brightness: number,
+  contrast: number,
+): GraphImage {
+  const brightnessOffset = (brightness / 100) * 255;
+  const contrastValue = (contrast / 100) * 255;
+  const contrastFactor = (259 * (contrastValue + 255)) / (255 * (259 - contrastValue));
+
+  return applyPixelTransform(source, (data) => {
+    for (let index = 0; index < data.length; index += 4) {
+      data[index] = clampByte(contrastFactor * (data[index] - 128) + 128 + brightnessOffset);
+      data[index + 1] = clampByte(
+        contrastFactor * (data[index + 1] - 128) + 128 + brightnessOffset,
+      );
+      data[index + 2] = clampByte(
+        contrastFactor * (data[index + 2] - 128) + 128 + brightnessOffset,
+      );
+    }
+  });
+}
+
 export function blendGraphImages(
   baseImage: GraphImage,
   layerImage: GraphImage,
