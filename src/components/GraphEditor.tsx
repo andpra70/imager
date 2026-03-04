@@ -59,6 +59,11 @@ interface SerializedGraph {
   version?: number;
 }
 
+interface SerializedViewportState {
+  scale: number;
+  offset: [number, number];
+}
+
 function createDefaultGraph(graph: InstanceType<typeof LGraph>) {
   const inputNode = LiteGraph.createNode("input/image") as GraphNodeInstance;
   const invertNode = LiteGraph.createNode("tools/invert") as GraphNodeInstance;
@@ -89,6 +94,31 @@ function getAdaptiveGraphTickMs(nodeCount: number) {
   return GRAPH_TICK_FAST_MS;
 }
 
+function extractViewportFromSerializedGraph(serializedGraph: SerializedGraph) {
+  const viewport = serializedGraph.extra && typeof serializedGraph.extra === "object"
+    ? (serializedGraph.extra as Record<string, unknown>).viewport
+    : null;
+  if (!viewport || typeof viewport !== "object") {
+    return null;
+  }
+  const candidate = viewport as { scale?: unknown; offset?: unknown };
+  const scale = Number(candidate.scale);
+  const offset = candidate.offset;
+  if (
+    !Number.isFinite(scale) ||
+    !Array.isArray(offset) ||
+    offset.length !== 2 ||
+    !Number.isFinite(Number(offset[0])) ||
+    !Number.isFinite(Number(offset[1]))
+  ) {
+    return null;
+  }
+  return {
+    scale,
+    offset: [Number(offset[0]), Number(offset[1])] as [number, number],
+  } satisfies SerializedViewportState;
+}
+
 function GraphEditor() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const graphRef = useRef<GraphRuntime | null>(null);
@@ -116,6 +146,39 @@ function GraphEditor() {
     graphCanvasRef.current?.setDirty(true, true);
   };
 
+  const applyViewportState = (viewportState: SerializedViewportState | null) => {
+    const graphCanvas = graphCanvasRef.current;
+    if (!graphCanvas || !viewportState) {
+      return;
+    }
+    graphCanvas.ds.scale = viewportState.scale;
+    graphCanvas.ds.offset[0] = viewportState.offset[0];
+    graphCanvas.ds.offset[1] = viewportState.offset[1];
+    graphCanvas.setDirty(true, true);
+  };
+
+  const serializeGraphWithViewport = () => {
+    const graph = graphRef.current;
+    if (!graph) {
+      return null;
+    }
+
+    const serialized = graph.serialize() as SerializedGraph;
+    const graphCanvas = graphCanvasRef.current;
+    const nextExtra =
+      serialized.extra && typeof serialized.extra === "object"
+        ? { ...serialized.extra }
+        : {};
+    if (graphCanvas?.ds) {
+      nextExtra.viewport = {
+        scale: graphCanvas.ds.scale,
+        offset: [graphCanvas.ds.offset[0], graphCanvas.ds.offset[1]],
+      } satisfies SerializedViewportState;
+    }
+    serialized.extra = nextExtra;
+    return serialized;
+  };
+
   const refreshNodeLayouts = () => {
     const graph = graphRef.current;
     if (!graph?._nodes) {
@@ -128,13 +191,11 @@ function GraphEditor() {
   };
 
   const persistGraph = (message?: string) => {
-    const graph = graphRef.current;
-    if (!graph) {
-      return;
-    }
-
     try {
-      const serialized = graph.serialize() as SerializedGraph;
+      const serialized = serializeGraphWithViewport();
+      if (!serialized) {
+        return;
+      }
       localStorage.setItem(GRAPH_STORAGE_KEY, JSON.stringify(serialized));
       if (message) {
         setStatusMessage(message);
@@ -253,6 +314,7 @@ function GraphEditor() {
     graph.stop();
     graph.clear();
     graph.configure(serializedGraph);
+    applyViewportState(extractViewportFromSerializedGraph(serializedGraph));
     graph.start(getAdaptiveGraphTickMs(graph._nodes?.length ?? 0));
     refreshCanvas();
     persistGraph(message);
@@ -273,12 +335,12 @@ function GraphEditor() {
   };
 
   const exportGraph = () => {
-    const graph = graphRef.current;
-    if (!graph) {
+    const serialized = serializeGraphWithViewport();
+    if (!serialized) {
       return;
     }
 
-    const blob = new Blob([JSON.stringify(graph.serialize(), null, 2)], {
+    const blob = new Blob([JSON.stringify(serialized, null, 2)], {
       type: "application/json",
     });
     const url = URL.createObjectURL(blob);
@@ -356,13 +418,18 @@ function GraphEditor() {
     }
 
     const savedGraph = localStorage.getItem(GRAPH_STORAGE_KEY);
+    let initialViewportState: SerializedViewportState | null = null;
     if (savedGraph) {
       try {
-        graph.configure(JSON.parse(savedGraph) as SerializedGraph);
+        const serialized = JSON.parse(savedGraph) as SerializedGraph;
+        graph.configure(serialized);
+        initialViewportState = extractViewportFromSerializedGraph(serialized);
         setStatusMessage("Saved graph restored from localStorage.");
       } catch {
         try {
-          graph.configure(sampleGraph as SerializedGraph);
+          const serialized = sampleGraph as SerializedGraph;
+          graph.configure(serialized);
+          initialViewportState = extractViewportFromSerializedGraph(serialized);
           setStatusMessage("Saved graph invalid. Loaded sample graph.");
           persistGraph();
         } catch {
@@ -372,7 +439,9 @@ function GraphEditor() {
       }
     } else {
       try {
-        graph.configure(sampleGraph as SerializedGraph);
+        const serialized = sampleGraph as SerializedGraph;
+        graph.configure(serialized);
+        initialViewportState = extractViewportFromSerializedGraph(serialized);
         setStatusMessage("Sample graph loaded.");
         persistGraph();
       } catch {
@@ -394,6 +463,7 @@ function GraphEditor() {
     };
 
     resizeCanvas();
+    applyViewportState(initialViewportState);
     window.addEventListener("resize", resizeCanvas);
     graph.start(getAdaptiveGraphTickMs(graph._nodes?.length ?? 0));
     autoSaveIntervalRef.current = window.setInterval(() => {

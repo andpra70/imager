@@ -6097,7 +6097,6 @@ class BgRemoveToolNode {
 
   constructor() {
     const node = this as unknown as PreviewAwareNode & BgRemoveToolNode;
-    getMl5Runtime();
     node.title = createToolTitle("BG Remove");
     node.properties = {
       threshold: 12,
