@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Generatore di Mosaici</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: #f0f2f5;
+            color: #333;
+            margin: 0;
+            padding: 2rem;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .container {
+            background-color: white;
+            padding: 2rem;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+            width: 100%;
+            max-width: 800px;
+        }
+        h1 {
+            text-align: center;
+            color: #1a73e8;
+            margin-top: 0;
+        }
+        .controls {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            margin-bottom: 2rem;
+            padding: 1.5rem;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+        }
+        .control-group {
+            display: flex;
+            flex-direction: column;
+        }
+        label {
+            font-weight: bold;
+            margin-bottom: 0.5rem;
+            color: #555;
+        }
+        input[type="file"], input[type="number"], button {
+            padding: 0.75rem;
+            border-radius: 4px;
+            border: 1px solid #ccc;
+            font-size: 1rem;
+        }
+        button {
+            background-color: #1a73e8;
+            color: white;
+            border: none;
+            cursor: pointer;
+            font-weight: bold;
+            transition: background-color 0.2s;
+            grid-column: 1 / -1; /* Span all columns */
+        }
+        button:hover {
+            background-color: #1558b3;
+        }
+        button:disabled {
+            background-color: #9e9e9e;
+            cursor: not-allowed;
+        }
+        .progress-container {
+            display: none;
+            margin-top: 1.5rem;
+            text-align: center;
+        }
+        progress {
+            width: 100%;
+            height: 25px;
+            border-radius: 4px;
+        }
+        .outputs {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 2rem;
+            margin-top: 2rem;
+        }
+        .output-box {
+            text-align: center;
+        }
+        h2 {
+            color: #333;
+            border-bottom: 2px solid #eee;
+            padding-bottom: 0.5rem;
+            margin-top: 0;
+        }
+        img, canvas {
+            max-width: 100%;
+            height: auto;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        .palette-container {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 10px;
+            margin-top: 1rem;
+            padding: 1rem;
+            border: 1px solid #eee;
+            border-radius: 4px;
+        }
+        .color-box {
+            width: 50px;
+            height: 50px;
+            border-radius: 4px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.7rem;
+            color: white;
+            text-shadow: 1px 1px 2px black;
+        }
+        #saveBtn {
+            display: none;
+            margin-top: 2rem;
+            text-decoration: none;
+            text-align: center;
+            background-color: #28a745;
+        }
+        #saveBtn:hover {
+            background-color: #218838;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h1>Generatore di Mosaici</h1>
+
+        <div class="controls">
+            <div class="control-group">
+                <label for="imageInput">1. Scegli un'immagine</label>
+                <input type="file" id="imageInput" accept="image/*">
+            </div>
+            <div class="control-group">
+                <label for="numColors">2. Numero di colori (N)</label>
+                <input type="number" id="numColors" value="16" min="2" max="256">
+            </div>
+            <div class="control-group">
+                <label for="tileSize">3. Dimensione tassello (px)</label>
+                <input type="number" id="tileSize" value="10" min="2" max="50">
+            </div>
+            <button id="generateBtn">4. Genera Mosaico</button>
+        </div>
+
+        <div id="progressContainer" class="progress-container">
+            <p id="progressLabel">Elaborazione in corso...</p>
+            <progress id="progressBar" value="0" max="100"></progress>
+        </div>
+
+        <div class="outputs">
+            <div class="output-box" id="originalBox" style="display:none;">
+                <h2>Immagine Originale</h2>
+                <img id="originalImage" src="" alt="Immagine Originale">
+            </div>
+            <div class="output-box" id="resultBox" style="display:none;">
+                <h2>Palette e Mosaico</h2>
+                <div id="paletteContainer" class="palette-container"></div>
+                <canvas id="resultCanvas"></canvas>
+                <a id="saveBtn" href="#" download="mosaico.png" class="button">Salva Mosaico</a>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Selezione elementi DOM
+        const imageInput = document.getElementById('imageInput');
+        const numColorsInput = document.getElementById('numColors');
+        const tileSizeInput = document.getElementById('tileSize');
+        const generateBtn = document.getElementById('generateBtn');
+        const progressContainer = document.getElementById('progressContainer');
+        const progressBar = document.getElementById('progressBar');
+        const progressLabel = document.getElementById('progressLabel');
+        const originalBox = document.getElementById('originalBox');
+        const originalImage = document.getElementById('originalImage');
+        const resultBox = document.getElementById('resultBox');
+        const paletteContainer = document.getElementById('paletteContainer');
+        const resultCanvas = document.getElementById('resultCanvas');
+        const saveBtn = document.getElementById('saveBtn');
+
+        let sourceImage = new Image();
+
+        // 1. Gestione caricamento immagine e anteprima
+        imageInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                    sourceImage.src = event.target.result;
+                    sourceImage.onload = () => {
+                        originalImage.src = sourceImage.src;
+                        originalBox.style.display = 'block';
+                        resultBox.style.display = 'none';
+                        saveBtn.style.display = 'none';
+                    };
+                };
+                reader.readAsDataURL(file);
+            }
+        });
+
+        // 2. Click sul pulsante "Genera"
+        generateBtn.addEventListener('click', async () => {
+            if (!sourceImage.src) {
+                alert("Per favore, scegli prima un'immagine.");
+                return;
+            }
+
+            // Reset UI
+            generateBtn.disabled = true;
+            progressContainer.style.display = 'block';
+            progressBar.value = 0;
+            resultBox.style.display = 'none';
+            saveBtn.style.display = 'none';
+            paletteContainer.innerHTML = '';
+            
+            const numColors = parseInt(numColorsInput.value);
+            const tileSize = parseInt(tileSizeInput.value);
+
+            try {
+                // FASE 1: Estrarre la palette di colori con K-Means
+                updateProgress(0, "Fase 1/2: Estraggo la palette ottimale...");
+                const palette = await extractPalette(sourceImage, numColors);
+                displayPalette(palette);
+                
+                // FASE 2: Disegnare il mosaico
+                updateProgress(50, "Fase 2/2: Costruisco il mosaico...");
+                await drawMosaic(sourceImage, resultCanvas, palette, tileSize);
+
+                // Fine
+                updateProgress(100, "Completato!");
+                resultBox.style.display = 'block';
+                saveBtn.style.display = 'block';
+                saveBtn.href = resultCanvas.toDataURL('image/png');
+
+            } catch (error) {
+                console.error("Errore durante la generazione del mosaico:", error);
+                alert("Si è verificato un errore. Controlla la console per i dettagli.");
+            } finally {
+                // Riabilita il pulsante e nasconde la progress bar dopo un breve ritardo
+                setTimeout(() => {
+                    progressContainer.style.display = 'none';
+                    generateBtn.disabled = false;
+                }, 1000);
+            }
+        });
+
+        // Funzione per aggiornare la barra di avanzamento
+        function updateProgress(value, label) {
+            progressBar.value = value;
+            progressLabel.textContent = label;
+        }
+
+        // Funzione per mostrare la palette di colori
+        function displayPalette(palette) {
+            paletteContainer.innerHTML = '';
+            palette.forEach(color => {
+                const colorBox = document.createElement('div');
+                colorBox.className = 'color-box';
+                const rgb = `rgb(${color.r}, ${color.g}, ${color.b})`;
+                colorBox.style.backgroundColor = rgb;
+                colorBox.title = rgb;
+                // Scegli colore testo (bianco o nero) per leggibilità
+                const luminance = 0.2126 * color.r + 0.7152 * color.g + 0.0722 * color.b;
+                colorBox.style.color = luminance < 128 ? 'white' : 'black';
+                colorBox.textContent = rgb.replace(/[rgb()]/g, '').replace(/,/g, ',\n');
+                paletteContainer.appendChild(colorBox);
+            });
+        }
+
+        // --- ALGORITMI PRINCIPALI ---
+
+        /**
+         * Estrae la palette di colori usando K-Means.
+         * Per non bloccare il browser, esegue il calcolo in modo asincrono.
+         * @param {Image} image - L'immagine sorgente.
+         * @param {number} k - Il numero di colori (cluster) da trovare.
+         * @returns {Promise<Array<{r,g,b}>>} La palette di colori.
+         */
+        function extractPalette(image, k) {
+            return new Promise((resolve) => {
+                const tempCanvas = document.createElement('canvas');
+                const tempCtx = tempCanvas.getContext('2d');
+                tempCanvas.width = image.width;
+                tempCanvas.height = image.height;
+                tempCtx.drawImage(image, 0, 0);
+
+                const imageData = tempCtx.getImageData(0, 0, image.width, image.height).data;
+                const pixels = [];
+                // Campioniamo i pixel per velocizzare (es. 1 pixel ogni 4)
+                const samplingRate = Math.max(1, Math.floor(Math.sqrt(imageData.length / 4 / 20000))); // max 20k pixels
+                for (let i = 0; i < imageData.length; i += 4 * samplingRate) {
+                    pixels.push({ r: imageData[i], g: imageData[i + 1], b: imageData[i + 2] });
+                }
+
+                // 1. Inizializzazione: scegli k pixel casuali come centroidi iniziali
+                let centroids = pixels.slice(0, k).map(() => pixels[Math.floor(Math.random() * pixels.length)]);
+                
+                const maxIterations = 20;
+                let currentIteration = 0;
+
+                function iterate() {
+                    // 2. Assegnazione: assegna ogni pixel al centroide più vicino
+                    const clusters = Array.from({ length: k }, () => []);
+                    for (const pixel of pixels) {
+                        let minDist = Infinity;
+                        let closestCentroidIndex = 0;
+                        for (let i = 0; i < centroids.length; i++) {
+                            const dist = colorDistance(pixel, centroids[i]);
+                            if (dist < minDist) {
+                                minDist = dist;
+                                closestCentroidIndex = i;
+                            }
+                        }
+                        clusters[closestCentroidIndex].push(pixel);
+                    }
+
+                    // 3. Aggiornamento: ricalcola i centroidi come media dei pixel nel cluster
+                    const newCentroids = [];
+                    for (let i = 0; i < k; i++) {
+                        if (clusters[i].length > 0) {
+                            newCentroids[i] = averageColor(clusters[i]);
+                        } else {
+                            // Se un cluster è vuoto, reinizializzalo con un pixel casuale
+                            newCentroids[i] = pixels[Math.floor(Math.random() * pixels.length)];
+                        }
+                    }
+                    
+                    currentIteration++;
+                    const progress = (currentIteration / maxIterations) * 50;
+                    updateProgress(progress, `Fase 1/2: Ottimizzo palette (iterazione ${currentIteration}/${maxIterations})`);
+
+                    // 4. Convergenza: se i centroidi non cambiano più o si raggiunge il max di iterazioni
+                    if (currentIteration >= maxIterations || areCentroidsEqual(centroids, newCentroids)) {
+                        resolve(newCentroids.map(c => ({ r: Math.round(c.r), g: Math.round(c.g), b: Math.round(c.b) })));
+                        return;
+                    }
+
+                    centroids = newCentroids;
+                    // Yield per non bloccare il thread principale
+                    setTimeout(iterate, 0); 
+                }
+                iterate();
+            });
+        }
+        
+        /**
+         * Disegna il mosaico sul canvas.
+         * @param {Image} image - L'immagine sorgente.
+         * @param {HTMLCanvasElement} canvas - Il canvas di destinazione.
+         * @param {Array<{r,g,b}>} palette - La palette di colori.
+         * @param {number} tileSize - La dimensione di ogni tassello.
+         */
+        function drawMosaic(image, canvas, palette, tileSize) {
+             return new Promise((resolve) => {
+                canvas.width = image.width;
+                canvas.height = image.height;
+                const ctx = canvas.getContext('2d');
+                
+                // Usiamo un canvas temporaneo per ottenere i dati colore dei tasselli
+                const tempCanvas = document.createElement('canvas');
+                tempCanvas.width = image.width;
+                tempCanvas.height = image.height;
+                const tempCtx = tempCanvas.getContext('2d');
+                tempCtx.drawImage(image, 0, 0);
+
+                let y = 0;
+                
+                function drawRow() {
+                    for (let x = 0; x < image.width; x += tileSize) {
+                        // 1. Prendi il colore medio del tassello dall'immagine originale
+                        const blockImageData = tempCtx.getImageData(x, y, Math.min(tileSize, image.width - x), Math.min(tileSize, image.height - y)).data;
+                        const avgColor = getAverageColorFromData(blockImageData);
+                        
+                        // 2. Trova il colore più vicino nella nostra palette
+                        let closestColor = palette[0];
+                        let minDistance = Infinity;
+                        for (const color of palette) {
+                            const distance = colorDistance(avgColor, color);
+                            if (distance < minDistance) {
+                                minDistance = distance;
+                                closestColor = color;
+                            }
+                        }
+
+                        // 3. Disegna il rettangolo colorato sul canvas finale
+                        ctx.fillStyle = `rgb(${closestColor.r}, ${closestColor.g}, ${closestColor.b})`;
+                        ctx.fillRect(x, y, tileSize, tileSize);
+                    }
+                    
+                    y += tileSize;
+
+                    const progress = 50 + (y / image.height) * 50;
+                    updateProgress(Math.min(100, progress), `Fase 2/2: Disegno il mosaico... (${Math.round(progress)}%)`);
+                    
+                    if (y < image.height) {
+                        // Chiamata asincrona per non bloccare il browser
+                        setTimeout(drawRow, 0);
+                    } else {
+                        resolve();
+                    }
+                }
+                drawRow();
+            });
+        }
+
+        // --- FUNZIONI DI UTILITÀ ---
+
+        // Calcola la distanza euclidea tra due colori (la radice quadrata può essere omessa per confronti)
+        function colorDistance(c1, c2) {
+            return (c1.r - c2.r) ** 2 + (c1.g - c2.g) ** 2 + (c1.b - c2.b) ** 2;
+        }
+
+        // Calcola il colore medio di un array di pixel
+        function averageColor(pixels) {
+            const total = pixels.reduce((acc, pixel) => {
+                acc.r += pixel.r;
+                acc.g += pixel.g;
+                acc.b += pixel.b;
+                return acc;
+            }, { r: 0, g: 0, b: 0 });
+            
+            return {
+                r: total.r / pixels.length,
+                g: total.g / pixels.length,
+                b: total.b / pixels.length
+            };
+        }
+
+        // Calcola il colore medio da un array di dati grezzi ImageData
+        function getAverageColorFromData(data) {
+            let r = 0, g = 0, b = 0, count = 0;
+            for (let i = 0; i < data.length; i += 4) {
+                r += data[i];
+                g += data[i + 1];
+                b += data[i + 2];
+                count++;
+            }
+            return { r: r / count, g: g / count, b: b / count };
+        }
+
+        // Controlla se due set di centroidi sono uguali (per la condizione di stop)
+        function areCentroidsEqual(centroids1, centroids2) {
+            if (centroids1.length !== centroids2.length) return false;
+            for(let i=0; i < centroids1.length; i++) {
+                if(Math.round(centroids1[i].r) !== Math.round(centroids2[i].r) ||
+                   Math.round(centroids1[i].g) !== Math.round(centroids2[i].g) ||
+                   Math.round(centroids1[i].b) !== Math.round(centroids2[i].b)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+    </script>
+</body>
+</html>

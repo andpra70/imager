@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Convertitore SVG a Rough.js (Veloce)</title>
+    <!-- Utilizza il CDN unpkg come richiesto -->
+    <script src="https://unpkg.com/roughjs@4.6.6/bundled/rough.js"></script>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            line-height: 1.6;
+            margin: 0;
+            padding: 2em;
+            background-color: #f4f4f9;
+            color: #333;
+        }
+        .main-container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            padding: 2em;
+            border-radius: 8px;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+        }
+        h1, h2 {
+            color: #1a237e;
+            border-bottom: 2px solid #e0e0e0;
+            padding-bottom: 0.5em;
+        }
+        .panel {
+            margin-bottom: 2em;
+            padding: 1em;
+            background-color: #e8eaf6;
+            border-radius: 5px;
+        }
+        .controls button, .controls input[type="file"] {
+            padding: 10px 15px;
+            border-radius: 5px;
+            border: 1px solid #c5cae9;
+            font-size: 1em;
+            margin-right: 10px;
+            cursor: pointer;
+        }
+        .controls button:disabled {
+            background-color: #9fa8da;
+            cursor: not-allowed;
+        }
+        .controls button {
+            background-color: #3f51b5;
+            color: white;
+            transition: background-color 0.3s;
+        }
+        .controls button:hover:not(:disabled) {
+            background-color: #303f9f;
+        }
+        #download-btn {
+            background-color: #4caf50;
+        }
+        #download-btn:hover {
+            background-color: #388e3c;
+        }
+        .options-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+            gap: 1em 2em;
+        }
+        .option-item {
+            display: flex;
+            flex-direction: column;
+        }
+        .option-item label {
+            margin-bottom: 0.5em;
+            font-weight: bold;
+        }
+        .option-item input[type="range"] {
+            width: 100%;
+        }
+        .option-item select {
+            padding: 5px;
+            border-radius: 4px;
+            border: 1px solid #c5cae9;
+        }
+        .option-item span {
+            font-family: monospace;
+            color: #3f51b5;
+        }
+        .display-area {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 2em;
+        }
+        .svg-wrapper {
+            border: 1px solid #ccc;
+            padding: 1em;
+            background-color: #fff;
+            min-height: 300px;
+            display: flex;
+            flex-direction: column;
+        }
+        .svg-container {
+            flex-grow: 1;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            overflow: hidden;
+        }
+        .svg-container svg {
+            max-width: 100%;
+            max-height: 100%;
+        }
+        .stats-list { list-style-type: none; padding: 0; }
+        .stats-list li { margin-bottom: 0.5em; font-size: 1.1em; }
+        .stats-list span { font-weight: bold; color: #3f51b5; }
+        .color-swatch { display: inline-block; width: 15px; height: 15px; border: 1px solid #000; vertical-align: middle; margin-left: 5px; }
+        
+        #progress-container {
+            width: 100%;
+            background-color: #ddd;
+            border-radius: 5px;
+            margin-top: 1em;
+        }
+        #progress-bar {
+            width: 0%;
+            height: 25px;
+            background-color: #4caf50;
+            text-align: center;
+            line-height: 25px;
+            color: white;
+            border-radius: 5px;
+            transition: width 0.2s ease-out;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="main-container">
+        <h1>Convertitore SVG a Rough.js (Veloce)</h1>
+        
+        <div class="controls panel">
+            <label for="svg-file-input">1. Carica un file SVG:</label>
+            <input type="file" id="svg-file-input" accept=".svg">
+        </div>
+
+        <div id="options-panel" class="panel" style="display: none;">
+            <h2>2. Opzioni di Conversione</h2>
+            <div class="options-grid">
+                <div class="option-item">
+                    <label for="roughness-input">Ruvidezza: <span id="roughness-value">1.5</span></label>
+                    <input type="range" id="roughness-input" min="0" max="5" step="0.1" value="1.5">
+                </div>
+                <div class="option-item">
+                    <label for="stroke-width-input">Spessore Contorno: <span id="stroke-width-value">1</span></label>
+                    <input type="range" id="stroke-width-input" min="0" max="10" step="0.5" value="1">
+                </div>
+                 <div class="option-item">
+                    <label for="fill-style-input">Stile Riempimento:</label>
+                    <select id="fill-style-input">
+                        <option value="solid" selected>Solido</option>
+                        <option value="hachure">Tratteggio</option>
+                        <option value="zigzag">Zig-Zag</option>
+                        <option value="cross-hatch">Tratteggio Incrociato</option>
+                        <option value="dots">Puntini</option>
+                    </select>
+                </div>
+            </div>
+            <div id="hachure-options" class="options-grid" style="display: none; margin-top: 1em; border-top: 1px solid #c5cae9; padding-top: 1em;">
+                 <div class="option-item">
+                    <label for="hachure-angle-input">Angolo Tratteggio: <span id="hachure-angle-value">0</span></label>
+                    <input type="range" id="hachure-angle-input" min="-180" max="180" step="1" value="0">
+                </div>
+                <div class="option-item">
+                    <label for="hachure-gap-input">Distanza Tratteggio: <span id="hachure-gap-value">4</span></label>
+                    <input type="range" id="hachure-gap-input" min="1" max="20" step="1" value="4">
+                </div>
+                <div class="option-item">
+                    <label for="fill-weight-input">Spessore Riempimento: <span id="fill-weight-value">1</span></label>
+                    <input type="range" id="fill-weight-input" min="0.5" max="5" step="0.5" value="1">
+                </div>
+            </div>
+             <div style="margin-top: 1.5em;">
+                <button id="convert-btn">3. Converti e Applica Opzioni</button>
+                <button id="download-btn" style="display: none;">Salva SVG Convertito</button>
+                <div id="progress-container" style="display: none;">
+                    <div id="progress-bar">0%</div>
+                </div>
+             </div>
+        </div>
+
+        <div id="stats-container" class="panel" style="display: none;">
+            <h2>Statistiche</h2>
+            <ul class="stats-list">
+                <li>Numero di poligoni trovati: <span id="poly-count">0</span></li>
+                <li>Numero di path riempiti convertiti: <span id="path-fill-count">0</span></li>
+                <li>Colori usati: <span id="colors-used">N/A</span></li>
+                <li>Path totali (prima): <span id="path-before">0</span></li>
+                <li>Path totali (dopo): <span id="path-after">0</span></li>
+            </ul>
+        </div>
+
+        <div class="display-area">
+            <div class="svg-wrapper">
+                <h2>Originale</h2>
+                <div id="original-container" class="svg-container"></div>
+            </div>
+            <div class="svg-wrapper">
+                <h2>Convertito (Rough.js)</h2>
+                <div id="rough-container" class="svg-container"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const fileInput = document.getElementById('svg-file-input');
+        const optionsPanel = document.getElementById('options-panel');
+        const convertBtn = document.getElementById('convert-btn');
+        const downloadBtn = document.getElementById('download-btn');
+        const originalContainer = document.getElementById('original-container');
+        const roughContainer = document.getElementById('rough-container');
+        const statsContainer = document.getElementById('stats-container');
+        const progressContainer = document.getElementById('progress-container');
+        const progressBar = document.getElementById('progress-bar');
+        
+        const roughnessInput = document.getElementById('roughness-input');
+        const strokeWidthInput = document.getElementById('stroke-width-input');
+        const fillStyleInput = document.getElementById('fill-style-input');
+        const hachureOptions = document.getElementById('hachure-options');
+        const hachureAngleInput = document.getElementById('hachure-angle-input');
+        const hachureGapInput = document.getElementById('hachure-gap-input');
+        const fillWeightInput = document.getElementById('fill-weight-input');
+
+        fileInput.addEventListener('change', displayOriginalSVG);
+        convertBtn.addEventListener('click', handleConversion);
+        downloadBtn.addEventListener('click', handleDownload);
+
+        roughnessInput.addEventListener('input', e => document.getElementById('roughness-value').textContent = e.target.value);
+        strokeWidthInput.addEventListener('input', e => document.getElementById('stroke-width-value').textContent = e.target.value);
+        hachureAngleInput.addEventListener('input', e => document.getElementById('hachure-angle-value').textContent = e.target.value);
+        hachureGapInput.addEventListener('input', e => document.getElementById('hachure-gap-value').textContent = e.target.value);
+        fillWeightInput.addEventListener('input', e => document.getElementById('fill-weight-value').textContent = e.target.value);
+
+        fillStyleInput.addEventListener('change', () => {
+            const show = ['hachure', 'cross-hatch', 'zigzag'].includes(fillStyleInput.value);
+            hachureOptions.style.display = show ? 'grid' : 'none';
+        });
+
+        async function displayOriginalSVG(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const svgString = await file.text();
+            originalContainer.innerHTML = svgString;
+
+            optionsPanel.style.display = 'block';
+            roughContainer.innerHTML = '';
+            statsContainer.style.display = 'none';
+            downloadBtn.style.display = 'none';
+            progressContainer.style.display = 'none';
+        }
+
+        async function handleConversion() {
+            const svgString = originalContainer.innerHTML;
+            if (!svgString) {
+                alert("Nessun SVG caricato. Per favore, seleziona prima un file.");
+                return;
+            }
+
+            convertBtn.disabled = true;
+            progressContainer.style.display = 'block';
+            progressBar.style.width = '0%';
+            progressBar.textContent = '0%';
+
+            const userOptions = {
+                roughness: parseFloat(roughnessInput.value),
+                strokeWidth: parseFloat(strokeWidthInput.value),
+                fillStyle: fillStyleInput.value,
+                hachureAngle: parseFloat(hachureAngleInput.value),
+                hachureGap: parseFloat(hachureGapInput.value),
+                fillWeight: parseFloat(fillWeightInput.value)
+            };
+
+            const parser = new DOMParser();
+            const svgDoc = parser.parseFromString(svgString, "image/svg+xml");
+            const originalSvgElement = svgDoc.querySelector('svg');
+            
+            const originalPolygons = originalSvgElement.querySelectorAll('polygon');
+            const originalPaths = originalSvgElement.querySelectorAll('path');
+            const usedColors = new Set();
+            let filledPathCount = 0;
+            [...originalPolygons, ...originalPaths].forEach(el => {
+                const fill = el.getAttribute('fill');
+                if (fill && fill.toLowerCase() !== 'none' && fill.toLowerCase() !== 'transparent') {
+                    if (el.tagName.toLowerCase() === 'path') filledPathCount++;
+                    if (!fill.startsWith('url')) usedColors.add(fill);
+                }
+            });
+
+            roughContainer.innerHTML = ''; 
+            const roughSvg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+            const viewBox = originalSvgElement.getAttribute('viewBox') || `0 0 ${originalSvgElement.getAttribute('width')} ${originalSvgElement.getAttribute('height')}`;
+            roughSvg.setAttribute('viewBox', viewBox);
+            
+            const rc = rough.svg(roughSvg);
+
+            const nodesToProcess = Array.from(originalSvgElement.childNodes).filter(n => n.nodeType === Node.ELEMENT_NODE);
+            const totalNodes = nodesToProcess.length;
+            const newNodes = []; 
+            const chunkSize = 25; 
+
+            for (let i = 0; i < totalNodes; i++) {
+                const node = nodesToProcess[i];
+                const tagName = node.tagName.toLowerCase();
+                let shapeToConvert = null;
+                const options = {
+                    ...userOptions,
+                    stroke: node.getAttribute('stroke') || 'black',
+                    fill: node.getAttribute('fill') || 'black',
+                    simplification: 0.5
+                };
+                options.strokeWidth = userOptions.strokeWidth;
+
+                if (tagName === 'polygon') {
+                    const pointsStr = node.getAttribute('points');
+                    if (pointsStr) {
+                        const pointsArray = pointsStr.trim().split(/\s+/).map(p => p.split(',').map(Number));
+                        shapeToConvert = rc.polygon(pointsArray, options);
+                    }
+                } else if (tagName === 'path') {
+                    const fill = node.getAttribute('fill');
+                    const d = node.getAttribute('d');
+                    if (d && fill && fill.toLowerCase() !== 'none' && fill.toLowerCase() !== 'transparent') {
+                        shapeToConvert = rc.path(d, options);
+                    }
+                }
+
+                newNodes.push(shapeToConvert ? shapeToConvert : node.cloneNode(true));
+                
+                if ((i + 1) % chunkSize === 0 || i === totalNodes - 1) {
+                    const progress = Math.round(((i + 1) / totalNodes) * 100);
+                    progressBar.style.width = progress + '%';
+                    progressBar.textContent = progress + '%';
+                    await new Promise(resolve => setTimeout(resolve, 0));
+                }
+            }
+            
+            roughContainer.appendChild(roughSvg);
+            roughSvg.append(...newNodes);
+
+            statsContainer.style.display = 'block';
+            document.getElementById('poly-count').textContent = originalPolygons.length;
+            document.getElementById('path-fill-count').textContent = filledPathCount;
+            document.getElementById('path-before').textContent = originalPaths.length;
+            document.getElementById('path-after').textContent = roughSvg.querySelectorAll('path').length;
+            
+            const colorsUsedSpan = document.getElementById('colors-used');
+            colorsUsedSpan.innerHTML = '';
+            usedColors.forEach(color => {
+                colorsUsedSpan.innerHTML += `${color} <span class="color-swatch" style="background-color:${color};"></span> `;
+            });
+            if (usedColors.size === 0) colorsUsedSpan.textContent = 'Nessuno';
+            
+            downloadBtn.style.display = 'inline-block';
+            convertBtn.disabled = false;
+            
+            setTimeout(() => {
+                progressContainer.style.display = 'none';
+            }, 1000);
+        }
+
+        function handleDownload() {
+            const svgToSave = roughContainer.querySelector('svg');
+            if (!svgToSave) return;
+            const serializer = new XMLSerializer();
+            let svgData = serializer.serializeToString(svgToSave);
+            svgData = '<?xml version="1.0" standalone="no"?>\r\n' + svgData;
+            const blob = new Blob([svgData], { type: "image/svg+xml;charset=utf-8" });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'converted-rough.svg';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }
+    </script>
+</body>
+</html>

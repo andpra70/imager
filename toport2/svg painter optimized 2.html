@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Generatore Scribble di Precisione (Live)</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            display: flex; flex-wrap: wrap; justify-content: center; align-items: flex-start;
+            background-color: #f0f0f0; margin: 0; padding: 20px; gap: 20px;
+        }
+        #controls-container {
+            width: 350px; padding: 20px; background-color: #ffffff;
+            border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+            position: sticky; top: 20px;
+        }
+        h1 {
+            font-size: 1.5em; margin-top: 0; color: #333; text-align: center;
+            border-bottom: 1px solid #eee; padding-bottom: 10px;
+        }
+        .control-group { margin-bottom: 18px; }
+        label {
+            display: block; font-weight: bold; margin-bottom: 5px;
+            color: #555; font-size: 0.9em;
+        }
+        input[type="file"] { width: 100%; }
+        input[type="range"] { width: 100%; }
+        .param-value { font-weight: normal; color: #007bff; }
+        button {
+            width: 100%; padding: 12px; font-size: 1em; font-weight: bold;
+            color: white; background-color: #007bff; border: none;
+            border-radius: 5px; cursor: pointer; transition: background-color 0.2s;
+            margin-top: 10px;
+        }
+        button:hover:not(:disabled) { background-color: #0056b3; }
+        button:disabled { background-color: #cccccc; cursor: not-allowed; }
+        #stopBtn { background-color: #dc3545; }
+        #stopBtn:hover:not(:disabled) { background-color: #c82333; }
+        #progress-container { margin-top: 20px; }
+        progress { width: 100%; height: 10px; border-radius: 5px; }
+        #progress-label {
+            text-align: center; display: block; margin-top: 5px;
+            color: #666; font-size: 0.85em;
+        }
+        #canvas-container {
+            background-color: #ffffff; box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+            padding: 10px; border-radius: 8px; text-align: center;
+        }
+        canvas { display: block; max-width: 100%; border-radius: 4px; }
+        #originalCanvas { display: none; }
+    </style>
+</head>
+<body>
+
+    <div id="controls-container">
+        <h1>Scribble di Precisione (Live)</h1>
+        
+        <div class="control-group">
+            <label for="imageLoader">1. Carica un'immagine</label>
+            <input type="file" id="imageLoader" name="imageLoader" accept="image/*"/>
+        </div>
+
+        <div class="control-group">
+            <label for="lightnessThreshold">Soglia Luminosità (Non disegnare sopra): <span id="lightnessValue" class="param-value">235</span></label>
+            <input type="range" id="lightnessThreshold" min="150" max="254" value="235">
+        </div>
+
+        <div class="control-group">
+            <label for="scribbleColor">Colore Scribble (0=Nero): <span id="colorValue" class="param-value">20</span></label>
+            <input type="range" id="scribbleColor" min="0" max="100" value="20">
+        </div>
+
+        <div class="control-group">
+            <label for="strokeOpacity">Opacità Tratto: <span id="opacityValue" class="param-value">0.10</span></label>
+            <input type="range" id="strokeOpacity" min="0.05" max="1.0" step="0.01" value="0.10">
+        </div>
+        
+        <div class="control-group">
+            <label for="strokeMax">Lunghezza Tratto Max: <span id="strokeMaxValue" class="param-value">80</span></label>
+            <input type="range" id="strokeMax" name="strokeMax" min="20" max="300" value="80">
+        </div>
+
+        <div class="control-group">
+            <label for="similarityThreshold">Target Similarità (Errore): <span id="similarityValue" class="param-value">30</span></label>
+            <input type="range" id="similarityThreshold" min="10" max="80" value="30">
+        </div>
+        
+        <button id="generateBtn" disabled>2. Genera Scribble</button>
+        <button id="stopBtn" style="display: none;">Ferma Generazione</button>
+        <button id="saveBtn" disabled>Salva Immagine</button>
+
+        <div id="progress-container" style="display: none;">
+            <progress id="progressBar" value="0" max="100"></progress>
+            <span id="progress-label">In attesa...</span>
+        </div>
+    </div>
+
+    <div id="canvas-container">
+        <canvas id="originalCanvas"></canvas>
+        <canvas id="scribbleCanvas"></canvas>
+    </div>
+
+    <script>
+    // --- INIZIO SCRIPT ---
+    const PerlinNoise = new function() { /* ... codice Perlin Noise omesso per brevità, è identico a prima ... */ this.noise = function(x, y, z) { var p = new Array(512); var permutation = [ 151,160,137,91,90,15,131,13,201,95,96,53,194,233,7,225,140,36,103,30,69,142,8,99,37,240,21,10,23,190, 6,148,247,120,234,75,0,26,197,62,94,252,219,203,117,35,11,32,57,177,33,88,237,149,56,87,174,20,125,136,171,168, 68,175,74,165,71,134,139,48,27,166,77,146,158,231,83,111,229,122,60,211,133,230,220,105,92,41,55,46,245,40,244,102,143,54, 65,25,63,161, 1,216,80,73,209,76,132,187,208, 89,18,169,200,196,135,130,116,188,159,86,164,100,109,198,173,186, 3,64,52,217,226,250,124,123,5,202,38,147,118,126,255,82,85,212,207,206,59,227,47,16,58,17,182,189,28,42,223,183,170,213,119,248,152, 2,44,154,163, 70,221,153,101,155,167, 43,172,9,129,22,39,253, 19,98,108,110,79,113,224,232,178,185, 112,104,218,246,97,228,251,34,242,193,238,210,144,12,191,179,162,241, 81,51,145,235,249,14,239,107,49,192,214, 31,181,199,106,157,184, 84,204,176,115,121,50,45,127, 4,150,254,138,236,205,93,222,114,67,29,24,72,243,141,128,195,78,66,215,61,156,180]; for (var i=0; i < 256 ; i++) p[256+i] = p[i] = permutation[i]; var X = Math.floor(x) & 255, Y = Math.floor(y) & 255, Z = Math.floor(z) & 255; x -= Math.floor(x); y -= Math.floor(y); z -= Math.floor(z); var u = fade(x), v = fade(y), w = fade(z); var A = p[X]+Y, AA = p[A]+Z, AB = p[A+1]+Z, B = p[X+1]+Y, BA = p[B]+Z, BB = p[B+1]+Z; return scale(lerp(w, lerp(v, lerp(u, grad(p[AA], x, y, z), grad(p[BA], x-1, y, z)), lerp(u, grad(p[AB], x, y-1, z), grad(p[BB], x-1, y-1, z))), lerp(v, lerp(u, grad(p[AA+1], x, y, z-1), grad(p[BA+1], x-1, y, z-1)), lerp(u, grad(p[AB+1], x, y-1, z-1), grad(p[BB+1], x-1, y-1, z-1))))); function fade(t) { return t * t * t * (t * (t * 6 - 15) + 10); } function lerp( t, a, b ) { return a + t * ( b - a ); } function grad(hash, x, y, z) { var h = hash & 15; var u = h<8 ? x : y, v = h<4 ? y : h==12||h==14 ? x : z; return ((h&1) == 0 ? u : -u) + ((h&2) == 0 ? v : -v); } function scale(n) { return (1 + n)/2; } } };
+
+    // --- UI & Global Vars ---
+    const imageLoader = document.getElementById('imageLoader'), generateBtn = document.getElementById('generateBtn'), stopBtn = document.getElementById('stopBtn'), saveBtn = document.getElementById('saveBtn');
+    const originalCanvas = document.getElementById('originalCanvas'), originalCtx = originalCanvas.getContext('2d', { willReadFrequently: true });
+    const scribbleCanvas = document.getElementById('scribbleCanvas'), scribbleCtx = scribbleCanvas.getContext('2d', { willReadFrequently: true });
+    const lightnessSlider = document.getElementById('lightnessThreshold'), colorSlider = document.getElementById('scribbleColor'), opacitySlider = document.getElementById('strokeOpacity'), strokeMaxSlider = document.getElementById('strokeMax'), similaritySlider = document.getElementById('similarityThreshold');
+    const lightnessValue = document.getElementById('lightnessValue'), colorValue = document.getElementById('colorValue'), opacityValue = document.getElementById('opacityValue'), strokeMaxValue = document.getElementById('strokeMaxValue'), similarityValue = document.getElementById('similarityValue');
+    const progressContainer = document.getElementById('progress-container'), progressBar = document.getElementById('progressBar'), progressLabel = document.getElementById('progress-label');
+    
+    let isStopping = false, preprocessedData = null, lastFrameScribbleData = null;
+
+    // --- Event Handlers ---
+    imageLoader.addEventListener('change', e => {
+        const reader = new FileReader();
+        reader.onload = event => {
+            const img = new Image();
+            img.onload = () => {
+                const MAX_WIDTH = 600, MAX_HEIGHT = 600;
+                let { width, height } = img;
+                if (width > height) { if (width > MAX_WIDTH) { height *= MAX_WIDTH / width; width = MAX_WIDTH; } }
+                else { if (height > MAX_HEIGHT) { width *= MAX_HEIGHT / height; height = MAX_HEIGHT; } }
+                
+                originalCanvas.width = scribbleCanvas.width = width;
+                originalCanvas.height = scribbleCanvas.height = height;
+                originalCtx.drawImage(img, 0, 0, width, height);
+                
+                scribbleCtx.fillStyle = "white"; scribbleCtx.fillRect(0, 0, width, height);
+                lastFrameScribbleData = scribbleCtx.getImageData(0, 0, width, height);
+                
+                preprocessedData = preprocessImage(originalCtx.getImageData(0, 0, width, height));
+                generateBtn.disabled = false;
+            }
+            img.src = event.target.result;
+        }
+        reader.readAsDataURL(e.target.files[0]);
+    });
+
+    lightnessSlider.oninput = () => { lightnessValue.textContent = lightnessSlider.value; };
+    colorSlider.oninput = () => { colorValue.textContent = colorSlider.value; };
+    opacitySlider.oninput = () => { opacityValue.textContent = parseFloat(opacitySlider.value).toFixed(2); };
+    strokeMaxSlider.oninput = () => { strokeMaxValue.textContent = strokeMaxSlider.value; };
+    similaritySlider.oninput = () => { similarityValue.textContent = similaritySlider.value; };
+
+    generateBtn.addEventListener('click', () => { if (preprocessedData) startIterativeGeneration(); });
+    stopBtn.addEventListener('click', () => { isStopping = true; progressLabel.textContent = "Fermando..."; });
+    saveBtn.addEventListener('click', () => {
+        const link = document.createElement('a');
+        link.download = 'scribble_precision.png';
+        link.href = scribbleCanvas.toDataURL('image/png');
+        link.click();
+    });
+
+    // --- Helper Functions ---
+    const lum = (r, g, b) => r * 0.299 + g * 0.587 + b * 0.114;
+    function getPixelIndex(x, y, width) { return (Math.floor(y) * width + Math.floor(x)); }
+    function random(min, max) { return Math.random() * (max - min) + min; }
+    function weightedAverage(a, b, weight) { return a * (1 - weight) + b * weight; }
+
+    // --- Main Algorithm ---
+    async function startIterativeGeneration() {
+        isStopping = false;
+        generateBtn.disabled = true; stopBtn.style.display = 'block'; saveBtn.disabled = true;
+        progressContainer.style.display = 'block';
+        
+        scribbleCtx.fillStyle = "white";
+        scribbleCtx.fillRect(0, 0, scribbleCanvas.width, scribbleCanvas.height);
+
+        const { width, height } = preprocessedData;
+        const targetError = parseFloat(similaritySlider.value);
+        const batchSize = 500;
+        let iteration = 0;
+        
+        lastFrameScribbleData = scribbleCtx.getImageData(0, 0, width, height);
+        let currentError = calculateLuminosityRMSE(preprocessedData.luminosity, lastFrameScribbleData);
+        const initialError = currentError;
+        
+        progressBar.max = initialError - targetError;
+        progressBar.value = 0;
+
+        while (currentError > targetError && !isStopping) {
+            iteration++;
+            const startPoints = findHighErrorAreas(preprocessedData.luminosity, lastFrameScribbleData, batchSize, width, height);
+            
+            if (startPoints.length === 0 && iteration > 1) {
+                 progressLabel.textContent = "Convergenza raggiunta.";
+                 break;
+            }
+
+            // *** NUOVA LOGICA DI DISEGNO A BLOCCHI (CHUNKING) ***
+            const chunkSize = 30; // Disegna N linee, poi aggiorna lo schermo
+            let successfulStrokes = 0;
+            for (let i = 0; i < startPoints.length; i++) {
+                if(isStopping) break;
+
+                if (generateScribbleCurve(startPoints[i], preprocessedData, lastFrameScribbleData)) {
+                    successfulStrokes++;
+                }
+                // Dopo un blocco di disegni, cedi il controllo al browser per il rendering
+                if ((i + 1) % chunkSize === 0) {
+                    const efficiency = (100 * successfulStrokes / (i + 1)).toFixed(1);
+                    progressLabel.textContent = `Iter ${iteration} | Disegno... | Efficienza: ${efficiency}%`;
+                    await new Promise(res => requestAnimationFrame(res));
+                }
+            }
+            
+            // Aggiorniamo la nostra conoscenza del canvas DOPO che il batch è stato disegnato
+            lastFrameScribbleData = scribbleCtx.getImageData(0, 0, width, height);
+            currentError = calculateLuminosityRMSE(preprocessedData.luminosity, lastFrameScribbleData);
+            progressBar.value = Math.max(0, initialError - currentError);
+        }
+
+        if (isStopping) { progressLabel.textContent = `Interrotto. Errore finale: ${currentError.toFixed(2)}`; }
+        else { progressBar.value = progressBar.max; progressLabel.textContent = `Completato! Errore finale: ${currentError.toFixed(2)}`; }
+        generateBtn.disabled = false; stopBtn.style.display = 'none'; saveBtn.disabled = false;
+    }
+    
+    // --- Core Logic Functions ---
+
+    function calculateLuminosityRMSE(originalLuminosityMap, currentImgData) {
+        const d2 = currentImgData.data;
+        const len = originalLuminosityMap.length;
+        let sumSquaredError = 0;
+        for (let i = 0; i < len; i++) {
+            const currentLuminosity = lum(d2[i*4], d2[i*4+1], d2[i*4+2]);
+            let diff = originalLuminosityMap[i] - currentLuminosity;
+            sumSquaredError += diff * diff;
+        }
+        return Math.sqrt(sumSquaredError / len);
+    }
+    
+    function findHighErrorAreas(originalLuminosityMap, lastFrameImgData, numPoints, width, height) {
+        const d2 = lastFrameImgData.data;
+        const points = [];
+        const samples = numPoints * 30;
+
+        for (let i = 0; i < samples; i++) {
+            const x = Math.floor(random(0, width));
+            const y = Math.floor(random(0, height));
+            const idx = getPixelIndex(x, y, width);
+            
+            const originalLum = originalLuminosityMap[idx];
+            const currentLum = lum(d2[idx*4], d2[idx*4+1], d2[idx*4+2]);
+            
+            if (currentLum > originalLum) {
+                points.push({ x, y, error: currentLum - originalLum });
+            }
+        }
+        
+        points.sort((a, b) => b.error - a.error);
+        return points.slice(0, numPoints);
+    }
+
+    function preprocessImage(imageData) {
+        const { width, height, data } = imageData;
+        const luminosity = new Float32Array(width * height);
+        const angles = new Float32Array(width * height);
+
+        for (let i = 0; i < luminosity.length; i++) {
+            luminosity[i] = lum(data[i*4], data[i*4+1], data[i*4+2]);
+        }
+
+        for (let y = 1; y < height - 1; y++) {
+            for (let x = 1; x < width - 1; x++) {
+                const getLum = (ix, iy) => luminosity[getPixelIndex(ix, iy, width)];
+                const gx = -getLum(x-1, y) + getLum(x+1, y);
+                const gy = -getLum(x, y-1) + getLum(x, y+1);
+                angles[getPixelIndex(x, y, width)] = Math.atan2(gy, gx);
+            }
+        }
+        return { luminosity, angles, width, height };
+    }
+
+    function generateScribbleCurve(startPoint, pData, lastFrameData) {
+        const { luminosity, angles, width, height } = pData;
+        const generatedPixelData = lastFrameData.data;
+        const lightnessCutoff = parseFloat(lightnessSlider.value);
+        const rejectionTolerance = 5; 
+        
+        let x = startPoint.x, y = startPoint.y;
+        if (x < 1 || x >= width - 1 || y < 1 || y >= height - 1) return false;
+        
+        let startIdx = getPixelIndex(x, y, width);
+        let originalLum = luminosity[startIdx];
+        
+        if (originalLum > lightnessCutoff) return false;
+
+        let currentLum = lum(generatedPixelData[startIdx*4], generatedPixelData[startIdx*4+1], generatedPixelData[startIdx*4+2]);
+        if (currentLum <= originalLum + rejectionTolerance) return false;
+        
+        let direction = angles[startIdx] + Math.PI / 2;
+        const strokeLength = random(10, parseFloat(strokeMaxSlider.value));
+        
+        const path = new Path2D();
+        path.moveTo(x, y);
+        let pathHasPoints = false;
+
+        for (let j = 0; j < strokeLength; j++) {
+            const currentPathIdx = getPixelIndex(x, y, width);
+            const localOriginalLum = luminosity[currentPathIdx];
+            const localCurrentLum = lum(generatedPixelData[currentPathIdx*4], generatedPixelData[currentPathIdx*4+1], generatedPixelData[currentPathIdx*4+2]);
+
+            if (localOriginalLum > lightnessCutoff || localCurrentLum <= localOriginalLum + rejectionTolerance) {
+                break;
+            }
+            
+            const noise = PerlinNoise.noise(x * 0.02, y * 0.02, j * 0.01) - 0.5;
+            direction += noise * 2.5;
+            const speed = 0.5 + (localOriginalLum / 255.0) * 1.5;
+            
+            x += Math.cos(direction) * speed;
+            y += Math.sin(direction) * speed;
+            
+            if (x < 1 || x >= width - 1 || y < 1 || y >= height - 1) break;
+            
+            path.lineTo(x, y);
+            pathHasPoints = true;
+        }
+        
+        if (pathHasPoints) {
+            const colorVal = parseInt(colorSlider.value);
+            scribbleCtx.lineWidth = 0.2 + (1 - originalLum / 255) * 1.5;
+            scribbleCtx.strokeStyle = `rgba(${colorVal},${colorVal},${colorVal},${parseFloat(opacitySlider.value)})`;
+            scribbleCtx.lineCap = 'round';
+            scribbleCtx.lineJoin = 'round';
+            scribbleCtx.stroke(path);
+            return true;
+        }
+        return false;
+    }
+    </script>
+</body>
+</html>

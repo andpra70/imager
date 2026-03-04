@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Simulatore Plotter PWM Ottimizzato</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; display: flex; gap: 20px; padding: 20px; background-color: #f0f2f5; }
+        .controls, .outputs { background-color: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+        .controls { width: 350px; min-width: 350px; display: flex; flex-direction: column; gap: 15px; }
+        .outputs { flex-grow: 1; display: flex; flex-direction: column; }
+        .control-group { display: flex; flex-direction: column; gap: 5px; }
+        label { font-weight: bold; color: #333; }
+        input[type="number"], input[type="file"], select { width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
+        button { padding: 12px; background-color: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; font-weight: bold; transition: background-color 0.2s; }
+        button:hover { background-color: #0056b3; }
+        button:disabled { background-color: #aaa; cursor: not-allowed; }
+        #generateGCodeButton { background-color: #17a2b8; margin-top: 15px; }
+        #generateGCodeButton:hover { background-color: #117a8b; }
+        
+        .download-button { padding: 8px; font-size: 14px; background-color: #28a745; }
+        .download-button:hover { background-color: #218838; }
+        #export-options-container, #download-buttons-container { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+        #export-options-container { border-top: 1px solid #eee; padding-top: 15px; margin-top: 15px; }
+
+        canvas { border: 1px solid #ddd; max-width: 100%; height: auto; background-color: #fff; }
+        .canvas-container { text-align: center; }
+        .canvas-container h3 { margin-top: 0; }
+        .results-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        pre, textarea { background-color: #2d2d2d; color: #f0f0f0; padding: 10px; border-radius: 4px; white-space: pre-wrap; word-wrap: break-word; font-family: "Courier New", Courier, monospace; max-height: 250px; overflow-y: auto; }
+        textarea { width: 100%; box-sizing: border-box; height: 150px; resize: vertical; }
+        #output-container { margin-top: 20px; }
+        .progress-container { display: flex; flex-direction: column; gap: 5px; margin-top: 10px; }
+        progress { width: 100%; height: 20px; border-radius: 10px; overflow: hidden; }
+        progress::-webkit-progress-bar { background-color: #eee; }
+        progress::-webkit-progress-value { background-color: #007bff; transition: width 0.1s; }
+        progress::-moz-progress-bar { background-color: #007bff; }
+        #progressLabel { text-align: center; font-weight: bold; }
+        h4 { margin-bottom: 5px; }
+    </style>
+</head>
+<body>
+
+    <div class="controls">
+        <h2>Parametri Plotter PWM</h2>
+        <!-- Input e controlli (invariati) -->
+        <div class="control-group"><label for="fileInput">1. Immagine Sorgente</label><input type="file" id="fileInput" accept="image/*"></div>
+        <div class="control-group"><label for="frequenza_pwm">Frequenza PWM (Hz)</label><input type="number" id="frequenza_pwm" value="1000"></div>
+        <div class="control-group"><label for="risoluzione_pwm">Risoluzione PWM (bit)</label><input type="number" id="risoluzione_pwm" value="8" min="1" max="16"></div>
+        <div class="control-group"><label for="dimensione_cella">Dimensione Cella PWM (pixel)</label><input type="number" id="dimensione_cella" value="5" min="1"></div>
+        <div class="control-group"><label for="valore_offset">Offset Valore</label><input type="number" id="valore_offset" value="0"></div>
+        <div class="control-group"><label for="direzione_scansione">Direzione Scansione</label><select id="direzione_scansione"><option value="serpentina">Serpentina</option><option value="orizzontale">Orizzontale</option><option value="verticale">Verticale</option></select></div>
+        <div class="control-group"><label for="modalita_dithering">Modalità Dithering</label><select id="modalita_dithering"><option value="nessuno">Nessuno</option><option value="floyd_steinberg">Floyd-Steinberg</option></select></div>
+        <div class="control-group"><label for="inversione"><input type="checkbox" id="inversione"> Inverti Nero/Bianco</label></div>
+        <button id="startButton">2. Genera Immagine Simulata</button>
+        <div class="progress-container"><label id="progressLabel">Pronto</label><progress id="progressBar" value="0" max="100"></progress></div>
+    </div>
+
+    <div class="outputs">
+        <h2>Risultati</h2>
+        <div class="results-grid">
+            <div class="canvas-container"><h3>Immagine Originale</h3><canvas id="canvasOriginale"></canvas></div>
+            <div class="canvas-container"><h3>Immagine Simulata Plotter</h3><canvas id="canvasRisultato"></canvas></div>
+        </div>
+        
+        <div id="output-container">
+            <h3>Log di Processo e Opzioni di Esportazione</h3>
+            <pre id="logOutput"></pre>
+            <div id="export-options-container" style="display: none;">
+                <h4>Download Immediato</h4>
+                <button id="downloadJpgButton" class="download-button">Salva JPG</button>
+                <button id="downloadSvgButton" class="download-button">Salva SVG Ottimizzato</button>
+            </div>
+            <button id="generateGCodeButton" style="display: none;">3. Genera G-Code</button>
+            <div id="gcode-result-container" style="display: none;">
+                <h4>G-Code Generato</h4>
+                <textarea id="gcodeOutput" readonly></textarea>
+                <button id="downloadGCodeButton" class="download-button">Scarica G-Code</button>
+            </div>
+        </div>
+    </div>
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    // --- Riferimenti DOM ---
+    const fileInput = document.getElementById('fileInput'), startButton = document.getElementById('startButton');
+    const generateGCodeButton = document.getElementById('generateGCodeButton'), downloadGCodeButton = document.getElementById('downloadGCodeButton');
+    const downloadJpgButton = document.getElementById('downloadJpgButton'), downloadSvgButton = document.getElementById('downloadSvgButton');
+    const logOutput = document.getElementById('logOutput'), gcodeOutput = document.getElementById('gcodeOutput');
+    const exportOptionsContainer = document.getElementById('export-options-container'), gcodeResultContainer = document.getElementById('gcode-result-container');
+    const progressBar = document.getElementById('progressBar'), progressLabel = document.getElementById('progressLabel');
+    const canvasOriginale = document.getElementById('canvasOriginale'), ctxOriginale = canvasOriginale.getContext('2d'), canvasRisultato = document.getElementById('canvasRisultato');
+    
+    // --- Stato dell'applicazione ---
+    let immagineCaricata = null, datiSimulazione = null;
+
+    // --- Event Listeners ---
+    fileInput.addEventListener('change', handleFileSelect);
+    startButton.addEventListener('click', principale);
+    downloadJpgButton.addEventListener('click', handleDownloadJpg);
+    downloadSvgButton.addEventListener('click', handleDownloadSvg);
+    generateGCodeButton.addEventListener('click', handleGenerateGCode);
+    downloadGCodeButton.addEventListener('click', handleDownloadGCode);
+
+    // --- Gestione Eventi ---
+    function handleFileSelect(event) {
+        const file = event.target.files[0];
+        if (file) {
+            caricaImmagine(file).then(img => {
+                immagineCaricata = img;
+                logClear(`Immagine "${file.name}" caricata.`);
+                canvasOriginale.width = img.width; canvasOriginale.height = img.height;
+                ctxOriginale.drawImage(img, 0, 0);
+                resetOutputState();
+            }).catch(err => { log(`Errore: ${err}`); immagineCaricata = null; });
+        }
+    }
+    
+    function handleDownloadJpg() {
+        if (!canvasRisultato) return;
+        downloadFile(canvasRisultato.toDataURL('image/jpeg', 0.9), 'immagine_plotter.jpg');
+    }
+
+    function handleDownloadSvg() {
+        if (!datiSimulazione) return;
+        log("Generazione SVG ottimizzato...");
+        setTimeout(() => {
+            const { content, elementCount } = salvaSVGOttimizzato(datiSimulazione.sequenza, datiSimulazione.larghezza, datiSimulazione.altezza);
+            downloadFile(content, 'immagine_plotter.svg', 'image/svg+xml');
+            log(`✔ SVG generato con ${elementCount} elementi (rettangoli).`);
+        }, 10);
+    }
+    
+    function handleGenerateGCode() {
+        if (!datiSimulazione) return;
+        generateGCodeButton.disabled = true; generateGCodeButton.textContent = 'Generazione...';
+        log("Generazione G-Code...");
+        setTimeout(() => {
+            const { content, lineCount } = salvaGCode(datiSimulazione.sequenza, datiSimulazione.altezza);
+            gcodeOutput.value = content;
+            gcodeResultContainer.style.display = 'block';
+            log(`✔ G-Code generato con ${lineCount} linee.`);
+            generateGCodeButton.disabled = false; generateGCodeButton.textContent = '3. Genera G-Code';
+        }, 10);
+    }
+
+    function handleDownloadGCode() { downloadFile(gcodeOutput.value, 'output.gcode', 'text/plain'); }
+    
+    // --- Funzioni di Utilità ---
+    function log(message) { logOutput.textContent += message + '\n'; logOutput.scrollTop = logOutput.scrollHeight; }
+    function logClear(message) { logOutput.textContent = message + '\n'; }
+    function updateProgress(value, label) { progressBar.value = value; progressLabel.textContent = label; }
+    function resetOutputState() {
+        datiSimulazione = null;
+        exportOptionsContainer.style.display = 'none';
+        generateGCodeButton.style.display = 'none';
+        gcodeResultContainer.style.display = 'none';
+        gcodeOutput.value = '';
+    }
+    function downloadFile(content, fileName, mimeType) {
+        const a = document.createElement('a');
+        if (mimeType) { a.href = URL.createObjectURL(new Blob([content], { type: mimeType })); } 
+        else { a.href = content; }
+        a.download = fileName; document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    }
+    
+    // --- Logica Principale (Implementazione Pseudocodice) ---
+    // (Le funzioni da caricaImmagine a eseguiSequenzaPlotter rimangono invariate concettualmente)
+    function leggiParametri() { /* ... codice invariato ... */ 
+        return { frequenza_pwm: parseFloat(document.getElementById('frequenza_pwm').value), risoluzione_pwm: parseInt(document.getElementById('risoluzione_pwm').value), dimensione_cella: parseInt(document.getElementById('dimensione_cella').value), valore_offset: parseFloat(document.getElementById('valore_offset').value), direzione_scansione: document.getElementById('direzione_scansione').value, modalita_dithering: document.getElementById('modalita_dithering').value, inversione: document.getElementById('inversione').checked, };
+    }
+    function caricaImmagine(file) { /* ... codice invariato ... */ 
+        return new Promise((resolve, reject) => { if (!file.type.startsWith('image/')) { reject("Il file non è un'immagine valida."); return; } const reader = new FileReader(); reader.onload = (e) => { const img = new Image(); img.onload = () => resolve(img); img.onerror = () => reject("Impossibile caricare l'immagine."); img.src = e.target.result; }; reader.readAsDataURL(file); });
+    }
+    function convertiInGrigio(img) { /* ... codice invariato ... */ 
+        const canvas = document.createElement('canvas'); const ctx = canvas.getContext('2d'); canvas.width = img.width; canvas.height = img.height; ctx.drawImage(img, 0, 0); const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height); const data = imageData.data; const immagine_grigia = { larghezza: canvas.width, altezza: canvas.height, dati: new Uint8ClampedArray(canvas.width * canvas.height) }; for (let i = 0; i < data.length; i += 4) { immagine_grigia.dati[i / 4] = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2]; } return immagine_grigia;
+    }
+    function calcolaDutyCyclePWM(valore_grigio, parametri) { /* ... codice invariato ... */
+        let valore_modificato = valore_grigio + parametri.valore_offset; valore_modificato = Math.max(0, Math.min(255, valore_modificato)); let duty_cycle = parametri.inversione ? (valore_modificato / 255.0) : ((255 - valore_modificato) / 255.0); const livelli_pwm = Math.pow(2, parametri.risoluzione_pwm); return Math.round(duty_cycle * (livelli_pwm - 1)) / (livelli_pwm - 1);
+    }
+    function generaPatternPWM(duty_cycle, dimensione_cella) { /* ... codice invariato ... */
+        const pattern = []; const pixel_totali = dimensione_cella * dimensione_cella; const pixel_neri = Math.round(duty_cycle * pixel_totali); let neri_disegnati = 0; for (let y = 0; y < dimensione_cella; y++) { pattern[y] = []; for (let x = 0; x < dimensione_cella; x++) { pattern[y][x] = (neri_disegnati++ < pixel_neri) ? 1 : 0; } } return pattern;
+    }
+    function ditheringFloydSteinberg(immagine) { /* ... codice invariato ... */
+        const { larghezza, altezza } = immagine; const dati_dithered = new Float32Array(immagine.dati); for (let y = 0; y < altezza; y++) { for (let x = 0; x < larghezza; x++) { const idx = y * larghezza + x; const pixel_vecchio = dati_dithered[idx]; const pixel_nuovo = (pixel_vecchio > 127) ? 255 : 0; dati_dithered[idx] = pixel_nuovo; const errore = pixel_vecchio - pixel_nuovo; if (x + 1 < larghezza) dati_dithered[idx + 1] += errore * 7 / 16; if (y + 1 < altezza) { if (x > 0) dati_dithered[idx + larghezza - 1] += errore * 3 / 16; dati_dithered[idx + larghezza] += errore * 5 / 16; if (x + 1 < larghezza) dati_dithered[idx + larghezza + 1] += errore * 1 / 16; } } } return { larghezza, altezza, dati: new Uint8ClampedArray(dati_dithered) };
+    }
+    async function generaSequenzaMovimenti(immagine, parametri, onProgress) { /* ... codice invariato ... */
+        const { larghezza, altezza } = immagine; const sequenza_movimenti = []; const dim_cella = parametri.dimensione_cella; let immagine_processata = (parametri.modalita_dithering === "floyd_steinberg") ? ditheringFloydSteinberg(immagine) : immagine; const righe_totali = Math.ceil(altezza / dim_cella); const colonne_totali = Math.ceil(larghezza / dim_cella); const totale_celle = righe_totali * colonne_totali; let celle_processate = 0;
+        const processaCella = (start_x, start_y) => { let somma = 0, conteggio = 0; for (let dy = 0; dy < dim_cella; dy++) for (let dx = 0; dx < dim_cella; dx++) { const x = start_x + dx, y = start_y + dy; if (x < larghezza && y < altezza) { somma += immagine_processata.dati[y * larghezza + x]; conteggio++; } } if (conteggio === 0) return; const duty_cycle = calcolaDutyCyclePWM(somma / conteggio, parametri); const pattern_pwm = generaPatternPWM(duty_cycle, dim_cella); for (let dy = 0; dy < dim_cella; dy++) for (let dx = 0; dx < dim_cella; dx++) { const x_assoluto = start_x + dx, y_assoluto = start_y + dy; if (x_assoluto < larghezza && y_assoluto < altezza) { sequenza_movimenti.push({ x: x_assoluto, y: y_assoluto, penna_abbassata: (pattern_pwm[dy][dx] === 1) }); } } };
+        const aggiornaProgresso = async () => { const progresso = Math.min(100, (++celle_processate / totale_celle) * 100); if (celle_processate % colonne_totali === 0) { onProgress(progresso, `Generazione movimenti... ${Math.round(progresso)}%`); await new Promise(resolve => setTimeout(resolve, 0)); } };
+        for (let y_idx = 0; y_idx < righe_totali; y_idx++) { const y = y_idx * dim_cella; if (parametri.direzione_scansione !== 'serpentina' || y_idx % 2 === 0) { for (let x_idx = 0; x_idx < colonne_totali; x_idx++) { processaCella(x_idx * dim_cella, y); await aggiornaProgresso(); } } else { for (let x_idx = colonne_totali - 1; x_idx >= 0; x_idx--) { processaCella(x_idx * dim_cella, y); await aggiornaProgresso(); } } } return sequenza_movimenti;
+    }
+    function eseguiSequenzaPlotter(sequenza_movimenti, larghezza, altezza) { /* ... codice invariato ... */
+        log("Disegno su canvas..."); const ctxRisultato = canvasRisultato.getContext('2d'); canvasRisultato.width = larghezza; canvasRisultato.height = altezza; ctxRisultato.fillStyle = 'white'; ctxRisultato.fillRect(0, 0, larghezza, altezza); ctxRisultato.fillStyle = 'black'; sequenza_movimenti.forEach(c => { if (c.penna_abbassata) { ctxRisultato.fillRect(c.x, c.y, 1, 1); } });
+    }
+
+    // --- NUOVA FUNZIONE SVG OTTIMIZZATA ---
+    function salvaSVGOttimizzato(sequenza_movimenti, larghezza, altezza) {
+        const righe = new Map();
+        sequenza_movimenti.forEach(cmd => {
+            if (cmd.penna_abbassata) {
+                if (!righe.has(cmd.y)) righe.set(cmd.y, []);
+                righe.get(cmd.y).push(cmd.x);
+            }
+        });
+
+        const svgElements = [`<svg width="${larghezza}" height="${altezza}" xmlns="http://www.w3.org/2000/svg">`, `  <rect width="100%" height="100%" fill="white"/>`];
+        let elementCount = 0;
+
+        for (const [y, coords] of righe.entries()) {
+            if (coords.length === 0) continue;
+            coords.sort((a, b) => a - b);
+            
+            let rect_start_x = coords[0];
+            let rect_width = 1;
+
+            for (let i = 1; i < coords.length; i++) {
+                if (coords[i] === coords[i-1] + 1) {
+                    rect_width++;
+                } else {
+                    svgElements.push(`  <rect x="${rect_start_x}" y="${y}" width="${rect_width}" height="1" fill="black"/>`);
+                    elementCount++;
+                    rect_start_x = coords[i];
+                    rect_width = 1;
+                }
+            }
+            svgElements.push(`  <rect x="${rect_start_x}" y="${y}" width="${rect_width}" height="1" fill="black"/>`);
+            elementCount++;
+        }
+        svgElements.push(`</svg>`);
+        return { content: svgElements.join('\n'), elementCount };
+    }
+
+    function salvaGCode(sequenza_movimenti, altezza_immagine) { /* ... codice invariato, ma ritorna anche il conteggio ... */
+        let gcode = ["G21 ; Unità mm", "G90 ; Coordinate assolute", "M4 ; Abilita penna/laser", "G0 Z1 ; Alza penna"]; let penna_abbassata_corrente = false; for (const comando of sequenza_movimenti) { if (comando.penna_abbassata !== penna_abbassata_corrente) { gcode.push(comando.penna_abbassata ? `G1 Z0 F100` : `G0 Z1`); penna_abbassata_corrente = comando.penna_abbassata; } gcode.push(`${penna_abbassata_corrente ? 'G1' : 'G0'} X${comando.x.toFixed(3)} Y${(altezza_immagine - comando.y).toFixed(3)}`); } gcode.push("M5 ; Disabilita penna/laser", "G0 X0 Y0 ; Torna a origine"); 
+        return { content: gcode.join('\n'), lineCount: gcode.length };
+    }
+
+    async function principale() {
+        if (!immagineCaricata) { logClear("Errore: Nessuna immagine caricata."); return; }
+        startButton.disabled = true; startButton.textContent = 'Elaborazione...';
+        logClear("Inizio processo...");
+        resetOutputState();
+        updateProgress(0, 'Pronto');
+        
+        try {
+            const parametri = leggiParametri();
+            log("1. Conversione in scala di grigi...");
+            const immagine_grigia = convertiInGrigio(immagineCaricata);
+            log("2. Generazione sequenza movimenti...");
+            const sequenza_movimenti = await generaSequenzaMovimenti(immagine_grigia, parametri, updateProgress);
+            log("3. Disegno immagine simulata...");
+            eseguiSequenzaPlotter(sequenza_movimenti, immagineCaricata.width, immagineCaricata.height);
+
+            datiSimulazione = { sequenza: sequenza_movimenti, larghezza: immagineCaricata.width, altezza: immagineCaricata.height };
+            
+            exportOptionsContainer.style.display = 'flex';
+            generateGCodeButton.style.display = 'block';
+
+            const puntiDisegnati = sequenza_movimenti.filter(p => p.penna_abbassata).length;
+            logClear("✔ Immagine simulata pronta.\n\n--- Statistiche Simulazione ---");
+            log(`Punti totali: ${sequenza_movimenti.length}`);
+            log(`Punti disegnati (penna abbassata): ${puntiDisegnati}`);
+            log("---------------------------------\nOra puoi salvare l'immagine o generare il G-Code.");
+
+        } catch (e) {
+            log(`ERRORE CRITICO: ${e.message}`); console.error(e);
+        } finally {
+            startButton.disabled = false; startButton.textContent = '2. Genera Immagine Simulata';
+            updateProgress(0, 'Pronto');
+        }
+    }
+});
+</script>
+
+</body>
+</html>

@@ -1,0 +1,569 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Filtro Stile Van Gogh</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            background-color: #f0f2f5;
+            color: #1c1e21;
+            display: flex;
+            justify-content: center;
+            align-items: flex-start;
+            padding: 20px;
+            gap: 20px;
+        }
+        .container {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            background: white;
+            padding: 25px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+            max-width: 1200px;
+        }
+        .controls {
+            border: 1px solid #ddd;
+            padding: 15px;
+            border-radius: 6px;
+        }
+        .controls h3 {
+            margin-top: 0;
+            border-bottom: 1px solid #eee;
+            padding-bottom: 10px;
+        }
+        .control-group {
+            margin-bottom: 15px;
+        }
+        .control-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 500;
+        }
+        input[type="range"] {
+            width: 100%;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            font-size: 16px;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background-color 0.2s;
+            width: 100%;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        #canvas-container {
+            display: flex;
+            gap: 20px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+        canvas {
+            max-width: 100%;
+            height: auto;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+        #status {
+            text-align: center;
+            font-weight: bold;
+            color: #d9534f;
+            min-height: 24px;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>Algoritmo Stile Van Gogh con Filtri Tradizionali</h1>
+    <p>Carica un'immagine, regola i parametri e applica il filtro per simulare lo stile pittorico di Van Gogh.</p>
+    
+    <div class="controls">
+        <h3>1. Carica Immagine</h3>
+        <input type="file" id="imageLoader" name="imageLoader"/>
+        
+        <h3>2. Imposta Parametri</h3>
+        <div class="control-group">
+            <label for="oilRadius">Raggio Pennellata (Oil Painting): <span id="oilRadiusValue">5</span>px</label>
+            <input type="range" id="oilRadius" min="1" max="15" value="5">
+        </div>
+         <div class="control-group">
+            <label for="swirlIntensity">Intensità Swirl: <span id="swirlIntensityValue">0.3</span></label>
+            <input type="range" id="swirlIntensity" min="0" max="1" step="0.05" value="0.3">
+        </div>
+        <div class="control-group">
+            <label for="saturationBoost">Aumento Saturazione: +<span id="saturationBoostValue">40</span>%</label>
+            <input type="range" id="saturationBoost" min="0" max="100" value="40">
+        </div>
+        <div class="control-group">
+            <label for="edgeThickness">Spessore Contorni: <span id="edgeThicknessValue">2</span>px</label>
+            <input type="range" id="edgeThickness" min="1" max="5" value="2">
+        </div>
+
+        <h3>3. Applica Filtro</h3>
+        <button id="applyFilterBtn" disabled>Applica Filtro</button>
+        <div id="status"></div>
+    </div>
+
+    <div id="canvas-container">
+        <div>
+            <h4>Originale</h4>
+            <canvas id="originalCanvas"></canvas>
+        </div>
+        <div>
+            <h4>Stile Van Gogh</h4>
+            <canvas id="resultCanvas"></canvas>
+        </div>
+    </div>
+    
+    <!-- Tela nascosta per passaggi intermedi -->
+    <canvas id="hiddenCanvas" style="display:none;"></canvas>
+
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    const imageLoader = document.getElementById('imageLoader');
+    const originalCanvas = document.getElementById('originalCanvas');
+    const resultCanvas = document.getElementById('resultCanvas');
+    const hiddenCanvas = document.getElementById('hiddenCanvas');
+    const applyFilterBtn = document.getElementById('applyFilterBtn');
+    const statusDiv = document.getElementById('status');
+
+    const originalCtx = originalCanvas.getContext('2d');
+    const resultCtx = resultCanvas.getContext('2d');
+    const hiddenCtx = hiddenCanvas.getContext('2d');
+
+    let originalImageData = null;
+
+    // Gestione input sliders
+    const sliders = {
+        oilRadius: document.getElementById('oilRadius'),
+        swirlIntensity: document.getElementById('swirlIntensity'),
+        saturationBoost: document.getElementById('saturationBoost'),
+        edgeThickness: document.getElementById('edgeThickness'),
+    };
+
+    const values = {
+        oilRadiusValue: document.getElementById('oilRadiusValue'),
+        swirlIntensityValue: document.getElementById('swirlIntensityValue'),
+        saturationBoostValue: document.getElementById('saturationBoostValue'),
+        edgeThicknessValue: document.getElementById('edgeThicknessValue'),
+    };
+    
+    for (const key in sliders) {
+        sliders[key].addEventListener('input', (e) => {
+            values[`${key}Value`].textContent = e.target.value;
+        });
+    }
+
+    imageLoader.addEventListener('change', (e) => {
+        const reader = new FileReader();
+        reader.onload = (event) => {
+            const img = new Image();
+            img.onload = () => {
+                const MAX_WIDTH = 800;
+                let width = img.width;
+                let height = img.height;
+
+                if (width > MAX_WIDTH) {
+                    height *= MAX_WIDTH / width;
+                    width = MAX_WIDTH;
+                }
+
+                originalCanvas.width = width;
+                originalCanvas.height = height;
+                resultCanvas.width = width;
+                resultCanvas.height = height;
+                hiddenCanvas.width = width;
+                hiddenCanvas.height = height;
+
+                originalCtx.drawImage(img, 0, 0, width, height);
+                resultCtx.drawImage(img, 0, 0, width, height);
+                originalImageData = originalCtx.getImageData(0, 0, width, height);
+                applyFilterBtn.disabled = false;
+                statusDiv.textContent = 'Immagine caricata. Pronto per l\'elaborazione.';
+            }
+            img.src = event.target.result;
+        }
+        reader.readAsDataURL(e.target.files[0]);
+    });
+
+    applyFilterBtn.addEventListener('click', async () => {
+        if (!originalImageData) {
+            alert('Per favore, carica un\'immagine prima.');
+            return;
+        }
+        applyFilterBtn.disabled = true;
+        statusDiv.textContent = 'Elaborazione in corso... (potrebbe richiedere tempo)';
+
+        // Permette al browser di aggiornare l'UI prima del calcolo pesante
+        await new Promise(resolve => setTimeout(resolve, 50));
+
+        await applyVanGoghEffect();
+
+        applyFilterBtn.disabled = false;
+        statusDiv.textContent = 'Elaborazione completata!';
+    });
+
+    async function applyVanGoghEffect() {
+        const width = originalCanvas.width;
+        const height = originalCanvas.height;
+        let currentImageData = new ImageData(
+            new Uint8ClampedArray(originalImageData.data),
+            width,
+            height
+        );
+        
+        // Helper per non bloccare il thread principale
+        const allowUIToUpdate = () => new Promise(resolve => requestAnimationFrame(resolve));
+
+        // --- 1. PREPROCESSING ---
+        statusDiv.textContent = '1/8: Preprocessing...';
+        await allowUIToUpdate();
+        // Il leggero blur viene applicato per ridurre il rumore iniziale
+        hiddenCtx.putImageData(currentImageData, 0, 0);
+        hiddenCtx.filter = 'blur(0.5px)';
+        hiddenCtx.drawImage(hiddenCanvas, 0, 0);
+        hiddenCtx.filter = 'none'; // reset filter
+        let processedData = hiddenCtx.getImageData(0, 0, width, height);
+        
+        // --- 2. ESTRAZIONE CONTORNI (SOBEL) ---
+        statusDiv.textContent = '2/8: Estrazione contorni...';
+        await allowUIToUpdate();
+        const edgeMask = getSobelEdges(processedData, parseFloat(sliders.edgeThickness.value));
+        
+        // --- 3. SIMULAZIONE PENNELLATE (OIL PAINTING) ---
+        statusDiv.textContent = '3/8: Applicazione effetto olio...';
+        await allowUIToUpdate();
+        processedData = applyOilPainting(processedData, parseInt(sliders.oilRadius.value));
+
+        // --- 4. CREAZIONE TEXTURE SWIRL ---
+        statusDiv.textContent = '4/8: Creazione effetto Swirl...';
+        await allowUIToUpdate();
+        processedData = applySwirl(processedData, parseFloat(sliders.swirlIntensity.value));
+
+        // --- 5. MODIFICA PALETTE COLORI ---
+        statusDiv.textContent = '5/8: Aggiustamento colori...';
+        await allowUIToUpdate();
+        processedData = adjustColors(processedData, parseFloat(sliders.saturationBoost.value) / 100);
+
+        // --- 6. (SALTATO) MOTION BLUR, integrato in Oil Painting per performance
+
+        // --- 7. ENFATIZZAZIONE CONTORNI PITTORICI ---
+        statusDiv.textContent = '7/8: Applicazione contorni...';
+        await allowUIToUpdate();
+        processedData = applyDarkEdges(processedData, edgeMask);
+
+        // --- 8. BLENDING FINALE E RIFINITURA ---
+        statusDiv.textContent = '8/8: Rifinitura finale...';
+        await allowUIToUpdate();
+        processedData = finalBlendingAndRefinement(processedData, originalImageData);
+
+        resultCtx.putImageData(processedData, 0, 0);
+    }
+    
+    // --- FUNZIONI DI ELABORAZIONE IMMAGINE ---
+
+    function getSobelEdges(imgData, thickness) {
+        const width = imgData.width;
+        const height = imgData.height;
+        const grayData = new Uint8ClampedArray(width * height);
+        const edgeMask = new Uint8ClampedArray(width * height);
+        const data = imgData.data;
+
+        // Converti a scala di grigi
+        for (let i = 0; i < data.length; i += 4) {
+            const gray = data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114;
+            grayData[i / 4] = gray;
+        }
+
+        const sobelX = [[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]];
+        const sobelY = [[-1, -2, -1], [0, 0, 0], [1, 2, 1]];
+        const threshold = 80;
+
+        for (let y = 1; y < height - 1; y++) {
+            for (let x = 1; x < width - 1; x++) {
+                let gx = 0, gy = 0;
+                for (let ky = -1; ky <= 1; ky++) {
+                    for (let kx = -1; kx <= 1; kx++) {
+                        const pixelVal = grayData[(y + ky) * width + (x + kx)];
+                        gx += pixelVal * sobelX[ky + 1][kx + 1];
+                        gy += pixelVal * sobelY[ky + 1][kx + 1];
+                    }
+                }
+                const magnitude = Math.sqrt(gx * gx + gy * gy);
+                if (magnitude > threshold) {
+                    edgeMask[y * width + x] = 255;
+                }
+            }
+        }
+        
+        // Dilatazione per spessore
+        const dilatedMask = new Uint8ClampedArray(width * height);
+        const d_radius = Math.floor(thickness);
+        for (let y = d_radius; y < height - d_radius; y++) {
+            for (let x = d_radius; x < width - d_radius; x++) {
+                if(edgeMask[y * width + x] === 255) {
+                    for(let dy = -d_radius; dy <= d_radius; dy++) {
+                        for(let dx = -d_radius; dx <= d_radius; dx++) {
+                            dilatedMask[(y+dy) * width + (x+dx)] = 255;
+                        }
+                    }
+                }
+            }
+        }
+        return dilatedMask;
+    }
+
+    function applyOilPainting(imgData, radius) {
+        const width = imgData.width;
+        const height = imgData.height;
+        const srcData = imgData.data;
+        const dstData = new Uint8ClampedArray(srcData.length);
+
+        for (let y = 0; y < height; y++) {
+            for (let x = 0; x < width; x++) {
+                const intensityBuckets = new Array(256).fill(0);
+                const colorBucketsR = new Array(256).fill(0);
+                const colorBucketsG = new Array(256).fill(0);
+                const colorBucketsB = new Array(256).fill(0);
+
+                for (let j = -radius; j <= radius; j++) {
+                    for (let i = -radius; i <= radius; i++) {
+                        const curX = Math.max(0, Math.min(width - 1, x + i));
+                        const curY = Math.max(0, Math.min(height - 1, y + j));
+                        const offset = (curY * width + curX) * 4;
+                        
+                        const r = srcData[offset];
+                        const g = srcData[offset + 1];
+                        const b = srcData[offset + 2];
+                        const intensity = Math.round((r + g + b) / 3);
+
+                        intensityBuckets[intensity]++;
+                        colorBucketsR[intensity] += r;
+                        colorBucketsG[intensity] += g;
+                        colorBucketsB[intensity] += b;
+                    }
+                }
+
+                let maxCount = 0;
+                let maxIntensity = 0;
+                for (let i = 0; i < 256; i++) {
+                    if (intensityBuckets[i] > maxCount) {
+                        maxCount = intensityBuckets[i];
+                        maxIntensity = i;
+                    }
+                }
+                
+                const finalOffset = (y * width + x) * 4;
+                dstData[finalOffset] = colorBucketsR[maxIntensity] / maxCount;
+                dstData[finalOffset + 1] = colorBucketsG[maxIntensity] / maxCount;
+                dstData[finalOffset + 2] = colorBucketsB[maxIntensity] / maxCount;
+                dstData[finalOffset + 3] = 255;
+            }
+        }
+        return new ImageData(dstData, width, height);
+    }
+    
+    function applySwirl(imgData, intensity) {
+        const width = imgData.width;
+        const height = imgData.height;
+        const srcData = imgData.data;
+        const dstData = new Uint8ClampedArray(srcData.length);
+        const centerX = width / 2;
+        const centerY = height / 2;
+        const radius = Math.min(centerX, centerY);
+
+        for (let y = 0; y < height; y++) {
+            for (let x = 0; x < width; x++) {
+                const dx = x - centerX;
+                const dy = y - centerY;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                
+                let srcX = x, srcY = y;
+                if (distance < radius) {
+                    const angle = Math.atan2(dy, dx);
+                    const swirlAmount = intensity * (1.0 - distance / radius);
+                    const newAngle = angle + swirlAmount;
+                    srcX = centerX + distance * Math.cos(newAngle);
+                    srcY = centerY + distance * Math.sin(newAngle);
+                }
+                
+                // Bilinear Interpolation
+                const x_floor = Math.floor(srcX);
+                const y_floor = Math.floor(srcY);
+                const x_ceil = Math.min(width - 1, x_floor + 1);
+                const y_ceil = Math.min(height - 1, y_floor + 1);
+
+                const fx = srcX - x_floor;
+                const fy = srcY - y_floor;
+
+                const p1_offset = (y_floor * width + x_floor) * 4;
+                const p2_offset = (y_floor * width + x_ceil) * 4;
+                const p3_offset = (y_ceil * width + x_floor) * 4;
+                const p4_offset = (y_ceil * width + x_ceil) * 4;
+                
+                const dstOffset = (y * width + x) * 4;
+
+                for (let c = 0; c < 3; c++) {
+                    const bl = srcData[p1_offset + c];
+                    const br = srcData[p2_offset + c];
+                    const tl = srcData[p3_offset + c];
+                    const tr = srcData[p4_offset + c];
+                    const top = bl * (1 - fx) + br * fx;
+                    const bottom = tl * (1 - fx) + tr * fx;
+                    dstData[dstOffset + c] = top * (1 - fy) + bottom * fy;
+                }
+                dstData[dstOffset + 3] = 255;
+            }
+        }
+        return new ImageData(dstData, width, height);
+    }
+    
+    function adjustColors(imgData, satBoost) {
+        const data = imgData.data;
+        for (let i = 0; i < data.length; i += 4) {
+            let [h, s, v] = rgbToHsv(data[i], data[i+1], data[i+2]);
+
+            // Aumenta saturazione
+            s = Math.min(1, s * (1 + satBoost));
+            
+            // Shift tonalità (h in [0, 360])
+            if (h >= 0 && h <= 30) { // Rossi -> Arancioni
+                h = Math.min(359, h + 15);
+            } else if (h >= 45 && h <= 75) { // Gialli
+                v = Math.min(1, v * 1.1);
+            } else if (h >= 180 && h <= 250) { // Blu
+                s = Math.min(1, s * 1.2);
+            }
+            
+            const [r, g, b] = hsvToRgb(h, s, v);
+            data[i] = r;
+            data[i+1] = g;
+            data[i+2] = b;
+        }
+        return imgData;
+    }
+    
+    function applyDarkEdges(imgData, edgeMask) {
+        const data = imgData.data;
+        const width = imgData.width;
+        const darkBlue = [20, 20, 80]; // Blu scuro
+        
+        for (let y = 0; y < imgData.height; y++) {
+            for (let x = 0; x < width; x++) {
+                const index = y * width + x;
+                if (edgeMask[index] === 255) {
+                    const offset = index * 4;
+                    data[offset] = darkBlue[0];
+                    data[offset + 1] = darkBlue[1];
+                    data[offset + 2] = darkBlue[2];
+                }
+            }
+        }
+        return imgData;
+    }
+
+    function finalBlendingAndRefinement(processedData, originalData) {
+        const pData = processedData.data;
+        const oData = originalData.data;
+        const width = processedData.width;
+        const height = processedData.height;
+        const blendFactor = 0.7; // 70% processato, 30% originale
+
+        for (let i = 0; i < pData.length; i += 4) {
+            // Blending
+            pData[i] = pData[i] * blendFactor + oData[i] * (1 - blendFactor);
+            pData[i + 1] = pData[i + 1] * blendFactor + oData[i + 1] * (1 - blendFactor);
+            pData[i + 2] = pData[i + 2] * blendFactor + oData[i + 2] * (1 - blendFactor);
+            
+            // Aumento contrasto
+            const contrast = 1.15;
+            pData[i] = 128 + (pData[i] - 128) * contrast;
+            pData[i+1] = 128 + (pData[i+1] - 128) * contrast;
+            pData[i+2] = 128 + (pData[i+2] - 128) * contrast;
+
+            // Aggiunta rumore
+            const noise = (Math.random() - 0.5) * 20; // tra -10 e 10
+            pData[i] += noise;
+            pData[i+1] += noise;
+            pData[i+2] += noise;
+
+            // Vignettatura
+            const x = (i / 4) % width;
+            const y = Math.floor((i / 4) / width);
+            const dx = x - width / 2;
+            const dy = y - height / 2;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            const maxDist = Math.sqrt(Math.pow(width/2, 2) + Math.pow(height/2, 2));
+            const vignette = Math.max(0, 1 - (dist / maxDist) * 0.5); // 0.5 è l'intensità
+            
+            pData[i] *= vignette;
+            pData[i+1] *= vignette;
+            pData[i+2] *= vignette;
+            
+            // Clamp valori
+            pData[i] = Math.max(0, Math.min(255, pData[i]));
+            pData[i+1] = Math.max(0, Math.min(255, pData[i+1]));
+            pData[i+2] = Math.max(0, Math.min(255, pData[i+2]));
+        }
+        return processedData;
+    }
+
+    // --- FUNZIONI HELPER ---
+
+    function rgbToHsv(r, g, b) {
+        r /= 255, g /= 255, b /= 255;
+        let max = Math.max(r, g, b), min = Math.min(r, g, b);
+        let h, s, v = max;
+        let d = max - min;
+        s = max == 0 ? 0 : d / max;
+        if (max == min) {
+            h = 0; // achromatic
+        } else {
+            switch (max) {
+                case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+                case g: h = (b - r) / d + 2; break;
+                case b: h = (r - g) / d + 4; break;
+            }
+            h /= 6;
+        }
+        return [h * 360, s, v];
+    }
+
+    function hsvToRgb(h, s, v) {
+        let r, g, b;
+        h /= 360;
+        let i = Math.floor(h * 6);
+        let f = h * 6 - i;
+        let p = v * (1 - s);
+        let q = v * (1 - f * s);
+        let t = v * (1 - (1 - f) * s);
+        switch (i % 6) {
+            case 0: r = v, g = t, b = p; break;
+            case 1: r = q, g = v, b = p; break;
+            case 2: r = p, g = v, b = t; break;
+            case 3: r = p, g = q, b = v; break;
+            case 4: r = t, g = p, b = v; break;
+            case 5: r = v, g = p, b = q; break;
+        }
+        return [r * 255, g * 255, b * 255];
+    }
+});
+</script>
+
+</body>
+</html>

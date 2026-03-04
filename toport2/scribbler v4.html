@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Generatore Scribble - Stabile e Preciso</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; display: flex; flex-wrap: wrap; justify-content: center; align-items: flex-start; background-color: #f0f0f0; margin: 0; padding: 20px; gap: 20px; }
+        #controls-container { width: 350px; padding: 20px; background-color: #ffffff; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); position: sticky; top: 20px; display: flex; flex-direction: column; }
+        h1 { font-size: 1.5em; margin-top: 0; color: #333; text-align: center; border-bottom: 1px solid #eee; padding-bottom: 10px; }
+        .control-group { margin-bottom: 18px; }
+        label { display: block; font-weight: bold; margin-bottom: 5px; color: #555; font-size: 0.9em; }
+        input[type="file"] { width: 100%; }
+        input[type="range"] { width: 100%; }
+        .param-value { font-weight: normal; color: #007bff; }
+        .button-group { display: flex; gap: 10px; }
+        button { flex-grow: 1; padding: 12px; font-size: 1em; font-weight: bold; color: white; background-color: #007bff; border: none; border-radius: 5px; cursor: pointer; transition: background-color 0.2s; margin-top: 10px; }
+        button:hover:not(:disabled) { background-color: #0056b3; }
+        button:disabled { background-color: #cccccc; cursor: not-allowed; }
+        #stopBtn { background-color: #dc3545; flex-grow: 0; width: 100%; }
+        #stopBtn:hover:not(:disabled) { background-color: #c82333; }
+        #progress-container { margin-top: 20px; }
+        progress { width: 100%; height: 10px; border-radius: 5px; }
+        #progress-label { text-align: center; display: block; margin-top: 5px; color: #666; font-size: 0.85em; height: 3em; }
+        #canvas-container { background-color: #ffffff; box-shadow: 0 4px 10px rgba(0,0,0,0.1); padding: 10px; border-radius: 8px; text-align: center; }
+        canvas { display: block; max-width: 100%; border-radius: 4px; }
+        #originalCanvas { display: none; }
+    </style>
+</head>
+<body>
+
+    <div id="controls-container">
+        <h1>Scribble - Stabile e Preciso</h1>
+        <div class="control-group"><label for="imageLoader">1. Carica Immagine</label><input type="file" id="imageLoader" name="imageLoader" accept="image/*"/></div>
+        <div class="control-group"><label for="precision">Precisione (più basso = più preciso): <span id="precisionValue" class="param-value">2</span></label><input type="range" id="precision" min="1" max="15" value="2"></div>
+        <div class="control-group"><label for="scribbleColor">Colore Scribble: <span id="colorValue" class="param-value">20</span></label><input type="range" id="scribbleColor" min="0" max="100" value="20"></div>
+        <div class="control-group"><label for="strokeOpacity">Opacità Tratto: <span id="opacityValue" class="param-value">0.10</span></label><input type="range" id="strokeOpacity" min="0.05" max="0.5" step="0.01" value="0.10"></div>
+        <div class="control-group"><label for="strokeMax">Lunghezza Tratto Max: <span id="strokeMaxValue" class="param-value">80</span></label><input type="range" id="strokeMax" name="strokeMax" min="20" max="300" value="80"></div>
+        <div class="control-group"><label for="similarityThreshold">Target Errore: <span id="similarityValue" class="param-value">12</span></label><input type="range" id="similarityThreshold" min="5" max="60" value="12"></div>
+        <button id="generateBtn" disabled>2. Genera Scribble</button>
+        <button id="stopBtn" style="display: none;">Ferma Generazione</button>
+        <div class="button-group"><button id="saveJpgBtn" disabled>Salva JPG</button><button id="saveSvgBtn" disabled>Salva SVG</button></div>
+        <div id="progress-container"><progress id="progressBar" value="0" max="100"></progress><span id="progress-label">In attesa...</span></div>
+    </div>
+
+    <div id="canvas-container"><canvas id="originalCanvas"></canvas><canvas id="scribbleCanvas"></canvas></div>
+
+    <script>
+    // --- INIZIO SCRIPT ---
+    const PerlinNoise = new function() { /* ... codice Perlin Noise omesso ... */ };
+    PerlinNoise.noise = function(x, y, z) { var p = new Array(512); var permutation = [ 151,160,137,91,90,15,131,13,201,95,96,53,194,233,7,225,140,36,103,30,69,142,8,99,37,240,21,10,23,190, 6,148,247,120,234,75,0,26,197,62,94,252,219,203,117,35,11,32,57,177,33,88,237,149,56,87,174,20,125,136,171,168, 68,175,74,165,71,134,139,48,27,166,77,146,158,231,83,111,229,122,60,211,133,230,220,105,92,41,55,46,245,40,244,102,143,54, 65,25,63,161, 1,216,80,73,209,76,132,187,208, 89,18,169,200,196,135,130,116,188,159,86,164,100,109,198,173,186, 3,64,52,217,226,250,124,123,5,202,38,147,118,126,255,82,85,212,207,206,59,227,47,16,58,17,182,189,28,42,223,183,170,213,119,248,152, 2,44,154,163, 70,221,153,101,155,167, 43,172,9,129,22,39,253, 19,98,108,110,79,113,224,232,178,185, 112,104,218,246,97,228,251,34,242,193,238,210,144,12,191,179,162,241, 81,51,145,235,249,14,239,107,49,192,214, 31,181,199,106,157,184, 84,204,176,115,121,50,45,127, 4,150,254,138,236,205,93,222,114,67,29,24,72,243,141,128,195,78,66,215,61,156,180]; for (var i=0; i < 256 ; i++) p[256+i] = p[i] = permutation[i]; var X = Math.floor(x) & 255, Y = Math.floor(y) & 255, Z = Math.floor(z) & 255; x -= Math.floor(x); y -= Math.floor(y); z -= Math.floor(z); var u = fade(x), v = fade(y), w = fade(z); var A = p[X]+Y, AA = p[A]+Z, AB = p[A+1]+Z, B = p[X+1]+Y, BA = p[B]+Z, BB = p[B+1]+Z; return scale(lerp(w, lerp(v, lerp(u, grad(p[AA], x, y, z), grad(p[BA], x-1, y, z)), lerp(u, grad(p[AB], x, y-1, z), grad(p[BB], x-1, y-1, z))), lerp(v, lerp(u, grad(p[AA+1], x, y, z-1), grad(p[BA+1], x-1, y, z-1)), lerp(u, grad(p[AB+1], x, y-1, z-1), grad(p[BB+1], x-1, y-1, z-1))))); function fade(t) { return t * t * t * (t * (t * 6 - 15) + 10); } function lerp( t, a, b ) { return a + t * ( b - a ); } function grad(hash, x, y, z) { var h = hash & 15; var u = h<8 ? x : y, v = h<4 ? y : h==12||h==14 ? x : z; return ((h&1) == 0 ? u : -u) + ((h&2) == 0 ? v : -v); } function scale(n) { return (1 + n)/2; } };
+    const ui = {
+        imageLoader: document.getElementById('imageLoader'), generateBtn: document.getElementById('generateBtn'), stopBtn: document.getElementById('stopBtn'),
+        saveJpgBtn: document.getElementById('saveJpgBtn'), saveSvgBtn: document.getElementById('saveSvgBtn'),
+        precisionSlider: document.getElementById('precision'), colorSlider: document.getElementById('scribbleColor'), opacitySlider: document.getElementById('strokeOpacity'),
+        strokeMaxSlider: document.getElementById('strokeMax'), similaritySlider: document.getElementById('similarityThreshold'),
+        precisionValue: document.getElementById('precisionValue'), colorValue: document.getElementById('colorValue'), opacityValue: document.getElementById('opacityValue'),
+        strokeMaxValue: document.getElementById('strokeMaxValue'), similarityValue: document.getElementById('similarityValue'),
+        progressContainer: document.getElementById('progress-container'), progressBar: document.getElementById('progressBar'), progressLabel: document.getElementById('progress-label')
+    };
+    const originalCanvas = document.getElementById('originalCanvas'), originalCtx = originalCanvas.getContext('2d', { willReadFrequently: true });
+    const scribbleCanvas = document.getElementById('scribbleCanvas'), scribbleCtx = scribbleCanvas.getContext('2d', { willReadFrequently: true });
+    
+    let isStopping = false, preprocessedData = null;
+    let svgStyleMap = new Map();
+
+    const lum = (r, g, b) => r * 0.299 + g * 0.587 + b * 0.114;
+    const getPixelIndex = (x, y, width) => (Math.floor(y) * width + Math.floor(x));
+    const random = (min, max) => Math.random() * (max - min) + min;
+
+    // --- Setup and UI handlers ---
+    ui.precisionSlider.oninput = () => { ui.precisionValue.textContent = ui.precisionSlider.value; };
+    ui.imageLoader.addEventListener('change', e => { const reader = new FileReader(); reader.onload = event => { const img = new Image(); img.onload = () => { const MAX_WIDTH = 600, MAX_HEIGHT = 600; let { width, height } = img; if (width > height) { if (width > MAX_WIDTH) { height *= MAX_WIDTH / width; width = MAX_WIDTH; } } else { if (height > MAX_HEIGHT) { width *= MAX_HEIGHT / height; height = MAX_HEIGHT; } } originalCanvas.width = scribbleCanvas.width = width; originalCanvas.height = scribbleCanvas.height = height; originalCtx.drawImage(img, 0, 0, width, height); scribbleCtx.fillStyle = "white"; scribbleCtx.fillRect(0, 0, width, height); preprocessedData = preprocessImage(originalCtx.getImageData(0, 0, width, height)); ui.generateBtn.disabled = false; ui.saveJpgBtn.disabled = true; ui.saveSvgBtn.disabled = true; }; img.src = event.target.result; }; reader.readAsDataURL(e.target.files[0]); });
+    function preprocessImage(imageData) { const { width, height, data } = imageData; const luminosity = new Float32Array(width * height); const angles = new Float32Array(width * height); for (let i = 0; i < luminosity.length; i++) { luminosity[i] = lum(data[i*4], data[i*4+1], data[i*4+2]); } for (let y = 1; y < height - 1; y++) { for (let x = 1; x < width - 1; x++) { const getLum = (ix, iy) => luminosity[getPixelIndex(ix, iy, width)]; const gx = -getLum(x-1, y) + getLum(x+1, y); const gy = -getLum(x, y-1) + getLum(x, y+1); angles[getPixelIndex(x, y, width)] = Math.atan2(gy, gx); } } return { luminosity, angles, width, height }; }
+    ui.colorSlider.oninput = () => { ui.colorValue.textContent = ui.colorSlider.value; }; ui.opacitySlider.oninput = () => { ui.opacityValue.textContent = parseFloat(ui.opacitySlider.value).toFixed(2); }; ui.strokeMaxSlider.oninput = () => { ui.strokeMaxValue.textContent = ui.strokeMaxSlider.value; }; ui.similaritySlider.oninput = () => { ui.similarityValue.textContent = ui.similaritySlider.value; };
+    ui.generateBtn.addEventListener('click', () => { if (preprocessedData) startIterativeGeneration(); }); ui.stopBtn.addEventListener('click', () => { isStopping = true; }); ui.saveJpgBtn.addEventListener('click', () => { const link = document.createElement('a'); link.download = 'scribble_art.jpg'; const tempCanvas = document.createElement('canvas'); tempCanvas.width = scribbleCanvas.width; tempCanvas.height = scribbleCanvas.height; const tempCtx = tempCanvas.getContext('2d'); tempCtx.fillStyle = 'white'; tempCtx.fillRect(0, 0, tempCanvas.width, tempCanvas.height); tempCtx.drawImage(scribbleCanvas, 0, 0); link.href = tempCanvas.toDataURL('image/jpeg', 0.9); link.click(); }); 
+    ui.saveSvgBtn.addEventListener('click', () => {
+        const c = parseInt(ui.colorSlider.value); const strokeColor = `rgb(${c},${c},${c})`; let content = '';
+        for (const [styleKey, pathDataStrings] of svgStyleMap.entries()) {
+            const [width, opacity] = styleKey.split('|');
+            const combinedD = pathDataStrings.join('');
+            content += `<path d="${combinedD}" stroke="${strokeColor}" stroke-opacity="${opacity}" stroke-width="${width}" fill="none" stroke-linecap="round" stroke-linejoin="round"/>\n`;
+        }
+        const fullSvg = `<svg width="${scribbleCanvas.width}" height="${scribbleCanvas.height}" xmlns="http://www.w3.org/2000/svg"><rect width="100%" height="100%" fill="white"/>${content}</svg>`;
+        const blob = new Blob([fullSvg], { type: 'image/svg+xml' }); const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = 'scribble_art_optimized.svg'; link.click(); URL.revokeObjectURL(link.href);
+    });
+
+    class PriorityQueue { constructor(comparator = (a, b) => a.error > b.error) { this._heap = []; this._comparator = comparator; } size() { return this._heap.length; } peek() { return this._heap[0]; } push(...values) { values.forEach(value => { this._heap.push(value); this._siftUp(); }); return this.size(); } pop() { const poppedValue = this.peek(); const bottom = this.size() - 1; if (bottom > 0) { this._swap(0, bottom); } this._heap.pop(); this._siftDown(); return poppedValue; } _parent(i) { return ((i + 1) >>> 1) - 1; } _left(i) { return (i << 1) + 1; } _right(i) { return (i + 1) << 1; } _greater(i, j) { return this._comparator(this._heap[i], this._heap[j]); } _swap(i, j) { [this._heap[i], this._heap[j]] = [this._heap[j], this._heap[i]]; } _siftUp() { let node = this.size() - 1; while (node > 0 && this._greater(node, this._parent(node))) { this._swap(node, this._parent(node)); node = this._parent(node); } } _siftDown() { let node = 0; while ((this._left(node) < this.size() && this._greater(this._left(node), node)) || (this._right(node) < this.size() && this._greater(this._right(node), node))) { let maxChild = (this._right(node) < this.size() && this._greater(this._right(node), this._left(node))) ? this._right(node) : this._left(node); this._swap(node, maxChild); node = maxChild; } } }
+    const luminosityBuffer = { buffer: null, width: 0, height: 0, initialize(width, height) { this.width = width; this.height = height; this.buffer = new Float32Array(width * height); this.buffer.fill(255); }, updateLine(points, strokeLuminosity, alpha) { for (const p of points) { const idx = getPixelIndex(p.x, p.y, this.width); if (idx >= 0 && idx < this.buffer.length) { this.buffer[idx] = strokeLuminosity * alpha + this.buffer[idx] * (1 - alpha); } } }, getLuminosity(x, y) { return this.buffer[getPixelIndex(x, y, this.width)]; } };
+    
+    function startIterativeGeneration() {
+        isStopping = false;
+        ui.generateBtn.disabled = true; ui.stopBtn.disabled = false; ui.saveJpgBtn.disabled = true; ui.saveSvgBtn.disabled = true;
+        ui.generateBtn.style.display = 'none'; ui.stopBtn.style.display = 'block';
+        
+        scribbleCtx.fillStyle = "white"; scribbleCtx.fillRect(0, 0, scribbleCanvas.width, scribbleCanvas.height);
+        svgStyleMap = new Map();
+        
+        const { width, height } = preprocessedData;
+        const targetError = parseFloat(ui.similaritySlider.value);
+        const cellSize = 16;
+        
+        luminosityBuffer.initialize(width, height);
+        const errorQueue = new PriorityQueue();
+        
+        for (let gy = 0; gy < Math.ceil(height / cellSize); gy++) {
+            for (let gx = 0; gx < Math.ceil(width / cellSize); gx++) {
+                errorQueue.push({ gx, gy, error: calculateCellError(gx, gy, cellSize, preprocessedData) });
+            }
+        }
+
+        let totalSuccessfulStrokes = 0;
+        let lastUITime = performance.now();
+        let noProgressFrames = 0;
+        
+        function processBatch() {
+            // --- CONDIZIONI DI USCITA SICURE ---
+            if (isStopping) {
+                finishGeneration("Interrotto", totalSuccessfulStrokes);
+                return;
+            }
+            
+            const topCell = errorQueue.peek();
+            if (!topCell || topCell.error < 0.1 || topCell.error <= targetError) {
+                finishGeneration(`Completato! Errore: ${topCell ? topCell.error.toFixed(2) : "N/A"}`, totalSuccessfulStrokes);
+                return;
+            }
+
+            // --- ELABORAZIONE DEL BATCH ---
+            const currentError = topCell.error;
+            const strokesToAttempt = 100; // Tentiamo un numero fisso di tratti per frame
+            let successfulStrokesInBatch = 0;
+            
+            const cellsToProcess = [];
+            for(let i=0; i < Math.min(strokesToAttempt, errorQueue.size()); i++) {
+                cellsToProcess.push(errorQueue.pop());
+            }
+
+            for(const cell of cellsToProcess) {
+                 const startPoint = { x: cell.gx * cellSize + random(0, cellSize), y: cell.gy * cellSize + random(0, cellSize) };
+                 if (generateScribbleCurve(startPoint, preprocessedData)) {
+                    totalSuccessfulStrokes++;
+                    successfulStrokesInBatch++;
+                }
+            }
+
+            for(const cell of cellsToProcess) {
+                if(cell) {
+                    cell.error = calculateCellError(cell.gx, cell.gy, cellSize, preprocessedData);
+                    errorQueue.push(cell);
+                }
+            }
+            
+            // Controlla se siamo bloccati
+            if (successfulStrokesInBatch === 0) noProgressFrames++; else noProgressFrames = 0;
+            if (noProgressFrames > 50) {
+                finishGeneration("Convergenza Raggiunta", totalSuccessfulStrokes);
+                return;
+            }
+
+            // --- AGGIORNAMENTO UI E RICORSIONE ---
+            const now = performance.now();
+            if (now - lastUITime > 100) { // Aggiorna UI ogni 100ms
+                ui.progressBar.value = ui.progressBar.max - Math.max(0, currentError - targetError);
+                const strokesPerSecond = totalSuccessfulStrokes / ((now - (lastUITime-100)) / 1000); // media approssimativa
+                ui.progressLabel.innerHTML = `Errore Max: ${currentError.toFixed(2)} | Tratti: ${totalSuccessfulStrokes}<br>${strokesPerSecond.toFixed(0)} tratti/sec`;
+                lastUITime = now;
+            }
+            
+            requestAnimationFrame(processBatch);
+        }
+        
+        // Avvia il primo batch
+        processBatch();
+    }
+
+    function finishGeneration(message, strokeCount) {
+        isStopping = false;
+        ui.progressLabel.innerHTML = `${message}<br>Tratti totali: ${strokeCount}`;
+        ui.generateBtn.disabled = false; ui.stopBtn.disabled = true; ui.saveJpgBtn.disabled = false; ui.saveSvgBtn.disabled = false;
+        ui.generateBtn.style.display = 'block'; ui.stopBtn.style.display = 'none';
+    }
+    
+    function calculateCellError(gx, gy, cellSize, pData) { let totalError = 0, count = 0; const startX = gx * cellSize, startY = gy * cellSize; for (let y = startY; y < startY + cellSize && y < pData.height; y++) { for (let x = startX; x < startX + cellSize && x < pData.width; x++) { const idx = getPixelIndex(x, y, pData.width); const originalLum = pData.luminosity[idx]; const currentLum = luminosityBuffer.getLuminosity(x, y); if (currentLum > originalLum) totalError += currentLum - originalLum; count++; } } return count > 0 ? totalError / count : 0; };
+    function generateScribbleCurve(startPoint, pData) { const { luminosity, angles, width, height } = pData; const rejectionTolerance = parseFloat(ui.precisionSlider.value); let x = Math.round(startPoint.x), y = Math.round(startPoint.y); if (x < 1 || x >= width - 1 || y < 1 || y >= height - 1) return false; const originalLum = luminosity[getPixelIndex(x, y, width)]; if (originalLum > 250) return false; if (luminosityBuffer.getLuminosity(x, y) <= originalLum + rejectionTolerance) return false; let direction = angles[getPixelIndex(x, y, width)] + Math.PI / 2 + random(-0.2, 0.2); const strokeLength = random(10, parseFloat(ui.strokeMaxSlider.value)); const pathPoints = []; let lastX = x, lastY = y; bresenhamLine(lastX, lastY, x, y, (px, py) => pathPoints.push({x: px, y: py})); for (let j = 0; j < strokeLength; j++) { const ix = Math.round(x), iy = Math.round(y); const localOriginalLum = luminosity[getPixelIndex(ix, iy, width)]; if (localOriginalLum > 250 || luminosityBuffer.getLuminosity(ix, iy) <= localOriginalLum + rejectionTolerance) break; const noise = PerlinNoise.noise(x*0.02, y*0.02, j*0.01)-0.5; direction += noise * 2.5; const speed = 0.5 + (localOriginalLum / 255.0) * 1.5; x += Math.cos(direction) * speed; y += Math.sin(direction) * speed; const nextIX = Math.round(x), nextIY = Math.round(y); if (nextIX < 1 || nextIX >= width-1 || nextIY < 1 || nextIY >= height-1) break; bresenhamLine(lastX, lastY, nextIX, nextIY, (px, py) => pathPoints.push({x: px, y: py})); lastX = nextIX; lastY = nextIY; } if (pathPoints.length > 5) { const strokeOpacity = parseFloat(ui.opacitySlider.value); const strokeWidth = (0.2 + (1 - originalLum / 255) * 1.5).toFixed(1); const c = parseInt(ui.colorSlider.value); luminosityBuffer.updateLine(pathPoints, c, strokeOpacity); const path = new Path2D(); path.moveTo(pathPoints[0].x, pathPoints[0].y); for(let i=1; i<pathPoints.length; i++) path.lineTo(pathPoints[i].x, pathPoints[i].y); scribbleCtx.lineWidth = strokeWidth; scribbleCtx.strokeStyle = `rgba(${c},${c},${c},${strokeOpacity})`; scribbleCtx.lineCap = 'round'; scribbleCtx.lineJoin = 'round'; scribbleCtx.stroke(path); let lastSvgX = Math.round(pathPoints[0].x); let lastSvgY = Math.round(pathPoints[0].y); let svgD = `M${lastSvgX} ${lastSvgY}`; for(let i = 1; i < pathPoints.length; i++) { const currentSvgX = Math.round(pathPoints[i].x); const currentSvgY = Math.round(pathPoints[i].y); const dx = currentSvgX - lastSvgX; const dy = currentSvgY - lastSvgY; if(dx !== 0 || dy !== 0) { svgD += `l${dx} ${dy}`; lastSvgX = currentSvgX; lastSvgY = currentSvgY; } } const styleKey = `${strokeWidth}|${strokeOpacity}`; if (!svgStyleMap.has(styleKey)) { svgStyleMap.set(styleKey, []); } svgStyleMap.get(styleKey).push(svgD); return true; } return false; };
+    function bresenhamLine(x0, y0, x1, y1, callback) { x0 = Math.floor(x0); y0 = Math.floor(y0); x1 = Math.floor(x1); y1 = Math.floor(y1); const dx = Math.abs(x1 - x0), sx = x0 < x1 ? 1 : -1; const dy = -Math.abs(y1 - y0), sy = y0 < y1 ? 1 : -1; let err = dx + dy, e2; for (;;) { callback(x0, y0); if (x0 === x1 && y0 === y1) break; e2 = 2 * err; if (e2 >= dy) { err += dy; x0 += sx; } if (e2 <= dx) { err += dx; y0 += sy; } } }
+    </script>
+</body>
+</html>

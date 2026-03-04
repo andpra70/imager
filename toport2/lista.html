@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Indice Progetti Grafici</title>
+    <style>
+        /* Import di un font carino da Google Fonts */
+        @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600&display=swap');
+
+        /* Stili Generali */
+        body {
+            font-family: 'Poppins', sans-serif;
+            background-color: #f4f7f6;
+            color: #333;
+            margin: 0;
+            line-height: 1.6;
+        }
+
+        /* Header */
+        header {
+            background: linear-gradient(135deg, #007bff, #0056b3);
+            color: #ffffff;
+            padding: 2rem 1rem;
+            text-align: center;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        }
+
+        header h1 {
+            margin: 0;
+            font-size: 2.5rem;
+            font-weight: 600;
+        }
+
+        header p {
+            margin: 0.5rem 0 0;
+            font-size: 1.1rem;
+            font-weight: 300;
+        }
+
+        /* Contenuto Principale */
+        main {
+            padding: 2rem;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        /* Griglia per i link */
+        .link-container {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 1.5rem;
+        }
+
+        /* Stile delle "Card" per ogni link */
+        .link-card {
+            background-color: #ffffff;
+            border-radius: 10px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+            overflow: hidden;
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+            display: flex; /* Aggiunto per far estendere il link a tutta la card */
+        }
+        
+        .link-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.12);
+        }
+
+        .link-card a {
+            text-decoration: none;
+            color: inherit;
+            display: flex; /* Modificato */
+            flex-direction: column; /* Modificato */
+            padding: 1.5rem;
+            width: 100%; /* Aggiunto per far estendere il link a tutta la card */
+        }
+        
+        .link-card h3 {
+            margin-top: 0;
+            margin-bottom: 0.5rem;
+            color: #0056b3;
+            font-size: 1.2rem;
+        }
+
+        .link-card .description {
+            font-size: 0.9rem;
+            color: #666;
+            min-height: 45px; /* Assicura un'altezza minima per l'allineamento */
+            margin-bottom: 1rem;
+            flex-grow: 1; /* Fa in modo che la descrizione occupi lo spazio disponibile */
+        }
+        
+        .link-card .filename {
+            font-family: 'Courier New', Courier, monospace;
+            background-color: #e9ecef;
+            padding: 0.2em 0.5em;
+            border-radius: 4px;
+            font-size: 0.8rem;
+            color: #d63384; /* Un colore che risalta per il codice */
+            word-break: break-all; /* Va a capo se il nome file è lungo */
+        }
+
+        /* Footer */
+        footer {
+            text-align: center;
+            padding: 1.5rem;
+            margin-top: 2rem;
+            background-color: #343a40;
+            color: #f8f9fa;
+            font-size: 0.9rem;
+        }
+
+    </style>
+</head>
+<body>
+
+    <header>
+        <h1>Indice dei Progetti Grafici</h1>
+        <p>Esplora i diversi esperimenti e strumenti di elaborazione grafica</p>
+    </header>
+
+    <main>
+        <div class="link-container">
+            <!-- Le card verranno inserite qui dinamicamente da JavaScript -->
+        </div>
+    </main>
+
+    <footer>
+        <p>© 2024 - Indice dei Progetti. Realizzato con HTML, CSS e JavaScript.</p>
+    </footer>
+
+    <script>
+        // Array con tutti i nomi dei file dei progetti.
+        // Per aggiungere un nuovo progetto, basta aggiungere il nome del file qui.
+        const fileNames = [
+            'ai landmark facciale.html', 'linefy 01.html',
+            'ai landmark occhi corpo viso posa.html', 'linefy 1.html',
+            'ai rilevamento posa persona.html', 'linefy 2.html',
+            'ai rimozione sfondo 2.html', 'linefy colore 1.html',
+            'ai rimozione sfondo.html', 'lista.html',
+            'bic.html', 'matita 2.html',
+            'boldini 1.html', 'matita.html',
+            'boldini a svg.html', 'modulazione.html',
+            'boldini svg 1.html', 'mosaico 1.html',
+            'bordo e controlli.html', 'mosaico adattativo 2.html',
+            'campo di densita.html', 'mosaico adattativo con finitura 1.html',
+            'carboncino 1.html', 'mosaico a svg quad.html',
+            'colora su foto.html', 'mosaico svg adattativo 2.html',
+            'copia a matita umano.html', 'mosaico svg ottimizzato 1.html',
+            'cranklet 2.html', 'mosaico timbro 1.html',
+            'cranklet 3.html', 'painter 1.html',
+            'cranklet 4.html', 'painter 2.html',
+            'cranklet.html', 'painter 5.html',
+            'crosshatch 2.html', 'painter 6.html',
+            'crosshatch bn.html', 'painter ottimizzato best.html',
+            'crosshatch bn tremolio.html', 'punta secca acquaforte.html',
+            'crosshatch cymk 3.html', 'pwm 2.html',
+            'crosshatch cymk final.html', 'pwm bn.html',
+            'crosshatch cymk.html', 'quadtree 1.html',
+            'crosshatch cymk tremolio ghirigoro penna.html', 'quadtree to svg.html',
+            'crosshatcher cymk 4.html', 'README.md',
+            'crosshatcher to jpg e svg.html', 'sargent (con Palette Personalizzata).html',
+            'crosshatcher to svg 1.html', 'scribbler v0.html',
+            'crosshatch.html', 'scribbler v1.html',
+            'crosshatching cymk ghirigoro.html', 'scribbler v4.html',
+            'crosshatching cymk tremolio e ghirigoro.html', 'single line painter JPG.html',
+            'crosshatch wobbled.html', 'single line painter SVG 1.html',
+            'floyd cymk 2.html', 'single line painter SVG 2 optimized.html',
+            'floyd cymk.html', 'svg painter optimized 2.html',
+            'floyd.html', 'svg painter optimized.html',
+            'floyd stippling.html', 'svg simplify 0.html',
+            'hmac.html', 'svg to gcode ok.html',
+            'image to svg 1.html', 'svg to pdf jpg png.html',
+            'immagine da quadrati.html', 'svg to rough OK.html'
+        ];
+
+        // Ordiniamo l'array alfabeticamente per una visualizzazione coerente
+        fileNames.sort();
+        
+        // Funzione per generare un titolo leggibile e una descrizione dal nome del file
+        function generateTitleAndDescription(fileName) {
+            // Rimuove l'estensione (.html, .md, ecc.)
+            let baseName = fileName.split('.').slice(0, -1).join('.');
+            if (fileName.toLowerCase() === 'readme.md') {
+                return { 
+                    title: 'Documentazione (README)', 
+                    description: 'File di testo con la documentazione e le note sul progetto.' 
+                };
+            }
+            if (fileName.toLowerCase() === 'index.html') {
+                return { 
+                    title: 'Index', 
+                    description: 'Pagina principale o indice del progetto.' 
+                };
+            }
+
+            // Sostituisce trattini e underscore con spazi
+            let title = baseName.replace(/[-_]/g, ' ');
+
+            // Applica alcune sostituzioni comuni per migliorare la leggibilità
+            title = title.replace(/\b(bn)\b/gi, 'B/N')
+                         .replace(/\b(cymk)\b/gi, 'CMYK')
+                         .replace(/\b(svg)\b/gi, 'SVG')
+                         .replace(/\b(ok)\b/gi, '');
+
+            // Rende maiuscola la prima lettera di ogni parola
+            title = title.replace(/\b\w/g, char => char.toUpperCase());
+            
+            // Descrizione generica (può essere espansa con logica più complessa se necessario)
+            const description = "Esplora questo esperimento o strumento grafico.";
+
+            return { title, description };
+        }
+
+        // Selezioniamo il container dove inserire le card
+        const linkContainer = document.querySelector('.link-container');
+
+        // Cicliamo sull'array e generiamo l'HTML per ogni file
+        fileNames.forEach(file => {
+            const { title, description } = generateTitleAndDescription(file);
+
+            // Creiamo l'HTML della card usando un template literal
+            const cardHTML = `
+                <div class="link-card">
+                    <a href="${file}" ${file.endsWith('.md') ? 'target="_blank"' : ''}>
+                        <h3>${title}</h3>
+                        <p class="description">${description}</p>
+                        <span class="filename">${file}</span>
+                    </a>
+                </div>
+            `;
+
+            // Inseriamo l'HTML generato nel container
+            linkContainer.innerHTML += cardHTML;
+        });
+
+    </script>
+</body>
+</html>

@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SVG Single-Line Painters (Optimized for Plotting)</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif; background-color: #f0f2f5; color: #333; margin: 0; padding: 20px; display: flex; flex-direction: column; align-items: center; }
+        h1, p { text-align: center; }
+        h1 { color: #1e3a8a; }
+        p { max-width: 800px; }
+        .container { display: flex; flex-wrap: wrap; gap: 20px; width: 100%; max-width: 1600px; }
+        .panel { background-color: white; padding: 20px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1); }
+        #controls-panel { flex: 1; min-width: 320px; }
+        #canvas-container { flex: 3; display: flex; gap: 20px; flex-wrap: wrap; justify-content: center; }
+        .canvas-wrapper { flex: 1; min-width: 400px; text-align: center; }
+        canvas, #svg-preview { border: 1px solid #ccc; background-color: #fff; max-width: 100%; height: auto; border-radius: 4px; }
+        #svg-preview svg { display: block; width: 100%; height: auto; }
+        .control-group { margin-bottom: 15px; }
+        label { display: block; margin-bottom: 5px; font-weight: bold; }
+        input[type="file"], input[type="number"], input[type="range"], input[type="color"] { width: 100%; padding: 8px; box-sizing: border-box; border-radius: 4px; border: 1px solid #ccc; }
+        .slider-label { display: flex; justify-content: space-between; }
+        button { width: 100%; padding: 12px; background-color: #2563eb; color: white; border: none; border-radius: 8px; font-size: 16px; cursor: pointer; transition: background-color 0.3s; }
+        button:hover:not(:disabled) { background-color: #1d4ed8; }
+        button:disabled { background-color: #9ca3af; cursor: not-allowed; }
+        #progress-container { width: 100%; background-color: #e5e7eb; border-radius: 8px; margin-top: 15px; overflow: hidden; display: none; }
+        #progress-bar { width: 0%; height: 24px; background-color: #34d399; text-align: center; line-height: 24px; color: white; transition: width 0.2s; font-size: 12px; }
+        .info-display { background-color: #eef2ff; border-left: 4px solid #4f46e5; padding: 10px; margin-top: 15px; border-radius: 4px; }
+    </style>
+</head>
+<body>
+    <h1>SVG Single-Line Painters (Optimized for Plotting)</h1>
+    <p>L'algoritmo genera un file SVG ottimizzato per plotter e macchine da taglio. I percorsi sono semplificati per ridurre i punti e ordinati per minimizzare i movimenti "a vuoto" della penna.</p>
+
+    <div class="container">
+        <div id="controls-panel" class="panel">
+            <h2>Parametri</h2>
+            <div class="control-group"><label for="imageLoader">1. Carica Immagine</label><input type="file" id="imageLoader" accept="image/*"></div>
+            <div class="control-group"><div class="slider-label"><label for="iterationsSlider">Numero Livelli (Passate)</label><span id="iterationsValue">8</span></div><input type="range" id="iterationsSlider" min="1" max="20" value="8"></div>
+            <div class="control-group"><div class="slider-label"><label for="simplificationSlider">Semplificazione (0 = max dettaglio)</label><span id="simplificationValue">1.2</span></div><input type="range" id="simplificationSlider" min="0" max="5" value="1.2" step="0.1"></div>
+            <div class="control-group"><label for="lineWidthInput">Spessore Linea (px)</label><input type="number" id="lineWidthInput" value="1" min="0.1" max="20" step="0.1"></div>
+            <div class="control-group"><label for="lineColorPicker">Colore Linea</label><input type="color" id="lineColorPicker" value="#000000"></div>
+            
+            <button id="startButton" disabled>Genera SVG</button>
+            
+            <div id="progress-container"><div id="progress-bar">0%</div></div>
+            <div class="info-display"><strong>Path Totali:</strong> <span id="pathCount">0</span></div>
+            <br>
+            <button id="saveButton" disabled>Salva SVG</button>
+        </div>
+        <div id="canvas-container" class="panel">
+            <div class="canvas-wrapper"><h2>Originale</h2><canvas id="originalCanvas" width="400" height="300"></canvas></div>
+            <div class="canvas-wrapper"><h2>SVG Generato (Anteprima)</h2><div id="svg-preview"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300"></svg></div></div>
+        </div>
+    </div>
+
+<script>
+    // === DOM & State ===
+    const imageLoader = document.getElementById('imageLoader'), startButton = document.getElementById('startButton'), saveButton = document.getElementById('saveButton'), progressContainer = document.getElementById('progress-container'), progressBar = document.getElementById('progress-bar'), iterationsSlider = document.getElementById('iterationsSlider'), iterationsValue = document.getElementById('iterationsValue'), simplificationSlider = document.getElementById('simplificationSlider'), simplificationValue = document.getElementById('simplificationValue'), lineWidthInput = document.getElementById('lineWidthInput'), lineColorPicker = document.getElementById('lineColorPicker'), originalCanvas = document.getElementById('originalCanvas'), svgPreview = document.getElementById('svg-preview'), pathCountEl = document.getElementById('pathCount'), originalCtx = originalCanvas.getContext('2d');
+    let originalImageData = null;
+    let finalSVGContent = "";
+
+    // === Event Listeners ===
+    iterationsSlider.addEventListener('input', e => iterationsValue.textContent = e.target.value);
+    simplificationSlider.addEventListener('input', e => simplificationValue.textContent = e.target.value);
+    imageLoader.addEventListener('change', handleImageUpload);
+    startButton.addEventListener('click', runIterativeAlgorithm);
+    saveButton.addEventListener('click', saveSVG);
+
+    drawDefaultText(originalCtx, 400, 300);
+
+    // === Core Logic ===
+    async function runIterativeAlgorithm() {
+        if (!originalImageData) return;
+        setUIState(true);
+        const totalIterations = parseInt(iterationsSlider.value);
+        svgPreview.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${originalImageData.width} ${originalImageData.height}"></svg>`;
+        pathCountEl.textContent = '0';
+
+        const quantizedData = quantizeImage(originalImageData, totalIterations);
+        
+        let allPathsByLevel = [];
+        let totalPaths = 0;
+
+        for (let i = 1; i <= totalIterations; i++) {
+            const passPaths = await runSinglePass(i, totalIterations, quantizedData);
+            totalPaths += passPaths.length;
+            allPathsByLevel.push(passPaths);
+            pathCountEl.textContent = totalPaths;
+            generateAndDisplaySVG(allPathsByLevel, totalIterations); // Update preview after each level
+        }
+
+        setUIState(false);
+        console.log("SVG generation complete.");
+    }
+    
+    function quantizeImage(imageData, numLevels) {
+        const { width, height, data } = imageData;
+        const map = new Uint8Array(width * height);
+        for (let y = 0; y < height; y++) {
+            for (let x = 0; x < width; x++) {
+                const i = (y * width + x) * 4;
+                const luminosity = (data[i] + data[i+1] + data[i+2]) / 3;
+                const level = Math.round(numLevels * (1 - luminosity / 255));
+                map[y * width + x] = level;
+            }
+        }
+        return { map, width, height };
+    }
+
+    function runSinglePass(currentLevel, totalLevels, quantizedData) {
+        return new Promise(resolve => {
+            const { map, width, height } = quantizedData;
+            const passVisited = new BitSet(width * height);
+            let pathsForThisPass = [];
+            
+            let totalPixelsToVisit = 0;
+            for (let i = 0; i < map.length; i++) { if (map[i] >= currentLevel) totalPixelsToVisit++; }
+            if (totalPixelsToVisit === 0) { resolve([]); return; }
+
+            let pixelsVisitedInPass = 0;
+            let currentPath = [];
+            let { x, y } = findStartPixel(passVisited, quantizedData, currentLevel);
+            
+            const directions = [[1, 0], [0, 1], [-1, 0], [0, -1], [1, 1], [-1, 1], [1, -1], [-1,-1]]; // 8-way connectivity
+
+            function processChunk() {
+                const BATCH_SIZE = 2000;
+                for(let i = 0; i < BATCH_SIZE; ++i) {
+                    if (pixelsVisitedInPass >= totalPixelsToVisit || x === -1) break;
+
+                    currentPath.push({ x, y });
+                    passVisited.set(y * width + x);
+                    pixelsVisitedInPass++;
+
+                    let foundNext = false;
+                    for (const [dx, dy] of directions) {
+                        const nextX = x + dx, nextY = y + dy;
+                        const idx = nextY * width + nextX;
+                        if (isPosizioneValida(nextX, nextY, width, height) && !passVisited.get(idx) && map[idx] >= currentLevel) {
+                            x = nextX; y = nextY;
+                            foundNext = true;
+                            break;
+                        }
+                    }
+
+                    if (!foundNext) {
+                        if (currentPath.length > 0) pathsForThisPass.push(currentPath);
+                        currentPath = [];
+                        
+                        const nextPoint = findNearestUnvisited(x, y, passVisited, quantizedData, currentLevel);
+                        x = nextPoint.x; y = nextPoint.y;
+                    }
+                }
+                
+                updateProgress(pixelsVisitedInPass, totalPixelsToVisit, currentLevel, totalLevels);
+
+                if (pixelsVisitedInPass < totalPixelsToVisit && x !== -1) {
+                    setTimeout(processChunk, 0);
+                } else {
+                    if (currentPath.length > 0) pathsForThisPass.push(currentPath);
+                    resolve(pathsForThisPass);
+                }
+            }
+            processChunk();
+        });
+    }
+
+    function generateAndDisplaySVG(allPathsByLevel, totalLevels) {
+        const width = originalImageData.width;
+        const height = originalImageData.height;
+        const simplificationEpsilon = parseFloat(simplificationSlider.value);
+        const strokeWidth = parseFloat(lineWidthInput.value);
+        const strokeColor = lineColorPicker.value;
+
+        let svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" style="background-color:white;">\n`;
+        
+        allPathsByLevel.forEach((passPaths, index) => {
+            const level = index + 1;
+            const opacity = 1.0 / totalLevels;
+            
+            if (passPaths.length > 0) {
+                svg += `  <g stroke="${strokeColor}" stroke-width="${strokeWidth}" stroke-opacity="${opacity.toFixed(3)}" fill="none" stroke-linecap="round" stroke-linejoin="round">\n`;
+                passPaths.forEach(path => {
+                    const simplified = (simplificationEpsilon > 0) ? rdp(path, simplificationEpsilon) : path;
+                    if (simplified.length < 2) return;
+                    
+                    let d = `    <path d="M ${simplified[0].x} ${simplified[0].y}`;
+                    for (let i = 1; i < simplified.length; i++) {
+                        d += ` L ${simplified[i].x} ${simplified[i].y}`;
+                    }
+                    d += '"/>\n';
+                    svg += d;
+                });
+                svg += `  </g>\n`;
+            }
+        });
+        
+        svg += `</svg>`;
+        finalSVGContent = svg;
+        svgPreview.innerHTML = finalSVGContent;
+    }
+
+    // === Ramer-Douglas-Peucker Algorithm for Path Simplification ===
+    function rdp(points, epsilon) {
+        if (points.length < 3) return points;
+        let dmax = 0;
+        let index = 0;
+        const end = points.length - 1;
+        for (let i = 1; i < end; i++) {
+            const d = perpendicularDistance(points[i], points[0], points[end]);
+            if (d > dmax) { index = i; dmax = d; }
+        }
+        if (dmax > epsilon) {
+            const recResults1 = rdp(points.slice(0, index + 1), epsilon);
+            const recResults2 = rdp(points.slice(index, end + 1), epsilon);
+            return recResults1.slice(0, recResults1.length - 1).concat(recResults2);
+        } else {
+            return [points[0], points[end]];
+        }
+    }
+    function perpendicularDistance(p, p1, p2) {
+        const dx = p2.x - p1.x;
+        const dy = p2.y - p1.y;
+        if (dx === 0 && dy === 0) return Math.sqrt(Math.pow(p.x - p1.x, 2) + Math.pow(p.y - p1.y, 2));
+        const num = Math.abs(dy * p.x - dx * p.y + p2.x * p1.y - p2.y * p1.x);
+        const den = Math.sqrt(dx * dx + dy * dy);
+        return num / den;
+    }
+    
+    // === Helper & UI Functions ===
+    function handleImageUpload(e) {
+        const file = e.target.files[0]; if (!file) return;
+        const reader = new FileReader();
+        reader.onload = event => {
+            const img = new Image();
+            img.onload = () => {
+                const MAX_WIDTH = 500;
+                const scale = Math.min(1, MAX_WIDTH / img.width);
+                const width = Math.round(img.width * scale), height = Math.round(img.height * scale);
+                originalCanvas.width = width; originalCanvas.height = height;
+                originalCtx.drawImage(img, 0, 0, width, height);
+                originalImageData = originalCtx.getImageData(0, 0, width, height);
+                svgPreview.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}"></svg>`;
+                startButton.disabled = false;
+                saveButton.disabled = true;
+            };
+            img.src = event.target.result;
+        };
+        reader.readAsDataURL(file);
+    }
+
+    function saveSVG() {
+        const blob = new Blob([finalSVGContent], { type: 'image/svg+xml' });
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = 'plotter-optimized-drawing.svg';
+        link.click();
+        URL.revokeObjectURL(link.href);
+    }
+    
+    function isPosizioneValida(x, y, width, height) { return x >= 0 && x < width && y >= 0 && y < height; }
+
+    function findStartPixel(passVisited, { map, width }, currentLevel) {
+        for (let i = 0; i < map.length; i++) {
+            if (map[i] >= currentLevel && !passVisited.get(i)) return { x: i % width, y: Math.floor(i / width) };
+        }
+        return { x: -1, y: -1 };
+    }
+    
+    function findNearestUnvisited(startX, startY, passVisited, { map, width, height }, currentLevel) {
+        let bestX = -1, bestY = -1, minSqDist = Infinity;
+        for (let y = 0; y < height; y++) {
+            for (let x = 0; x < width; x++) {
+                const idx = y * width + x;
+                if (map[idx] >= currentLevel && !passVisited.get(idx)) {
+                    const dx = x - startX, dy = y - startY, sqDist = dx * dx + dy * dy;
+                    if (sqDist < minSqDist) { minSqDist = sqDist; bestX = x; bestY = y; }
+                }
+            }
+        }
+        return { x: bestX, y: bestY };
+    }
+    
+    class BitSet {
+        constructor(size) { this.data = new Uint8Array(Math.ceil(size / 8)); }
+        set(i) { this.data[i >> 3] |= (1 << (i & 7)); }
+        get(i) { return (this.data[i >> 3] & (1 << (i & 7))) !== 0; }
+    }
+
+    function setUIState(isRunning) {
+        [startButton, saveButton, imageLoader, iterationsSlider, lineWidthInput, lineColorPicker, simplificationSlider].forEach(el => el.disabled = isRunning);
+        startButton.textContent = isRunning ? 'In Esecuzione...' : 'Genera SVG';
+        progressContainer.style.display = isRunning ? 'block' : 'none';
+        if (!isRunning) saveButton.disabled = !finalSVGContent;
+    }
+
+    function updateProgress(current, total, iteration, totalIterations) {
+        const iterProgress = total > 0 ? (current / total) : 1;
+        const totalProgress = ((iteration - 1) + iterProgress) / totalIterations;
+        progressBar.style.width = `${Math.round(totalProgress * 100)}%`;
+        progressBar.textContent = `Livello ${iteration}/${totalIterations} - ${Math.round(iterProgress * 100)}%`;
+    }
+
+    function drawDefaultText(ctx, width, height) {
+        ctx.fillStyle = "#f0f2f5"; ctx.fillRect(0, 0, width, height); ctx.fillStyle = "#666"; ctx.font = "16px sans-serif"; ctx.textAlign = "center"; ctx.fillText("Carica un'immagine per iniziare", width / 2, height / 2);
+    }
+</script>
+</body>
+</html>

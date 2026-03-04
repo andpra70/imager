@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<!-- saved from url=(0046)file:///home/andrea/Downloads/code%20(44).html -->
+<html lang="it"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+    
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Generatore Stile Sargent (con Palette Personalizzata)</title>
+    <style>
+        /* CSS Invariato, con aggiunta per il controllo slider */
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: #f0f0f0; color: #333; display: flex; flex-direction: column; align-items: center; margin: 0; padding: 20px; }
+        h1 { color: #1a1a1a; }
+        .controls { background-color: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); margin-bottom: 20px; display: flex; flex-wrap: wrap; gap: 15px; align-items: center; justify-content: center; }
+        .control-group { display: flex; flex-direction: column; align-items: center; gap: 5px; }
+        label { font-size: 0.8em; color: #555; }
+        button, input[type="file"] { padding: 10px 15px; border-radius: 5px; border: 1px solid #ddd; cursor: pointer; background-color: #e9e9e9; transition: background-color 0.2s; }
+        button:hover, input[type="file"]:hover { background-color: #dcdcdc; }
+        button:disabled { background-color: #ccc; cursor: not-allowed; }
+        #generateBtn { background-color: #007BFF; color: white; border: none; }
+        #generateBtn:hover { background-color: #0069D9; }
+        #generateBtn:disabled { background-color: #b3d7ff; }
+        #saveBtn { background-color: #28a745; color: white; border: none; }
+        #saveBtn:hover { background-color: #218838; }
+        #saveBtn:disabled { background-color: #a3d9b1; }
+        .progress-container { width: 100%; max-width: 512px; background-color: #ddd; border-radius: 5px; margin-top: 10px; display: none; }
+        .progress-bar { width: 0%; height: 20px; background-color: #007BFF; border-radius: 5px; text-align: center; line-height: 20px; color: white; transition: width 0.3s ease-in-out; }
+        .canvas-container { display: flex; gap: 20px; flex-wrap: wrap; justify-content: center; }
+        .canvas-wrapper { background-color: #fff; padding: 10px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); text-align: center; }
+        canvas { display: block; border: 1px solid #ccc; }
+        h2 { font-size: 1em; margin-top: 0; color: #555; }
+    </style>
+</head>
+<body>
+
+    <h1>Generatore Stile Sargent (con Palette Personalizzata)</h1>
+
+    <div class="controls">
+        <input type="file" id="imageLoader" name="imageLoader" accept="image/*">
+        
+        <!-- NUOVO: Controllo per la palette -->
+        <div class="control-group">
+            <label for="paletteLevels">Livelli Palette: <span id="paletteLevelsValue">16</span></label>
+            <input type="range" id="paletteLevels" min="4" max="128" value="32" step="4">
+        </div>
+
+        <button id="generateBtn">Genera Stile Sargent</button>
+        <button id="saveBtn">Salva Immagine</button>
+    </div>
+    
+    <div id="progressContainer" class="progress-container" style="display: none;">
+        <div id="progressBar" class="progress-bar" style="width: 100%;">Completato!</div>
+    </div>
+
+    <div class="canvas-container">
+        <div class="canvas-wrapper">
+            <h2>Originale</h2>
+            <canvas id="sourceCanvas" width="512" height="512"></canvas>
+        </div>
+        <div class="canvas-wrapper">
+            <h2>Stile Sargent</h2>
+            <canvas id="outputCanvas" width="512" height="512"></canvas>
+        </div>
+    </div>
+
+<script>
+'use strict';
+
+// --- ELEMENTI DOM ---
+const imageLoader = document.getElementById('imageLoader');
+const generateBtn = document.getElementById('generateBtn');
+const saveBtn = document.getElementById('saveBtn');
+const sourceCanvas = document.getElementById('sourceCanvas');
+const outputCanvas = document.getElementById('outputCanvas');
+const sourceCtx = sourceCanvas.getContext('2d');
+const outputCtx = outputCanvas.getContext('2d', { willReadFrequently: true });
+const progressContainer = document.getElementById('progressContainer');
+const progressBar = document.getElementById('progressBar');
+// NUOVO: Riferimenti per lo slider della palette
+const paletteLevelsSlider = document.getElementById('paletteLevels');
+const paletteLevelsValue = document.getElementById('paletteLevelsValue');
+
+const CANVAS_WIDTH = 512;
+const CANVAS_HEIGHT = 512;
+let sourceImage = null;
+
+// --- GESTIONE EVENTI ---
+// Evento per aggiornare il valore visualizzato dello slider
+paletteLevelsSlider.addEventListener('input', () => {
+    paletteLevelsValue.textContent = paletteLevelsSlider.value;
+});
+
+imageLoader.addEventListener('change', e => { /* ... codice invariato ... */ const reader = new FileReader(); reader.onload = event => { sourceImage = new Image(); sourceImage.onload = () => { const hRatio = CANVAS_WIDTH / sourceImage.width; const vRatio = CANVAS_HEIGHT / sourceImage.height; const ratio = Math.min(hRatio, vRatio); const centerShift_x = (CANVAS_WIDTH - sourceImage.width * ratio) / 2; const centerShift_y = (CANVAS_HEIGHT - sourceImage.height * ratio) / 2; sourceCtx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT); sourceCtx.drawImage(sourceImage, 0, 0, sourceImage.width, sourceImage.height, centerShift_x, centerShift_y, sourceImage.width * ratio, sourceImage.height * ratio); generateBtn.disabled = false; saveBtn.disabled = true; }; sourceImage.src = event.target.result; }; reader.readAsDataURL(e.target.files[0]); });
+generateBtn.addEventListener('click', () => { if (sourceImage) generatePainting(); });
+saveBtn.addEventListener('click', () => { const link = document.createElement('a'); link.download = 'sargent-style-artwork.png'; link.href = outputCanvas.toDataURL('image/png').replace('image/png', 'image/octet-stream'); link.click(); });
+
+
+// --- FUNZIONE PRINCIPALE DI GENERAZIONE ---
+async function generatePainting() {
+    generateBtn.disabled = true;
+    saveBtn.disabled = true;
+    progressContainer.style.display = 'block';
+    updateProgress(0, "Inizio...");
+
+    const originalColorData = sourceCtx.getImageData(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+    // FASE 1: ANALISI AVANZATA E CREAZIONE PALETTE
+    updateProgress(2, "Fase 1: Analisi immagine...");
+    await sleep(20);
+    const grayImageData = toGrayscale(originalColorData);
+    const gradientMap = sobelOperator(grayImageData);
+    const highPassMap = createHighPassMap(grayImageData, 2);
+    const blurredColorData = gaussianBlur(originalColorData, 8);
+    
+    // NUOVO: Generazione della palette di colori limitata
+    const numLevels = parseInt(paletteLevelsSlider.value, 10);
+    updateProgress(10, `Creazione palette (${numLevels} colori)...`);
+    await sleep(20);
+    const colorPalette = await generatePalette(originalColorData, numLevels, (p) => updateProgress(10 + p * 20));
+    
+    updateProgress(30, "Analisi completata.");
+    await sleep(20);
+
+    // Usa il colore medio dalla *palette* per lo sfondo
+    const avgPaletteColor = getAverageColorFromPalette(colorPalette);
+    outputCtx.fillStyle = `rgb(${avgPaletteColor.r}, ${avgPaletteColor.g}, ${avgPaletteColor.b})`;
+    outputCtx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    // FASE 2: BLOCKING-IN
+    updateProgress(30, "Fase 2: Blocking-in...");
+    await renderLayer({
+        ctx: outputCtx, numStrokes: 1000, minSize: 30, maxSize: 60,
+        colorSource: blurredColorData, palette: colorPalette, // Passa la palette
+        gradientMap: gradientMap, opacity: 0.7, colorJitter: 25,
+        onProgress: (p) => updateProgress(30 + p * 15)
+    });
+
+    // FASE 3: COSTRUZIONE FORMA
+    updateProgress(45, "Fase 3: Costruzione forma...");
+    await renderLayer({
+        ctx: outputCtx, numStrokes: 4000, minSize: 10, maxSize: 25,
+        colorSource: originalColorData, palette: colorPalette, // Passa la palette
+        gradientMap: gradientMap, guidanceMap: gradientMap.magnitudes,
+        opacity: 0.75, colorJitter: 20,
+        onProgress: (p) => updateProgress(45 + p * 30)
+    });
+    
+    // FASE 4: DETTAGLI FINI
+    updateProgress(75, "Fase 4: Dettagli fini...");
+    await renderLayer({
+        ctx: outputCtx, numStrokes: 10000, minSize: 2, maxSize: 8,
+        colorSource: originalColorData, palette: colorPalette, // Passa la palette
+        gradientMap: gradientMap, guidanceMap: highPassMap,
+        opacity: 0.85, colorJitter: 10,
+        onProgress: (p) => updateProgress(75 + p * 20)
+    });
+
+    // FASE 5: LUCI SPECULARI
+    updateProgress(95, "Fase 5: Luci speculari...");
+    await renderLayer({
+        ctx: outputCtx, numStrokes: 400, minSize: 2, maxSize: 5,
+        colorSource: originalColorData, palette: colorPalette, // Passa la palette
+        gradientMap: gradientMap, guidanceMap: highPassMap,
+        opacity: 0.9, colorJitter: 5,
+        brightnessBoost: 50,
+        onProgress: (p) => updateProgress(95 + p * 5)
+    });
+
+    updateProgress(100, "Completato!");
+    generateBtn.disabled = false;
+    saveBtn.disabled = false;
+    
+    setTimeout(() => { progressContainer.style.display = 'none'; }, 1000);
+}
+
+// MODIFICA: La funzione di rendering ora accetta una `palette`
+async function renderLayer(options) {
+    const { ctx, numStrokes, minSize, maxSize, colorSource, palette, gradientMap, opacity, guidanceMap = null, colorJitter = 0, brightnessBoost = 0, onProgress } = options;
+    const w = ctx.canvas.width;
+    const h = ctx.canvas.height;
+    const data = colorSource.data;
+
+    for (let i = 0; i < numStrokes; i++) {
+        let x, y;
+        if (guidanceMap) {
+            do { x = Math.floor(Math.random() * w); y = Math.floor(Math.random() * h); } while (Math.random() > guidanceMap[y * w + x]);
+        } else {
+            x = Math.floor(Math.random() * w); y = Math.floor(Math.random() * h);
+        }
+
+        const index = (y * w + x) * 4;
+        let originalColor = { r: data[index], g: data[index + 1], b: data[index + 2] };
+        
+        if (colorJitter > 0) {
+            originalColor.r += (Math.random() - 0.5) * colorJitter;
+            originalColor.g += (Math.random() - 0.5) * colorJitter;
+            originalColor.b += (Math.random() - 0.5) * colorJitter;
+        }
+        
+        // Mappa il colore originale al colore più vicino nella palette
+        let finalColor = findClosestPaletteColor(originalColor, palette);
+        
+        if (brightnessBoost > 0) {
+            finalColor.r += brightnessBoost;
+            finalColor.g += brightnessBoost;
+            finalColor.b += brightnessBoost;
+        }
+        
+        const r = Math.max(0, Math.min(255, finalColor.r));
+        const g = Math.max(0, Math.min(255, finalColor.g));
+        const b = Math.max(0, Math.min(255, finalColor.b));
+        
+        const color = `rgb(${Math.round(r)},${Math.round(g)},${Math.round(b)})`;
+        const size = Math.random() * (maxSize - minSize) + minSize;
+        const angle = gradientMap.directions[y * w + x];
+        
+        ctx.save();
+        ctx.globalAlpha = opacity * (Math.random() * 0.3 + 0.7);
+        drawPainterlyStroke(ctx, x, y, size, angle, color);
+        ctx.restore();
+        
+        if (i % 100 === 0) { onProgress(i / numStrokes); await sleep(0); }
+    }
+    onProgress(1);
+}
+
+// --- NUOVE FUNZIONI PER LA GESTIONE DELLA PALETTE ---
+
+/**
+ * Genera una palette di `numLevels` colori da un'immagine usando l'algoritmo k-means.
+ */
+async function generatePalette(imageData, numLevels, onProgress) {
+    const pixels = [];
+    const data = imageData.data;
+    // Campiona i pixel per accelerare il processo (es. 1 pixel ogni 4)
+    for (let i = 0; i < data.length; i += 16) {
+        if (data[i + 3] > 128) { // Ignora i pixel trasparenti
+            pixels.push({ r: data[i], g: data[i+1], b: data[i+2] });
+        }
+    }
+
+    // 1. Inizializzazione: scegli `numLevels` centroidi casuali dai pixel
+    let centroids = pixels.slice(0, numLevels).map(p => ({...p}));
+
+    const maxIterations = 10;
+    for (let i = 0; i < maxIterations; i++) {
+        // 2. Assegnazione: crea i cluster
+        const clusters = Array.from({ length: numLevels }, () => []);
+        for (const pixel of pixels) {
+            const closestCentroidIndex = findClosestPaletteColorIndex(pixel, centroids);
+            clusters[closestCentroidIndex].push(pixel);
+        }
+
+        // 3. Aggiornamento: ricalcola i centroidi
+        let hasConverged = true;
+        for (let j = 0; j < numLevels; j++) {
+            if (clusters[j].length > 0) {
+                const newCentroid = clusters[j].reduce((acc, p) => {
+                    acc.r += p.r; acc.g += p.g; acc.b += p.b;
+                    return acc;
+                }, { r: 0, g: 0, b: 0 });
+
+                newCentroid.r = Math.round(newCentroid.r / clusters[j].length);
+                newCentroid.g = Math.round(newCentroid.g / clusters[j].length);
+                newCentroid.b = Math.round(newCentroid.b / clusters[j].length);
+                
+                if(centroids[j].r !== newCentroid.r || centroids[j].g !== newCentroid.g || centroids[j].b !== newCentroid.b) {
+                    hasConverged = false;
+                }
+                centroids[j] = newCentroid;
+            }
+        }
+
+        if (onProgress) {
+            onProgress((i + 1) / maxIterations);
+            await sleep(0);
+        }
+
+        if(hasConverged) break;
+    }
+
+    return centroids;
+}
+
+// Funzione helper per trovare l'indice del colore più vicino
+function findClosestPaletteColorIndex(color, palette) {
+    let minDistance = Infinity;
+    let closestIndex = 0;
+    for (let i = 0; i < palette.length; i++) {
+        const d = colorDistance(color, palette[i]);
+        if (d < minDistance) {
+            minDistance = d;
+            closestIndex = i;
+        }
+    }
+    return closestIndex;
+}
+
+// Trova l'oggetto colore più vicino
+function findClosestPaletteColor(color, palette) {
+    return palette[findClosestPaletteColorIndex(color, palette)];
+}
+
+// Calcola la distanza (quadratica) tra due colori
+function colorDistance(c1, c2) {
+    const dr = c1.r - c2.r;
+    const dg = c1.g - c2.g;
+    const db = c1.b - c2.b;
+    return dr * dr + dg * dg + db * db;
+}
+
+function getAverageColorFromPalette(palette) {
+    if (palette.length === 0) return { r: 128, g: 128, b: 128 };
+    const total = palette.reduce((acc, c) => {
+        acc.r += c.r; acc.g += c.g; acc.b += c.b;
+        return acc;
+    }, { r: 0, g: 0, b: 0 });
+    return {
+        r: Math.round(total.r / palette.length),
+        g: Math.round(total.g / palette.length),
+        b: Math.round(total.b / palette.length)
+    };
+}
+
+
+// --- Funzioni Invariate ---
+function drawPainterlyStroke(ctx, x, y, size, angle, color) { const width = size; const height = size / (Math.random() * 2 + 2); const jitter = width * 0.1; ctx.translate(x, y); ctx.rotate(angle); ctx.fillStyle = color; ctx.beginPath(); const r = () => (Math.random() - 0.5) * jitter; ctx.moveTo(-width / 2 + r(), -height / 2 + r()); ctx.lineTo(width / 2 + r(), -height / 2 + r()); ctx.lineTo(width / 2 + r(), height / 2 + r()); ctx.lineTo(-width / 2 + r(), height / 2 + r()); ctx.closePath(); ctx.fill(); }
+function createHighPassMap(imageData, radius) { const w = imageData.width, h = imageData.height; const originalData = imageData.data; const blurredImageData = gaussianBlur(imageData, radius); const blurredData = blurredImageData.data; const highPassMap = new Float32Array(w * h); let maxVal = 0; for (let i = 0; i < originalData.length; i += 4) { const originalVal = originalData[i]; const blurredVal = blurredData[i]; const diff = Math.abs(originalVal - blurredVal); const mapIndex = i / 4; highPassMap[mapIndex] = diff; if (diff > maxVal) maxVal = diff; } if (maxVal > 0) { for (let i = 0; i < highPassMap.length; i++) { highPassMap[i] = Math.pow(highPassMap[i] / maxVal, 0.7); } } return highPassMap; }
+function toGrayscale(imageData) { const data = imageData.data; const grayData = new Uint8ClampedArray(data.length); for (let i = 0; i < data.length; i += 4) { const luminosity = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2]; grayData[i] = grayData[i + 1] = grayData[i + 2] = luminosity; grayData[i + 3] = data[i + 3]; } return new ImageData(grayData, imageData.width, imageData.height); }
+function sobelOperator(imageData) { const w = imageData.width, h = imageData.height, data = imageData.data; const magnitudes = new Float32Array(w * h), directions = new Float32Array(w * h); const Gx = [-1, 0, 1, -2, 0, 2, -1, 0, 1], Gy = [-1, -2, -1, 0, 0, 0, 1, 2, 1]; for (let y = 1; y < h - 1; y++) { for (let x = 1; x < w - 1; x++) { let sumX = 0, sumY = 0; for (let ky = -1; ky <= 1; ky++) { for (let kx = -1; kx <= 1; kx++) { const idx = ((y + ky) * w + (x + kx)) * 4, val = data[idx], kernelIdx = (ky + 1) * 3 + (kx + 1); sumX += val * Gx[kernelIdx]; sumY += val * Gy[kernelIdx]; } } const magnitude = Math.sqrt(sumX * sumX + sumY * sumY); magnitudes[y * w + x] = Math.min(1, magnitude / 1140); directions[y * w + x] = Math.atan2(sumY, sumX); } } return { magnitudes, directions }; }
+function gaussianBlur(imageData, radius) { const w = imageData.width, h = imageData.height, src = imageData.data; const dst = new Uint8ClampedArray(src.length), kernel = createGaussianKernel(radius), side = radius; for (let y = 0; y < h; y++) { for (let x = 0; x < w; x++) { let r = 0, g = 0, b = 0, a = 0, weightSum = 0; for (let ky = -side; ky <= side; ky++) { for (let kx = -side; kx <= side; kx++) { const scx = Math.min(w - 1, Math.max(0, x + kx)), scy = Math.min(h - 1, Math.max(0, y + ky)); const src_idx = (scy * w + scx) * 4, wt = kernel[ky + side][kx + side]; r += src[src_idx] * wt; g += src[src_idx + 1] * wt; b += src[src_idx + 2] * wt; a += src[src_idx + 3] * wt; weightSum += wt; } } const dst_idx = (y * w + x) * 4; dst[dst_idx] = r / weightSum; dst[dst_idx + 1] = g / weightSum; dst[dst_idx + 2] = b / weightSum; dst[dst_idx + 3] = a / weightSum; } } return new ImageData(dst, w, h); }
+function createGaussianKernel(radius) { const size = radius * 2 + 1, kernel = Array(size).fill(0).map(() => Array(size).fill(0)); const sigma = radius / 2, s2 = 2 * sigma * sigma; let sum = 0; for (let y = -radius; y <= radius; y++) { for (let x = -radius; x <= radius; x++) { const r = Math.sqrt(x * x + y * y), val = (Math.exp(-(r * r) / s2)) / (Math.PI * s2); kernel[y + radius][x + radius] = val; sum += val; } } for (let y = 0; y < size; y++) { for (let x = 0; x < size; x++) { kernel[y][x] /= sum; } } return kernel; }
+function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
+function updateProgress(percentage, text = "") { const p = Math.round(percentage); progressBar.style.width = p + '%'; progressBar.textContent = text ? text : p + '%'; }
+
+</script>
+
+</body></html>

@@ -25,6 +25,8 @@ export const nodePalette: NodePaletteItem[] = [
   { type: "tools/marching", glyph: "ISO", shortLabel: "Marching", tooltip: "MARCHING: estrae superfici di livello dall'immagine (output raster + SVG) con preset Fast/Quality." },
   { type: "tools/rough", glyph: "RFX", shortLabel: "Rough", tooltip: "ROUGH: applica stile rough a un SVG in ingresso e produce un nuovo SVG." },
   { type: "tools/svg-simplify", glyph: "SMP", shortLabel: "Simplify", tooltip: "SVG SIMPLIFY: semplifica path e minifica SVG riducendo il peso mantenendo i colori." },
+  { type: "tools/bg-remove", glyph: "BGR", shortLabel: "BG Remove", tooltip: "BG REMOVE: rimuove lo sfondo con segmentazione persona AI (stile MediaPipe/selfie segmentation)." },
+  { type: "tools/face-landmarker", glyph: "FLC", shortLabel: "Face LM", tooltip: "FACE LANDMARKER: rileva mesh, occhi, labbra, iridi e blendshapes del volto (MediaPipe)." },
   { type: "tools/ml5-extract", glyph: "ML5", shortLabel: "ML5", tooltip: "ML5 EXTRACT: estrae bodypose/handpose/facemesh/imageclassifier (se disponibile) da un'immagine." },
   { type: "output/image", glyph: "OUT", shortLabel: "Output", tooltip: "OUTPUT: mostra il risultato finale e permette il download." },
   { type: "output/palette", glyph: "PAL", shortLabel: "Palette", tooltip: "PALETTE: visualizza e salva i colori in ingresso." },

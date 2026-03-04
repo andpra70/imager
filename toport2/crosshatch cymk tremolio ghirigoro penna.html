@@ -1,0 +1,754 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Line Art SVG (Parametri Scalati su Punta Penna - Corretto)</title>
+    <script src="https://unpkg.com/simplify-js@1.2.3/simplify.js"></script>
+    <style>
+        body { font-family: sans-serif; margin: 20px; background-color: #f4f4f4; color: #333; }
+        .container { display: flex; flex-wrap: wrap; gap: 20px; margin-bottom: 20px; }
+        .controls, .display-area { background-color: #fff; padding: 15px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); box-sizing: border-box; }
+        .display-area { width: 100%; }
+        @media (min-width: 768px) { .container .display-area { flex: 1; min-width: 300px; } }
+        .controls > div, .display-area > div { margin-bottom: 10px; }
+        label { display: block; margin-bottom: 5px; font-weight: bold; }
+        input[type="file"], input[type="number"], input[type="color"], input[type="range"], input[type="checkbox"], button { padding: 8px; margin-top: 5px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; vertical-align: middle; }
+        input[type="number"] { width: 70px; }
+        input[type="color"] { width: 100px; height: 35px; padding: 2px; }
+        input[type="range"] { width: 120px; }
+        input[type="checkbox"] { width: auto; margin-right: 5px;}
+        button { background-color: #007bff; color: white; cursor: pointer; transition: background-color 0.3s ease; margin-right: 5px; }
+        button.stop-button { background-color: #dc3545; }
+        button.stop-button:hover { background-color: #c82333; }
+        button:hover { background-color: #0056b3; }
+        button:disabled { background-color: #ccc; cursor: not-allowed; }
+        .canvas-container, .svg-container { text-align: center; width: 100%; border: 1px solid #ccc; margin-top: 5px; }
+        canvas { max-width: 100%; height: auto; display: block; margin-left: auto; margin-right: auto; background-color: white; }
+        .svg-container svg { max-width: 100%; height: auto; display: block; margin-left: auto; margin-right: auto; }
+        h2 { margin-top: 0; color: #007bff; }
+        #status, #progressStatus { margin-top:10px; font-style: italic; color: #555; white-space: pre-wrap; }
+        .progress-bar-container { width: 100%; background-color: #e0e0e0; border-radius: 4px; margin-top: 10px; display: none; }
+        .progress-bar { width: 0%; height: 20px; background-color: #007bff; border-radius: 4px; text-align: center; line-height: 20px; color: white; font-size: 0.8em; transition: width 0.2s ease-out; }
+        .channel-offset-controls, .scribble-controls { display: none; border-left: 3px solid #007bff; padding-left: 10px; margin-top: 10px; }
+        .scribble-controls { border-left-color: #ffc107; } 
+        .channel-offset-controls fieldset, .scribble-controls div { border: 1px solid #ddd; padding: 10px; margin-bottom: 5px; border-radius: 4px;}
+        .channel-offset-controls legend { font-weight: bold; padding: 0 5px; }
+        .channel-offset-controls label, .scribble-controls label { font-weight: normal; display: inline-block; }
+        .channel-offset-controls input[type="number"] { width: 60px; }
+        #svgDimensionsDisplay { margin-top: 8px; font-style: italic; color: #337ab7; font-size: 0.9em;}
+        .value-display { font-size: 0.8em; color: #777; margin-left: 5px; }
+    </style>
+</head>
+<body>
+    <h1>Line Art SVG (Parametri Scalati su Punta Penna - Corretto)</h1>
+
+    <div class="controls">
+        <div><label for="imageLoader">Scegli immagine:</label><input type="file" id="imageLoader" accept="image/*"></div>
+        <div><label for="processAsColor"><input type="checkbox" id="processAsColor"> Processa a Colori (CMYK)</label></div>
+        <div class="channel-offset-controls" id="cmykOffsetControls">
+            <fieldset><legend>Cyan Offset</legend><label for="offsetX_C">dX:</label><input type="number" id="offsetX_C" value="0" min="-5" max="5" step="0.1"><label for="offsetY_C">dY:</label><input type="number" id="offsetY_C" value="0" min="-5" max="5" step="0.1"></fieldset>
+            <fieldset><legend>Magenta Offset</legend><label for="offsetX_M">dX:</label><input type="number" id="offsetX_M" value="0" min="-5" max="5" step="0.1"><label for="offsetY_M">dY:</label><input type="number" id="offsetY_M" value="0" min="-5" max="5" step="0.1"></fieldset>
+            <fieldset><legend>Yellow Offset</legend><label for="offsetX_Y">dX:</label><input type="number" id="offsetX_Y" value="0" min="-5" max="5" step="0.1"><label for="offsetY_Y">dY:</label><input type="number" id="offsetY_Y" value="0" min="-5" max="5" step="0.1"></fieldset>
+            <fieldset><legend>Black (K) Offset</legend><label for="offsetX_K">dX:</label><input type="number" id="offsetX_K" value="0" min="-5" max="5" step="0.1"><label for="offsetY_K">dY:</label><input type="number" id="offsetY_K" value="0" min="-5" max="5" step="0.1"></fieldset>
+        </div>
+        <div><label for="levels">Livelli quantizzazione (2-128):</label><input type="number" id="levels" value="8" min="2" max="128"></div>
+        <button id="processButton">1. Processa Immagine</button>
+        <div id="status"></div>
+    </div>
+
+    <div class="container">
+        <div class="display-area"><h2>Immagine Originale</h2><div class="canvas-container"><canvas id="originalCanvas"></canvas></div></div>
+        <div class="display-area" id="quantizedDisplayArea"><h2>Density Map</h2><div class="canvas-container"><canvas id="quantizedCanvas"></canvas></div></div>
+    </div>
+
+    <div class="controls">
+        <h2>Controlli Line Art SVG</h2>
+        <div><label for="backgroundColorPicker">Sfondo SVG/JPG:</label><input type="color" id="backgroundColorPicker" value="#FFFFFF"></div>
+        <div><label for="numAngles">Angolazioni (2-45):</label><input type="number" id="numAngles" value="8" min="2" max="45"></div>
+        <div><label for="upscale">Upscale (1-10):</label><input type="number" id="upscale" value="2" min="1" max="10"></div>
+        <div><label for="dpiInput">DPI (per conversioni mm/pixel):</label><input type="number" id="dpiInput" value="300" min="1"></div>
+        <div id="svgDimensionsDisplay">Dimensioni SVG stimate: -</div>
+        <div><label for="machineSpeed">Velocità Macchina (cm/s):</label><input type="number" id="machineSpeed" value="5" min="0.01" step="0.01"></div>
+        
+        <div>
+            <label for="penTipSizeMm">Dimensione Punta Penna (mm):</label>
+            <input type="number" id="penTipSizeMm" value="0.5" min="0.05" step="0.01">
+            <span class="value-display" id="penTipSizePxDisplay"></span>
+        </div>
+
+        <div>
+            <label for="lineThicknessMm">Spessore Linea (mm):</label>
+            <input type="number" id="lineThicknessMm" value="0.5" min="0.05" step="0.01">
+            <span class="value-display" id="lineThicknessPxDisplay"></span>
+        </div>
+        <div>
+            <label for="lineSpacingMm">Interlinea (mm):</label>
+            <input type="number" id="lineSpacingMm" value="1.5" min="0.1" step="0.1">
+            <span class="value-display" id="lineSpacingPxDisplay"></span>
+        </div>
+        <div>
+            <label for="maxGapToConnectMm">Max Gap Connessione (mm):</label>
+            <input type="number" id="maxGapToConnectMm" value="1.0" min="0" step="0.1">
+            <span class="value-display" id="maxGapToConnectPxDisplay"></span>
+        </div>
+        <div>
+            <label for="lineWobbleFactor">Fattore Tremolio (0-1, rel. a punta penna):</label>
+            <input type="range" id="lineWobbleFactor" value="0.2" min="0" max="1" step="0.05">
+            <span id="lineWobbleFactorValue">0.2</span> <span class="value-display" id="lineWobbleMmDisplay"></span>
+        </div>
+
+        <div><label for="whiteThreshold">Soglia Bianco (0-255):</label><input type="number" id="whiteThreshold" value="250" min="0" max="255"></div>
+        <div><label for="lineColor">Colore Linea (Grigi):</label><input type="color" id="lineColor" value="#000000"></div>
+        <div><label for="lineAlpha">Alpha Linea (0-1):</label><input type="range" id="lineAlpha" value="1" min="0" max="1" step="0.01"><span id="lineAlphaValue">1.00</span></div>
+        <div><label for="simplifyTolerance">Semplificazione (0-10):</label><input type="number" id="simplifyTolerance" value="1.0" min="0" max="10" step="0.1"></div>
+        
+        <div><label for="scribbleEffect"><input type="checkbox" id="scribbleEffect"> Applica Effetto Ghirigoro Curvo</label></div>
+        <div class="scribble-controls" id="scribbleControlsDiv">
+            <div>
+                <label for="scribbleAmplitudeFactor">Fattore Ampiezza Ghirigoro (0-5, rel. a punta penna):</label>
+                <input type="range" id="scribbleAmplitudeFactor" value="1.5" min="0" max="5" step="0.1">
+                <span id="scribbleAmplitudeFactorValue">1.5</span> <span class="value-display" id="scribbleAmplitudeMmDisplay"></span>
+            </div>
+            <div>
+                <label for="scribbleFrequency">Frequenza Ghirigoro (1-20 sub-segmenti):</label> 
+                <input type="number" id="scribbleFrequency" value="5" min="1" max="20">
+            </div>
+             <div>
+                <label for="scribbleRandomness">Casualità Ghirigoro (0-1):</label>
+                <input type="range" id="scribbleRandomness" value="0.5" min="0" max="1" step="0.1">
+                <span id="scribbleRandomnessValue">0.5</span>
+            </div>
+        </div>
+
+        <button id="generateLineArtButton" disabled>2. Genera Line Art SVG</button>
+        <button id="stopGenerationButton" class="stop-button" disabled>Stop Generazione</button>
+        <button id="saveSvgButton" disabled>Salva SVG</button>
+        <button id="saveJpgButton" disabled>Salva come JPG</button>
+        <div id="progressStatus"></div> <!-- Assicurati che questo ID sia corretto -->
+        <div class="progress-bar-container" id="progressBarContainer"><div class="progress-bar" id="progressBar">0%</div></div>
+    </div>
+
+    <div class="display-area" id="lineArtDisplayArea">
+        <h2>Immagine Line Art SVG</h2>
+        <div id="svgContainer" class="svg-container"></div>
+    </div>
+
+    <script>
+        // --- RIFERIMENTI AGLI ELEMENTI DOM ---
+        const imageLoader = document.getElementById('imageLoader');
+        const processAsColorCheckbox = document.getElementById('processAsColor');
+        const cmykOffsetControlsDiv = document.getElementById('cmykOffsetControls');
+        const processButton = document.getElementById('processButton');
+        const generateLineArtButton = document.getElementById('generateLineArtButton');
+        const stopGenerationButton = document.getElementById('stopGenerationButton');
+        const saveSvgButton = document.getElementById('saveSvgButton');
+        const saveJpgButton = document.getElementById('saveJpgButton');
+        
+        const levelsInput = document.getElementById('levels');
+        const numAnglesInput = document.getElementById('numAngles');
+        const backgroundColorPickerInput = document.getElementById('backgroundColorPicker');
+        const upscaleInput = document.getElementById('upscale');
+        const whiteThresholdInput = document.getElementById('whiteThreshold');
+        const lineColorInput = document.getElementById('lineColor');
+        const lineAlphaInput = document.getElementById('lineAlpha');
+        const lineAlphaValueSpan = document.getElementById('lineAlphaValue');
+        const simplifyToleranceInput = document.getElementById('simplifyTolerance');
+        const dpiInput = document.getElementById('dpiInput'); 
+        const svgDimensionsDisplay = document.getElementById('svgDimensionsDisplay'); 
+        const machineSpeedInput = document.getElementById('machineSpeed');
+
+        const penTipSizeMmInput = document.getElementById('penTipSizeMm');
+        const penTipSizePxDisplay = document.getElementById('penTipSizePxDisplay');
+        const lineThicknessMmInput = document.getElementById('lineThicknessMm');
+        const lineThicknessPxDisplay = document.getElementById('lineThicknessPxDisplay');
+        const lineSpacingMmInput = document.getElementById('lineSpacingMm');
+        const lineSpacingPxDisplay = document.getElementById('lineSpacingPxDisplay');
+        const maxGapToConnectMmInput = document.getElementById('maxGapToConnectMm');
+        const maxGapToConnectPxDisplay = document.getElementById('maxGapToConnectPxDisplay');
+        
+        const lineWobbleFactorInput = document.getElementById('lineWobbleFactor');
+        const lineWobbleFactorValue = document.getElementById('lineWobbleFactorValue');
+        const lineWobbleMmDisplay = document.getElementById('lineWobbleMmDisplay');
+
+        const scribbleEffectCheckbox = document.getElementById('scribbleEffect');
+        const scribbleControlsDiv = document.getElementById('scribbleControlsDiv');
+        const scribbleAmplitudeFactorInput = document.getElementById('scribbleAmplitudeFactor');
+        const scribbleAmplitudeFactorValue = document.getElementById('scribbleAmplitudeFactorValue');
+        const scribbleAmplitudeMmDisplay = document.getElementById('scribbleAmplitudeMmDisplay');
+        const scribbleFrequencyInput = document.getElementById('scribbleFrequency');
+        const scribbleRandomnessInput = document.getElementById('scribbleRandomness');
+        const scribbleRandomnessValueSpan = document.getElementById('scribbleRandomnessValue');
+
+        const offsetInputs = {
+            C: { dx: document.getElementById('offsetX_C'), dy: document.getElementById('offsetY_C') },
+            M: { dx: document.getElementById('offsetX_M'), dy: document.getElementById('offsetY_M') },
+            Y: { dx: document.getElementById('offsetX_Y'), dy: document.getElementById('offsetY_Y') },
+            K: { dx: document.getElementById('offsetX_K'), dy: document.getElementById('offsetY_K') }
+        };
+
+        const statusDiv = document.getElementById('status');
+        const progressStatusDiv = document.getElementById('progressStatus'); // Definizione corretta
+        const progressBarContainer = document.getElementById('progressBarContainer');
+        const progressBar = document.getElementById('progressBar');
+
+        const originalCanvas = document.getElementById('originalCanvas');
+        const quantizedCanvas = document.getElementById('quantizedCanvas');
+        const quantizedDisplayAreaTitle = document.querySelector('#quantizedDisplayArea h2');
+        const svgContainer = document.getElementById('svgContainer');
+
+        const ctxOriginal = originalCanvas.getContext('2d');
+        const ctxQuantized = quantizedCanvas.getContext('2d');
+
+        // --- VARIABILI GLOBALI ---
+        const SVG_NS = "http://www.w3.org/2000/svg";
+        let currentSvgElement = null; 
+        let originalImage = null; 
+        let isGenerating = false; 
+        let stopGenerationFlag = false;
+        let quantizedLevelsDataC = null, quantizedLevelsDataM = null, quantizedLevelsDataY = null, quantizedLevelsDataK = null;
+        let originalWidth, originalHeight;
+        const MM_PER_INCH = 25.4;
+
+        // --- FUNZIONI HELPER ---
+        function mmToPx(mm, dpi) {
+            if (isNaN(mm) || isNaN(dpi) || dpi <= 0) return 0;
+            return (mm / MM_PER_INCH) * dpi;
+        }
+
+        function pxToMm(px, dpi) {
+            if (isNaN(px) || isNaN(dpi) || dpi <= 0) return 0;
+            return (px / dpi) * MM_PER_INCH;
+        }
+
+        function updateAllScaledValues() {
+            const dpi = parseFloat(dpiInput.value);
+            if (isNaN(dpi) || dpi <= 0) {
+                penTipSizePxDisplay.textContent = "- px";
+                lineThicknessPxDisplay.textContent = "- px";
+                lineSpacingPxDisplay.textContent = "- px";
+                maxGapToConnectPxDisplay.textContent = "- px";
+                lineWobbleMmDisplay.textContent = "- mm";
+                scribbleAmplitudeMmDisplay.textContent = "- mm";
+                return;
+            }
+
+            const penTipMm = parseFloat(penTipSizeMmInput.value);
+            penTipSizePxDisplay.textContent = `${mmToPx(penTipMm, dpi).toFixed(2)} px`;
+
+            const lineThicknessMm = parseFloat(lineThicknessMmInput.value);
+            lineThicknessPxDisplay.textContent = `${mmToPx(lineThicknessMm, dpi).toFixed(2)} px`;
+
+            const lineSpacingMm = parseFloat(lineSpacingMmInput.value);
+            lineSpacingPxDisplay.textContent = `${mmToPx(lineSpacingMm, dpi).toFixed(2)} px`;
+            
+            const maxGapMm = parseFloat(maxGapToConnectMmInput.value);
+            maxGapToConnectPxDisplay.textContent = `${mmToPx(maxGapMm, dpi).toFixed(2)} px`;
+
+            const wobbleFactor = parseFloat(lineWobbleFactorInput.value);
+            const wobbleMm = penTipMm * wobbleFactor;
+            lineWobbleMmDisplay.textContent = `${wobbleMm.toFixed(2)} mm (${mmToPx(wobbleMm, dpi).toFixed(2)} px)`;
+            lineWobbleFactorValue.textContent = wobbleFactor.toFixed(2);
+
+            const scribbleAmplitudeFactor = parseFloat(scribbleAmplitudeFactorInput.value);
+            const scribbleAmplitudeMm = penTipMm * scribbleAmplitudeFactor;
+            scribbleAmplitudeMmDisplay.textContent = `${scribbleAmplitudeMm.toFixed(2)} mm (${mmToPx(scribbleAmplitudeMm, dpi).toFixed(2)} px)`;
+            scribbleAmplitudeFactorValue.textContent = scribbleAmplitudeFactor.toFixed(1);
+
+            updateSvgDimensionsDisplay();
+        }
+        
+        function updateSvgDimensionsDisplay() { 
+            if (!originalImage || typeof originalWidth === 'undefined' || typeof originalHeight === 'undefined') { 
+                svgDimensionsDisplay.textContent = "Dimensioni SVG stimate: Caricare un'immagine."; return; 
+            } 
+            const currentUpscale = parseInt(upscaleInput.value); 
+            const currentDpi = parseInt(dpiInput.value); 
+            if (isNaN(currentUpscale) || currentUpscale < 1 || isNaN(currentDpi) || currentDpi < 1) { 
+                svgDimensionsDisplay.textContent = "Dimensioni SVG stimate: Upscale/DPI non validi."; return; 
+            } 
+            const destWidthPx = originalWidth * currentUpscale; 
+            const destHeightPx = originalHeight * currentUpscale; 
+            const widthInCm = (destWidthPx / currentDpi) * 2.54; 
+            const heightInCm = (destHeightPx / currentDpi) * 2.54; 
+            svgDimensionsDisplay.textContent = `Dimensioni SVG stimate: ${widthInCm.toFixed(2)} cm (L) x ${heightInCm.toFixed(2)} cm (A) @ ${currentDpi} DPI (per ${destWidthPx}x${destHeightPx} px)`; 
+        }
+
+        function rgbToCmyk(r, g, b) { 
+            let c = 1-(r/255); let m = 1-(g/255); let y = 1-(b/255); let k = Math.min(c,m,y); 
+            if (k===1) {return {c:0,m:0,y:0,k:1};} 
+            c=(c-k)/(1-k); m=(m-k)/(1-k); y=(y-k)/(1-k); return {c,m,y,k}; 
+        }
+
+        function applyWobble(coordinate, maxOffsetInPx) {
+             if(maxOffsetInPx === 0 || isNaN(maxOffsetInPx)) return coordinate; 
+             const offset = (Math.random() * 2 - 1) * maxOffsetInPx; 
+             return coordinate + offset; 
+        }
+
+        function calculatePolylineLength(pointsArray) { 
+            let length=0; 
+            for(let i=0;i<pointsArray.length-1;i++){
+                const p1=pointsArray[i]; 
+                const p2=pointsArray[i+1]; 
+                length+=Math.sqrt(Math.pow(p2.x-p1.x,2)+Math.pow(p2.y-p1.y,2));
+            } 
+            return length; 
+        }
+
+        function formatDuration(totalSeconds) { 
+            const hours = Math.floor(totalSeconds/3600); 
+            totalSeconds%=3600; 
+            const minutes = Math.floor(totalSeconds/60); 
+            const seconds = (totalSeconds%60).toFixed(0); 
+            let result=""; 
+            if(hours>0)result+=`${hours}h `; 
+            if(minutes>0||hours>0)result+=`${minutes}m `; 
+            result+=`${seconds}s`; 
+            return result.trim(); 
+        }
+
+        function yieldToBrowser() { return new Promise(resolve => setTimeout(resolve, 0)); }
+
+        // --- EVENT LISTENER ---
+        lineAlphaInput.addEventListener('input', () => { lineAlphaValueSpan.textContent = parseFloat(lineAlphaInput.value).toFixed(2); });
+        scribbleRandomnessInput.addEventListener('input', () => { scribbleRandomnessValueSpan.textContent = parseFloat(scribbleRandomnessInput.value).toFixed(1); });
+        processAsColorCheckbox.addEventListener('change', () => { cmykOffsetControlsDiv.style.display = processAsColorCheckbox.checked ? 'block' : 'none'; });
+        scribbleEffectCheckbox.addEventListener('change', () => { scribbleControlsDiv.style.display = scribbleEffectCheckbox.checked ? 'block' : 'none'; });
+        
+        penTipSizeMmInput.addEventListener('input', updateAllScaledValues);
+        lineThicknessMmInput.addEventListener('input', updateAllScaledValues);
+        lineSpacingMmInput.addEventListener('input', updateAllScaledValues);
+        maxGapToConnectMmInput.addEventListener('input', updateAllScaledValues);
+        lineWobbleFactorInput.addEventListener('input', updateAllScaledValues);
+        scribbleAmplitudeFactorInput.addEventListener('input', updateAllScaledValues);
+        dpiInput.addEventListener('input', updateAllScaledValues);
+        upscaleInput.addEventListener('input', updateSvgDimensionsDisplay);
+
+        imageLoader.addEventListener('change', (e) => { 
+            const file = e.target.files[0]; 
+            if (file) { 
+                const reader = new FileReader(); 
+                reader.onload = (event) => { 
+                    originalImage = new Image(); 
+                    originalImage.onload = () => { 
+                        originalWidth = originalImage.width; 
+                        originalHeight = originalImage.height; 
+                        originalCanvas.width = originalWidth; 
+                        originalCanvas.height = originalHeight; 
+                        ctxOriginal.drawImage(originalImage, 0, 0); 
+                        quantizedCanvas.width = originalWidth; 
+                        quantizedCanvas.height = originalHeight; 
+                        ctxQuantized.clearRect(0, 0, originalWidth, originalHeight); 
+                        svgContainer.innerHTML = ""; 
+                        currentSvgElement = null; 
+                        quantizedLevelsDataC = null; quantizedLevelsDataM = null; quantizedLevelsDataY = null; quantizedLevelsDataK = null; 
+                        generateLineArtButton.disabled = true; stopGenerationButton.disabled = true; saveSvgButton.disabled = true; saveJpgButton.disabled = true; 
+                        
+                        if (progressBarContainer) progressBarContainer.style.display = 'none'; 
+                        if (progressStatusDiv) progressStatusDiv.textContent = ""; 
+                        if (statusDiv) statusDiv.textContent = "Immagine caricata. Pronto per processare."; 
+                        updateAllScaledValues(); 
+                    }; 
+                    originalImage.onerror = () => { 
+                        if (statusDiv) statusDiv.textContent = "Errore caricamento immagine."; 
+                        originalImage = null; originalWidth = undefined; originalHeight = undefined; 
+                        updateAllScaledValues(); 
+                    }; 
+                    originalImage.src = event.target.result; 
+                }; 
+                reader.readAsDataURL(file); 
+            } else { 
+                originalImage = null; originalWidth = undefined; originalHeight = undefined; 
+                updateAllScaledValues(); 
+            } 
+        });
+        
+        processButton.addEventListener('click', () => { 
+            if (!originalImage) { alert("Carica prima un'immagine!"); return; } 
+            processButton.disabled = true; generateLineArtButton.disabled = true; stopGenerationButton.disabled = true; saveSvgButton.disabled = true; saveJpgButton.disabled = true; 
+            if (statusDiv) statusDiv.textContent = "Processo di quantizzazione in corso..."; 
+            setTimeout(() => { 
+                const numLevels = parseInt(levelsInput.value); 
+                if (numLevels < 2 || numLevels > 128) { 
+                    alert("Livelli quantizzazione: 2-128."); 
+                    if (statusDiv) statusDiv.textContent = "Errore livelli."; 
+                    processButton.disabled = false; return; 
+                } 
+                quantizedCanvas.width = originalWidth; quantizedCanvas.height = originalHeight; 
+                ctxOriginal.drawImage(originalImage, 0, 0, originalWidth, originalHeight); 
+                const imageData = ctxOriginal.getImageData(0, 0, originalWidth, originalHeight); 
+                const data = imageData.data; 
+                const totalPixels = originalWidth * originalHeight; 
+                quantizedLevelsDataK = new Uint8Array(totalPixels); 
+                const quantizedDisplayImageData = ctxQuantized.createImageData(originalWidth, originalHeight); 
+                const qdData = quantizedDisplayImageData.data; 
+                const step = 1 / numLevels; 
+                if (processAsColorCheckbox.checked) { 
+                    if (quantizedDisplayAreaTitle) quantizedDisplayAreaTitle.textContent = "Density Map (Canale K)"; 
+                    quantizedLevelsDataC = new Uint8Array(totalPixels); 
+                    quantizedLevelsDataM = new Uint8Array(totalPixels); 
+                    quantizedLevelsDataY = new Uint8Array(totalPixels); 
+                    for (let i = 0; i < data.length; i += 4) { 
+                        const r = data[i], g = data[i+1], b = data[i+2]; 
+                        const cmyk = rgbToCmyk(r, g, b); 
+                        quantizedLevelsDataC[i/4] = Math.min(Math.floor((1-cmyk.c)/step),numLevels-1); 
+                        quantizedLevelsDataM[i/4] = Math.min(Math.floor((1-cmyk.m)/step),numLevels-1); 
+                        quantizedLevelsDataY[i/4] = Math.min(Math.floor((1-cmyk.y)/step),numLevels-1); 
+                        quantizedLevelsDataK[i/4] = Math.min(Math.floor((1-cmyk.k)/step),numLevels-1); 
+                        const kDisplayLevel = quantizedLevelsDataK[i/4]; 
+                        const displayGrayscaleK = (numLevels===1)?0:Math.round(kDisplayLevel*(255/(numLevels-1))); 
+                        qdData[i] = displayGrayscaleK; qdData[i+1] = displayGrayscaleK; qdData[i+2] = displayGrayscaleK; qdData[i+3] = 255; 
+                    } 
+                } else { 
+                    if (quantizedDisplayAreaTitle) quantizedDisplayAreaTitle.textContent = "Density Map (Scala Grigi)"; 
+                    const grayscaleStep = 256 / numLevels; 
+                    for (let i = 0; i < data.length; i += 4) { 
+                        const r=data[i],g=data[i+1],b=data[i+2]; 
+                        const grayscale=Math.round(0.299*r+0.587*g+0.114*b); 
+                        const levelIndex=Math.min(Math.floor(grayscale/grayscaleStep),numLevels-1); 
+                        quantizedLevelsDataK[i/4]=levelIndex; 
+                        const displayGrayscale=(numLevels===1)?0:Math.round(levelIndex*(255/(numLevels-1))); 
+                        qdData[i]=displayGrayscale; qdData[i+1]=displayGrayscale; qdData[i+2]=displayGrayscale; qdData[i+3]=255; 
+                    } 
+                } 
+                ctxQuantized.putImageData(quantizedDisplayImageData,0,0); 
+                if (statusDiv) statusDiv.textContent="Immagine processata."; 
+                processButton.disabled=false; generateLineArtButton.disabled=false; 
+            }, 10); 
+        });
+        
+        stopGenerationButton.addEventListener('click', () => { 
+            stopGenerationFlag = true; 
+            if (progressStatusDiv) progressStatusDiv.textContent = "Interruzione richiesta..."; 
+            console.log("Stop richiesto."); 
+        });
+        
+        function createAndAppendSvgCurve(pointsArray, svgParent, color, thicknessPx, alpha, scribbleConfig, dpiForScribble) {
+            if (pointsArray.length < 2) return 0;
+
+            let pathData = `M ${pointsArray[0].x.toFixed(2)} ${pointsArray[0].y.toFixed(2)}`;
+            let totalPathLength = 0;
+
+            if (scribbleConfig.enabled && pointsArray.length >= 2) {
+                const penTipMmVal = parseFloat(penTipSizeMmInput.value);
+                const amplitudeFactorVal = parseFloat(scribbleConfig.amplitudeFactor);
+                const amplitudeMmVal = penTipMmVal * amplitudeFactorVal;
+                const amplitudePx = mmToPx(amplitudeMmVal, dpiForScribble);
+                
+                const frequency = parseInt(scribbleConfig.frequency);
+                const randomnessFactor = parseFloat(scribbleConfig.randomness);
+
+                for (let i = 0; i < pointsArray.length - 1; i++) {
+                    const p1 = pointsArray[i];
+                    const p2 = pointsArray[i+1];
+                    const segmentDx = p2.x - p1.x;
+                    const segmentDy = p2.y - p1.y;
+                    const segmentLength = Math.sqrt(segmentDx * segmentDx + segmentDy * segmentDy);
+                    if (segmentLength === 0) continue;
+                    
+                    totalPathLength += segmentLength; 
+
+                    const normX = -segmentDy / segmentLength;
+                    const normY = segmentDx / segmentLength;
+                    
+                    for (let j = 1; j <= frequency; j++) {
+                        const tSegment = j / frequency;
+                        const midPointX = p1.x + segmentDx * tSegment;
+                        const midPointY = p1.y + segmentDy * tSegment;
+                        const offsetDirection = (j % 2 === 0) ? 1 : -1; 
+                        
+                        let cp1x = p1.x + segmentDx * (tSegment - 0.5 / frequency) + offsetDirection * normX * amplitudePx * (Math.random() * randomnessFactor + (1-randomnessFactor)/2);
+                        let cp1y = p1.y + segmentDy * (tSegment - 0.5 / frequency) + offsetDirection * normY * amplitudePx * (Math.random() * randomnessFactor + (1-randomnessFactor)/2);
+                        let cp2x = midPointX - offsetDirection * normX * amplitudePx * (Math.random() * randomnessFactor + (1-randomnessFactor)/2);
+                        let cp2y = midPointY - offsetDirection * normY * amplitudePx * (Math.random() * randomnessFactor + (1-randomnessFactor)/2);
+                        
+                        cp1x = p1.x + (cp1x - p1.x) * 0.8; cp1y = p1.y + (cp1y - p1.y) * 0.8;
+                        cp2x = midPointX - (midPointX - cp2x) * 0.8; cp2y = midPointY - (midPointY - cp2y) * 0.8;
+
+                        pathData += ` C ${cp1x.toFixed(2)},${cp1y.toFixed(2)} ${cp2x.toFixed(2)},${cp2y.toFixed(2)} ${midPointX.toFixed(2)},${midPointY.toFixed(2)}`;
+                    }
+                }
+            } else { 
+                 for (let i = 1; i < pointsArray.length; i++) {
+                    pathData += ` L ${pointsArray[i].x.toFixed(2)} ${pointsArray[i].y.toFixed(2)}`;
+                }
+                totalPathLength = calculatePolylineLength(pointsArray);
+            }
+            
+            const path = document.createElementNS(SVG_NS, "path");
+            path.setAttribute("d", pathData);
+            path.setAttribute("stroke", color);
+            path.setAttribute("stroke-width", thicknessPx.toFixed(2));
+            if (alpha < 1) { path.setAttribute("stroke-opacity", alpha.toString()); }
+            path.setAttribute("fill", "none");
+            svgParent.appendChild(path);
+            return totalPathLength;
+        }
+
+        generateLineArtButton.addEventListener('click', async () => {
+            if (!quantizedLevelsDataK) { alert("Processa prima l'immagine!"); return; }
+            if (isGenerating) { alert("Generazione già in corso!"); return; }
+            
+            const startTime = performance.now(); 
+            isGenerating = true; stopGenerationFlag = false;
+            
+            generateLineArtButton.disabled = true; processButton.disabled = true; stopGenerationButton.disabled = false; 
+            saveSvgButton.disabled = true; saveJpgButton.disabled = true;
+            if (progressStatusDiv) progressStatusDiv.textContent = "Generazione Line Art SVG in corso...";
+            if (progressBarContainer) progressBarContainer.style.display = 'block'; 
+            if (progressBar) { progressBar.style.width = '0%'; progressBar.textContent = '0%';}
+            await yieldToBrowser(); 
+
+            const dpi = parseFloat(dpiInput.value);
+            if (isNaN(dpi) || dpi <= 0) { 
+                alert("DPI non valido!"); 
+                isGenerating=false; generateLineArtButton.disabled=false; processButton.disabled=false; stopGenerationButton.disabled=true; if(progressBarContainer)progressBarContainer.style.display='none'; 
+                return; 
+            }
+
+            const penTipMm = parseFloat(penTipSizeMmInput.value);
+            const lineThicknessCurrentMm = parseFloat(lineThicknessMmInput.value);
+            const lineThicknessCurrentPx = mmToPx(lineThicknessCurrentMm, dpi);
+            const lineSpacingCurrentMm = parseFloat(lineSpacingMmInput.value);
+            const lineSpacingForSVG = mmToPx(lineSpacingCurrentMm, dpi);
+            const maxGapToConnectCurrentMm = parseFloat(maxGapToConnectMmInput.value);
+            const maxGapToConnectCurrentPx = mmToPx(maxGapToConnectCurrentMm, dpi);
+            const lineWobbleCurrentFactor = parseFloat(lineWobbleFactorInput.value);
+            const lineWobbleAmplitudeMm = penTipMm * lineWobbleCurrentFactor;
+            const lineWobbleAmplitudePx = mmToPx(lineWobbleAmplitudeMm, dpi);
+
+            const numQuantLevels = parseInt(levelsInput.value);
+            const totalAngleVariations = parseInt(numAnglesInput.value);
+            const simplifyTolerance = parseFloat(simplifyToleranceInput.value);
+            const upscale = parseInt(upscaleInput.value);
+            const whiteThresholdInputVal = parseInt(whiteThresholdInput.value); 
+            const globalLineAlpha = parseFloat(lineAlphaInput.value);
+            const machineSpeedCmPerSec = parseFloat(machineSpeedInput.value);
+
+            const scribbleConfig = {
+                enabled: scribbleEffectCheckbox.checked,
+                amplitudeFactor: scribbleAmplitudeFactorInput.value,
+                frequency: scribbleFrequencyInput.value,
+                randomness: scribbleRandomnessInput.value
+            };
+
+            if (totalAngleVariations < 2 || totalAngleVariations > 45) { alert("Angolazioni: 2-45."); isGenerating=false; generateLineArtButton.disabled=false; processButton.disabled=false; stopGenerationButton.disabled=true; if(progressBarContainer)progressBarContainer.style.display='none'; return; }
+            if (isNaN(machineSpeedCmPerSec) || machineSpeedCmPerSec <= 0) { /* No alert, just skip machining time calc later */ }
+
+
+            const destWidth = originalWidth * upscale; const destHeight = originalHeight * upscale;
+            if (svgContainer) svgContainer.innerHTML = ""; 
+            const svgElement = document.createElementNS(SVG_NS, "svg");
+            svgElement.setAttribute("width", destWidth.toString()); 
+            svgElement.setAttribute("height", destHeight.toString());
+            svgElement.setAttribute("viewBox", `0 0 ${destWidth} ${destHeight}`); 
+            svgElement.setAttribute("xmlns", SVG_NS); 
+            if (svgContainer) svgContainer.appendChild(svgElement); 
+            currentSvgElement = svgElement;
+            
+            let totalPathsDrawn = 0; let totalPointsBeforeSimplification = 0; let totalPointsAfterSimplification = 0; let totalLineLengthInPixels = 0; 
+
+            const channelsToProcess = [];
+            if (processAsColorCheckbox.checked) {
+                channelsToProcess.push({ name: "C", data: quantizedLevelsDataC, color: "cyan", offset: { dx: parseFloat(offsetInputs.C.dx.value) * upscale, dy: parseFloat(offsetInputs.C.dy.value) * upscale } });
+                channelsToProcess.push({ name: "M", data: quantizedLevelsDataM, color: "magenta", offset: { dx: parseFloat(offsetInputs.M.dx.value) * upscale, dy: parseFloat(offsetInputs.M.dy.value) * upscale } });
+                channelsToProcess.push({ name: "Y", data: quantizedLevelsDataY, color: "yellow", offset: { dx: parseFloat(offsetInputs.Y.dx.value) * upscale, dy: parseFloat(offsetInputs.Y.dy.value) * upscale } });
+                channelsToProcess.push({ name: "K", data: quantizedLevelsDataK, color: "black", offset: { dx: parseFloat(offsetInputs.K.dx.value) * upscale, dy: parseFloat(offsetInputs.K.dy.value) * upscale } });
+            } else {
+                channelsToProcess.push({ name: "Grayscale", data: quantizedLevelsDataK, color: lineColorInput.value, offset: {dx: 0, dy: 0} });
+            }
+            
+            const totalPassesForProgressBar = channelsToProcess.length * totalAngleVariations;
+            let completedPasses = 0;
+
+            outerLoop:
+            for (const channel of channelsToProcess) {
+                if (stopGenerationFlag) break outerLoop;
+                if (!channel.data) { completedPasses += totalAngleVariations; continue; }
+                const currentChannelDensityMap = channel.data; const currentChannelColor = channel.color;
+                const currentChannelOffsetX = channel.offset.dx; const currentChannelOffsetY = channel.offset.dy;
+
+                for (let angleVariationIndex = 0; angleVariationIndex < totalAngleVariations; angleVariationIndex++) {
+                    if (stopGenerationFlag) break outerLoop;
+                    let angleRad = (totalAngleVariations <= 1) ? 0 : (angleVariationIndex / (totalAngleVariations -1)) * (Math.PI / 2);
+                    const cosA = Math.cos(angleRad); const sinA = Math.sin(angleRad);
+                    const maxPerpendicularDist = Math.max(destWidth, destHeight) * 1.5; 
+
+                    for (let p = -maxPerpendicularDist; p < maxPerpendicularDist; p += lineSpacingForSVG) {
+                        if (stopGenerationFlag) break outerLoop;
+                        const centerX = destWidth / 2; const centerY = destHeight / 2;
+                        const lineStartX = centerX + p * sinA - maxPerpendicularDist * cosA; const lineStartY = centerY - p * cosA - maxPerpendicularDist * sinA;
+                        const lineEndX = centerX + p * sinA + maxPerpendicularDist * cosA; const lineEndY = centerY - p * cosA + maxPerpendicularDist * sinA;
+                        
+                        let currentPathPoints = []; let accumulatedLineForSVG = []; 
+                        const totalLengthOnScanLine = 2 * maxPerpendicularDist;
+                        const samplingStepSVG = Math.max(1, upscale / 2);
+                        const numStepsOnLine = Math.floor(totalLengthOnScanLine / samplingStepSVG);
+                        
+                        for (let k = 0; k <= numStepsOnLine; k++) { 
+                            if (stopGenerationFlag) break outerLoop;
+                            const t = k / numStepsOnLine;
+                            const currentX = lineStartX + t * (lineEndX - lineStartX); const currentY = lineStartY + t * (lineEndY - lineStartY);
+                            const roundedCurrentX = Math.round(currentX); const roundedCurrentY = Math.round(currentY);
+                            
+                            let shouldDrawThisPoint = false;
+                            if (k < numStepsOnLine) { 
+                                if (roundedCurrentX >= 0 && roundedCurrentX < destWidth && roundedCurrentY >= 0 && roundedCurrentY < destHeight) {
+                                    const originalX = Math.floor(roundedCurrentX / upscale); const originalY = Math.floor(roundedCurrentY / upscale);
+                                    if (originalX >= 0 && originalX < originalWidth && originalY >= 0 && originalY < originalHeight) {
+                                        const quantizedPixelDataIndex = originalY * originalWidth + originalX;
+                                        const pixelLevelIndex = currentChannelDensityMap[quantizedPixelDataIndex];
+                                        const thresholdLevel = Math.floor((whiteThresholdInputVal / 255) * (numQuantLevels -1));
+                                        if (pixelLevelIndex < thresholdLevel) {
+                                            const darknessProportion = (numQuantLevels <= 1) ? 1 : 1-(pixelLevelIndex/(numQuantLevels-1));
+                                            const anglesToDrawForThisDarkness = Math.ceil(darknessProportion * totalAngleVariations);
+                                            if (angleVariationIndex < anglesToDrawForThisDarkness) shouldDrawThisPoint = true;
+                                        }
+                                    }
+                                }
+                            }
+                            if (shouldDrawThisPoint) {
+                                const wobbledX = applyWobble(roundedCurrentX, lineWobbleAmplitudePx); 
+                                const wobbledY = applyWobble(roundedCurrentY, lineWobbleAmplitudePx);
+                                currentPathPoints.push({ x: wobbledX + currentChannelOffsetX, y: wobbledY + currentChannelOffsetY });
+                            } else { 
+                                if (currentPathPoints.length > 1) {
+                                    totalPointsBeforeSimplification += currentPathPoints.length;
+                                    if (maxGapToConnectCurrentPx > 0 && accumulatedLineForSVG.length > 0) {
+                                        const lastAccPoint = accumulatedLineForSVG[accumulatedLineForSVG.length - 1];
+                                        const firstCurrentSegPoint = currentPathPoints[0];
+                                        const dist = Math.sqrt(Math.pow(firstCurrentSegPoint.x - lastAccPoint.x, 2) + Math.pow(firstCurrentSegPoint.y - lastAccPoint.y, 2));
+                                        if (dist <= maxGapToConnectCurrentPx) {
+                                            accumulatedLineForSVG.push(...currentPathPoints); 
+                                        } else {
+                                            if (accumulatedLineForSVG.length > 1) {
+                                                let simplifiedAccumulated = accumulatedLineForSVG;
+                                                if (simplifyTolerance > 0 && typeof simplify !== 'undefined') { simplifiedAccumulated = simplify(accumulatedLineForSVG, simplifyTolerance, true); }
+                                                if (simplifiedAccumulated.length > 1) {
+                                                    totalPointsAfterSimplification += simplifiedAccumulated.length;
+                                                    totalLineLengthInPixels += createAndAppendSvgCurve(simplifiedAccumulated, svgElement, currentChannelColor, lineThicknessCurrentPx, globalLineAlpha, scribbleConfig, dpi);
+                                                    totalPathsDrawn++;
+                                                }
+                                            }
+                                            accumulatedLineForSVG = [...currentPathPoints]; 
+                                        }
+                                    } else { 
+                                         if (accumulatedLineForSVG.length > 1) {
+                                            let simplifiedAccumulated = accumulatedLineForSVG;
+                                            if (simplifyTolerance > 0 && typeof simplify !== 'undefined') { simplifiedAccumulated = simplify(accumulatedLineForSVG, simplifyTolerance, true); }
+                                            if (simplifiedAccumulated.length > 1) {
+                                                totalPointsAfterSimplification += simplifiedAccumulated.length;
+                                                totalLineLengthInPixels += createAndAppendSvgCurve(simplifiedAccumulated, svgElement, currentChannelColor, lineThicknessCurrentPx, globalLineAlpha, scribbleConfig, dpi);
+                                                totalPathsDrawn++;
+                                            }
+                                        }
+                                        accumulatedLineForSVG = [...currentPathPoints]; 
+                                    }
+                                }
+                                currentPathPoints = []; 
+                            }
+                        } 
+                        if (accumulatedLineForSVG.length > 1) {
+                            let pointsToDrawFinal = accumulatedLineForSVG;
+                            if (simplifyTolerance > 0 && typeof simplify !== 'undefined') { pointsToDrawFinal = simplify(accumulatedLineForSVG, simplifyTolerance, true); }
+                            if (pointsToDrawFinal.length > 1) {
+                                totalPointsAfterSimplification += pointsToDrawFinal.length;
+                                totalLineLengthInPixels += createAndAppendSvgCurve(pointsToDrawFinal, svgElement, currentChannelColor, lineThicknessCurrentPx, globalLineAlpha, scribbleConfig, dpi);
+                                totalPathsDrawn++;
+                            }
+                        }
+                    } 
+                    if (stopGenerationFlag) break outerLoop;
+                    completedPasses++;
+                    const progressPercentage = Math.round((completedPasses / totalPassesForProgressBar) * 100);
+                    if(progressBar) {progressBar.style.width = progressPercentage + '%'; progressBar.textContent = progressPercentage + '%';}
+                    if(progressStatusDiv) progressStatusDiv.textContent = `Generazione (${channel.name}): ${progressPercentage}% (${totalPathsDrawn} ${scribbleConfig.enabled ? 'tracciati' : 'linee'})`;
+                    await yieldToBrowser(); 
+                } 
+            }
+
+            const endTime = performance.now(); 
+            const durationSeconds = ((endTime - startTime) / 1000); 
+            let lengthInMetersStr = ""; let machiningTimeStr = ""; let totalLengthInCm = 0;
+            if (dpi > 0 && totalLineLengthInPixels > 0) {
+                totalLengthInCm = pxToMm(totalLineLengthInPixels, dpi) / 10;
+                const totalLengthInMeters = totalLengthInCm / 100;
+                lengthInMetersStr = ` Lunghezza: ${totalLengthInMeters.toFixed(2)} m (${totalLengthInCm.toFixed(2)} cm) @ ${dpi} DPI.`;
+                if (machineSpeedCmPerSec > 0 && !isNaN(machineSpeedCmPerSec)) {
+                    const machiningTimeSeconds = totalLengthInCm / machineSpeedCmPerSec;
+                    machiningTimeStr = ` Tempo Lavorazione Macchina: ${formatDuration(machiningTimeSeconds)} (a ${machineSpeedCmPerSec.toFixed(2)} cm/s).`;
+                } else {
+                     machiningTimeStr = ` Velocità macchina non valida per calcolo tempo.`;
+                }
+            }
+            const generationTimeStr = ` Tempo Generazione: ${formatDuration(durationSeconds)}.`;
+            let finalMessage = "";
+            const drawnElementsTerm = scribbleConfig.enabled ? "tracciati curvi" : "polilinee";
+            if (stopGenerationFlag) { 
+                finalMessage = `Generazione interrotta.\n${generationTimeStr}\n${drawnElementsTerm} totali: ${totalPathsDrawn}.${lengthInMetersStr}\n${machiningTimeStr}\nPunti (originali->semplificati): ${totalPointsBeforeSimplification} -> ${totalPointsAfterSimplification}.`;
+            } else { 
+                finalMessage = `Line Art SVG generata!\n${generationTimeStr}\n${drawnElementsTerm} totali: ${totalPathsDrawn}.${lengthInMetersStr}\n${machiningTimeStr}\nPunti (originali->semplificati): ${totalPointsBeforeSimplification} -> ${totalPointsAfterSimplification}.`; 
+            }
+            if (progressStatusDiv) progressStatusDiv.textContent = finalMessage;
+            
+            generateLineArtButton.disabled = false; processButton.disabled = false; stopGenerationButton.disabled = true;
+            if (totalPathsDrawn > 0) { saveSvgButton.disabled = false; saveJpgButton.disabled = false; }
+            isGenerating = false;
+        });
+
+        saveSvgButton.addEventListener('click', () => { 
+            if(!currentSvgElement){alert("Nessun SVG da salvare..."); return;} 
+            if(!currentSvgElement.getAttribute("xmlns")){currentSvgElement.setAttribute("xmlns",SVG_NS);} 
+            const svgData=new XMLSerializer().serializeToString(currentSvgElement); 
+            const blob=new Blob([svgData],{type:"image/svg+xml;charset=utf-8"}); 
+            const url=URL.createObjectURL(blob); 
+            const a=document.createElement('a'); 
+            a.href=url; 
+            a.download= (processAsColorCheckbox.checked?'line_art_cmyk':(scribbleEffectCheckbox.checked?'line_art_scribbled_curvy':'line_art_simplified')) +'_pen' + penTipSizeMmInput.value.replace('.','p') + 'mm.svg'; 
+            document.body.appendChild(a);a.click();document.body.removeChild(a); 
+            URL.revokeObjectURL(url);
+            if(statusDiv) statusDiv.textContent="SVG salvato.";
+        });
+
+        saveJpgButton.addEventListener('click', () => { 
+            if(!currentSvgElement){alert("Nessun SVG da convertire...");return;} 
+            if(statusDiv) statusDiv.textContent="Conversione SVG in JPG...";
+            saveJpgButton.disabled=true; 
+            const selectedBackgroundColor=backgroundColorPickerInput.value; 
+            const tempSvgElement=currentSvgElement.cloneNode(true); 
+            tempSvgElement.style.backgroundColor=selectedBackgroundColor; 
+            const svgString=new XMLSerializer().serializeToString(tempSvgElement); 
+            const svgBlob=new Blob([svgString],{type:'image/svg+xml;charset=utf-8'}); 
+            const domUrl=window.URL||window.webkitURL||window; 
+            const url=domUrl.createObjectURL(svgBlob); 
+            const img=new Image(); 
+            img.onload=function(){ 
+                const tempCanvas=document.createElement('canvas'); 
+                const svgWidth=parseFloat(tempSvgElement.getAttribute('width')); 
+                const svgHeight=parseFloat(tempSvgElement.getAttribute('height')); 
+                tempCanvas.width=svgWidth; tempCanvas.height=svgHeight; 
+                const tempCtx=tempCanvas.getContext('2d'); 
+                tempCtx.drawImage(img,0,0,tempCanvas.width,tempCanvas.height); 
+                domUrl.revokeObjectURL(url); 
+                const jpgDataUrl=tempCanvas.toDataURL('image/jpeg',0.9); 
+                const a=document.createElement('a'); 
+                a.href=jpgDataUrl; 
+                a.download=(processAsColorCheckbox.checked?'line_art_cmyk':(scribbleEffectCheckbox.checked?'line_art_scribbled_curvy':'line_art_simplified')) +'_pen' + penTipSizeMmInput.value.replace('.','p') + 'mm.jpg'; 
+                document.body.appendChild(a);a.click();document.body.removeChild(a); 
+                if(statusDiv) statusDiv.textContent="JPG salvato.";
+                saveJpgButton.disabled=false; 
+            }; 
+            img.onerror=function(){
+                console.error("Errore SVG->JPG.");alert("Errore conversione JPG.");
+                if(statusDiv) statusDiv.textContent="Errore conversione JPG.";
+                saveJpgButton.disabled=false;domUrl.revokeObjectURL(url);
+            }; 
+            img.src=url; 
+        });
+
+        // --- INIZIALIZZAZIONE ---
+        updateAllScaledValues();
+    </script>
+</body>
+</html>

@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ritratto a Penna BIC con Linea Continua</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            background-color: #f0f2f5;
+            color: #333;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin: 0;
+            padding: 20px;
+        }
+        h1 {
+            color: #1a2a4d;
+        }
+        .container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px;
+            justify-content: center;
+            width: 100%;
+            max-width: 1400px;
+        }
+        .controls, .canvas-area {
+            background-color: #fff;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        }
+        .controls {
+            width: 300px;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+        .control-group {
+            display: flex;
+            flex-direction: column;
+        }
+        label {
+            font-weight: bold;
+            margin-bottom: 5px;
+            font-size: 0.9em;
+        }
+        input[type="file"], input[type="color"], input[type="number"], input[type="range"] {
+            width: 100%;
+            box-sizing: border-box;
+        }
+        input[type="range"] {
+            width: calc(100% - 60px);
+            display: inline-block;
+        }
+        .range-value {
+            display: inline-block;
+            width: 50px;
+            text-align: right;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 1.1em;
+            transition: background-color 0.3s;
+            margin-top: 10px;
+        }
+        button:hover:not(:disabled) {
+            background-color: #0056b3;
+        }
+        button:disabled {
+            background-color: #a0a0a0;
+            cursor: not-allowed;
+        }
+        .canvas-area {
+            display: flex;
+            gap: 20px;
+            flex: 1;
+            min-width: 600px;
+        }
+        .canvas-wrapper {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        canvas {
+            border: 1px solid #ddd;
+            max-width: 100%;
+            height: auto;
+            background-color: #fff;
+        }
+        .status {
+            margin-top: 10px;
+            font-style: italic;
+            color: #666;
+            height: 20px;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>Ritratto a Penna BIC con Linea Continua</h1>
+
+    <div class="container">
+        <div class="controls">
+            <h2>Impostazioni</h2>
+
+            <div class="control-group">
+                <label for="imageLoader">1. Carica Immagine</label>
+                <input type="file" id="imageLoader" name="imageLoader" accept="image/*"/>
+            </div>
+
+            <div class="control-group">
+                <label for="penColor">Colore Penna</label>
+                <input type="color" id="penColor" value="#0033A0">
+            </div>
+
+            <div class="control-group">
+                <label for="resolutionOutput">Risoluzione Output (px)</label>
+                <input type="number" id="resolutionOutput" value="800" min="100" max="2000" step="50">
+            </div>
+            
+            <div class="control-group">
+                <label for="intensityMin">Intensità Minima (<span id="intensityMinVal">0.1</span>)</label>
+                <input type="range" id="intensityMin" min="0" max="1" step="0.01" value="0.1">
+            </div>
+            
+            <div class="control-group">
+                <label for="intensityMax">Intensità Massima (<span id="intensityMaxVal">0.9</span>)</label>
+                <input type="range" id="intensityMax" min="0" max="1" step="0.01" value="0.9">
+            </div>
+
+            <div class="control-group">
+                <label for="thicknessMin">Spessore Min (px) (<span id="thicknessMinVal">1.0</span>)</label>
+                <input type="range" id="thicknessMin" min="0.1" max="10" step="0.1" value="1.0">
+            </div>
+            
+            <div class="control-group">
+                <label for="thicknessMax">Spessore Max (px) (<span id="thicknessMaxVal">4.0</span>)</label>
+                <input type="range" id="thicknessMax" min="0.1" max="20" step="0.1" value="4.0">
+            </div>
+
+            <div class="control-group">
+                <label for="detailThreshold">Soglia Dettaglio (<span id="detailThresholdVal">0.2</span>)</label>
+                <input type="range" id="detailThreshold" min="0" max="1" step="0.01" value="0.2">
+            </div>
+            
+            <div class="control-group">
+                <label for="smoothingFactor">Fattore Smoothing (<span id="smoothingFactorVal">1.5</span>)</label>
+                <input type="range" id="smoothingFactor" min="0" max="5" step="0.1" value="1.5">
+            </div>
+            
+            <button id="generateBtn" disabled>Genera Ritratto</button>
+            <div class="status" id="status">Pronto a caricare un'immagine.</div>
+
+        </div>
+
+        <div class="canvas-area">
+            <div class="canvas-wrapper">
+                <h3>Originale</h3>
+                <canvas id="sourceCanvas"></canvas>
+            </div>
+            <div class="canvas-wrapper">
+                <h3>Risultato</h3>
+                <canvas id="outputCanvas"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <script>
+    document.addEventListener('DOMContentLoaded', () => {
+        const imageLoader = document.getElementById('imageLoader');
+        const generateBtn = document.getElementById('generateBtn');
+        const statusEl = document.getElementById('status');
+        
+        const sourceCanvas = document.getElementById('sourceCanvas');
+        const outputCanvas = document.getElementById('outputCanvas');
+        const sourceCtx = sourceCanvas.getContext('2d');
+        const outputCtx = outputCanvas.getContext('2d', { willReadFrequently: true });
+
+        let sourceImage = new Image();
+
+        // Collega i range slider ai loro display
+        const sliders = [
+            'intensityMin', 'intensityMax', 'thicknessMin', 
+            'thicknessMax', 'detailThreshold', 'smoothingFactor'
+        ];
+        sliders.forEach(id => {
+            const slider = document.getElementById(id);
+            const display = document.getElementById(id + 'Val');
+            if(slider && display) {
+                slider.addEventListener('input', () => display.textContent = slider.value);
+            }
+        });
+
+        imageLoader.addEventListener('change', e => {
+            const file = e.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = event => {
+                    sourceImage.onload = () => {
+                        const resolution = parseInt(document.getElementById('resolutionOutput').value);
+                        const aspectRatio = sourceImage.width / sourceImage.height;
+                        
+                        sourceCanvas.width = resolution;
+                        sourceCanvas.height = resolution / aspectRatio;
+                        outputCanvas.width = sourceCanvas.width;
+                        outputCanvas.height = sourceCanvas.height;
+
+                        sourceCtx.drawImage(sourceImage, 0, 0, sourceCanvas.width, sourceCanvas.height);
+                        outputCtx.fillStyle = 'white';
+                        outputCtx.fillRect(0, 0, outputCanvas.width, outputCanvas.height);
+
+                        generateBtn.disabled = false;
+                        statusEl.textContent = "Immagine caricata. Pronto a generare.";
+                    };
+                    sourceImage.src = event.target.result;
+                }
+                reader.readAsDataURL(file);
+            }
+        });
+
+        generateBtn.addEventListener('click', () => {
+             // Utilizza setTimeout per permettere all'UI di aggiornarsi prima del calcolo pesante
+            statusEl.textContent = 'Generazione in corso... (potrebbe richiedere tempo)';
+            generateBtn.disabled = true;
+
+            setTimeout(() => {
+                const startTime = performance.now();
+                runAlgorithm();
+                const endTime = performance.now();
+                statusEl.textContent = `Generazione completata in ${((endTime - startTime) / 1000).toFixed(2)} secondi.`;
+                generateBtn.disabled = false;
+            }, 10);
+        });
+
+        function getConfig() {
+            return {
+                penColor: document.getElementById('penColor').value,
+                resolutionOutput: parseInt(document.getElementById('resolutionOutput').value),
+                intensityMin: parseFloat(document.getElementById('intensityMin').value),
+                intensityMax: parseFloat(document.getElementById('intensityMax').value),
+                thicknessMin: parseFloat(document.getElementById('thicknessMin').value),
+                thicknessMax: parseFloat(document.getElementById('thicknessMax').value),
+                detailThreshold: parseFloat(document.getElementById('detailThreshold').value),
+                smoothingFactor: parseFloat(document.getElementById('smoothingFactor').value),
+            };
+        }
+        
+        function runAlgorithm() {
+            const config = getConfig();
+            const W = outputCanvas.width;
+            const H = outputCanvas.height;
+
+            outputCtx.fillStyle = 'white';
+            outputCtx.fillRect(0, 0, W, H);
+
+            // --- FASE 1: PREPROCESSING IMMAGINE ---
+            statusEl.textContent = 'Fase 1/3: Preprocessing immagine...';
+            let intensityMap = new Float32Array(W * H);
+            
+            // Crea un canvas temporaneo per l'elaborazione
+            const processingCanvas = document.createElement('canvas');
+            processingCanvas.width = W;
+            processingCanvas.height = H;
+            const processingCtx = processingCanvas.getContext('2d', { willReadFrequently: true });
+            processingCtx.drawImage(sourceImage, 0, 0, W, H);
+
+            // Applica smoothing (simulato con blur CSS per semplicità)
+            if (config.smoothingFactor > 0) {
+                 processingCtx.filter = `blur(${config.smoothingFactor}px)`;
+                 processingCtx.drawImage(processingCanvas, 0, 0);
+                 processingCtx.filter = 'none'; // Resetta il filtro
+            }
+
+            const imageData = processingCtx.getImageData(0, 0, W, H).data;
+
+            for (let i = 0; i < imageData.length; i += 4) {
+                const r = imageData[i];
+                const g = imageData[i + 1];
+                const b = imageData[i + 2];
+                const gray = 0.299 * r + 0.587 * g + 0.114 * b;
+                const intensity = 1.0 - (gray / 255.0); // Inverte
+                const normalizedIntensity = config.intensityMin + (intensity * (config.intensityMax - config.intensityMin));
+                intensityMap[i / 4] = normalizedIntensity;
+            }
+
+            // --- FASE 2: CALCOLO GRADIENTE ---
+            statusEl.textContent = 'Fase 2/3: Calcolo gradiente...';
+            let gradientMap = new Array(W * H);
+            for (let y = 1; y < H - 1; y++) {
+                for (let x = 1; x < W - 1; x++) {
+                    const idx = y * W + x;
+                    const grad_x = intensityMap[idx + 1] - intensityMap[idx - 1];
+                    const grad_y = intensityMap[idx + W] - intensityMap[idx - W];
+                    const mag = Math.sqrt(grad_x * grad_x + grad_y * grad_y);
+                    if (mag > 0) {
+                        gradientMap[idx] = { x: grad_x / mag, y: grad_y / mag };
+                    } else {
+                        gradientMap[idx] = { x: 0, y: 0 };
+                    }
+                }
+            }
+
+            // --- FASE 3: GENERAZIONE PERCORSO CONTINUO ---
+            statusEl.textContent = 'Fase 3/3: Disegno percorso...';
+            let visited = new Uint8Array(W * H);
+            let totalPixels = W * H;
+            let visitedCount = 0;
+
+            function findBestStartPoint() {
+                let maxIntensity = -1;
+                let startPoint = null;
+                // Per performance, non scansiona tutti i pixel ogni volta, ma a campione
+                for (let i = 0; i < 5000; i++) {
+                    const x = Math.floor(Math.random() * W);
+                    const y = Math.floor(Math.random() * H);
+                    const idx = y * W + x;
+                    if (!visited[idx] && intensityMap[idx] > maxIntensity) {
+                         maxIntensity = intensityMap[idx];
+                         startPoint = { x, y };
+                    }
+                }
+                // Se non trova un buon punto a caso, fa una scansione completa
+                if (maxIntensity < config.detailThreshold) {
+                    for(let i = 0; i < intensityMap.length; i++) {
+                        if (!visited[i] && intensityMap[i] > config.detailThreshold) {
+                           return {x: i % W, y: Math.floor(i / W)};
+                        }
+                    }
+                }
+                return startPoint;
+            }
+
+            function findNextPoint(currentPoint, currentDir) {
+                const candidates = [];
+                const searchRadius = 3; // Cerca in una finestra 7x7
+                for (let dy = -searchRadius; dy <= searchRadius; dy++) {
+                    for (let dx = -searchRadius; dx <= searchRadius; dx++) {
+                        if (dx === 0 && dy === 0) continue;
+                        const nx = Math.round(currentPoint.x + dx);
+                        const ny = Math.round(currentPoint.y + dy);
+                        if (nx >= 0 && nx < W && ny >= 0 && ny < H) {
+                            const nIdx = ny * W + nx;
+                            if (!visited[nIdx] && intensityMap[nIdx] > config.detailThreshold) {
+                                const dirVec = { x: dx, y: dy };
+                                const mag = Math.sqrt(dx * dx + dy * dy);
+                                dirVec.x /= mag;
+                                dirVec.y /= mag;
+
+                                const score_intensity = intensityMap[nIdx];
+                                const score_direction = (dirVec.x * currentDir.x + dirVec.y * currentDir.y + 1) / 2; // Prodotto scalare normalizzato a [0,1]
+                                
+                                const score_total = 0.6 * score_intensity + 0.4 * score_direction;
+                                candidates.push({ point: { x: nx, y: ny }, score: score_total });
+                            }
+                        }
+                    }
+                }
+                if (candidates.length === 0) return null;
+                candidates.sort((a, b) => b.score - a.score);
+                return candidates[0].point;
+            }
+
+            function drawSegment(p1, p2, thickness) {
+                outputCtx.beginPath();
+                outputCtx.moveTo(p1.x, p1.y);
+                outputCtx.lineTo(p2.x, p2.y);
+                outputCtx.lineWidth = thickness;
+                outputCtx.strokeStyle = config.penColor;
+                outputCtx.lineCap = 'round'; // Per un effetto più morbido
+                outputCtx.stroke();
+            }
+            
+            // FUNZIONE DisegnaSegmentoMorbido (tradotta in modo efficiente per canvas)
+            function drawSoftDot(p, thickness) {
+                const radius = thickness / 2;
+                if (radius <= 0) return;
+                
+                outputCtx.beginPath();
+                const grad = outputCtx.createRadialGradient(p.x, p.y, 0, p.x, p.y, radius);
+                
+                // Funzione per la curva di Bézier per la morbidezza
+                const easeOutCubic = (t) => 1 - Math.pow(1 - t, 3);
+                
+                grad.addColorStop(0, hexToRgba(config.penColor, 1));
+                grad.addColorStop(0.5, hexToRgba(config.penColor, easeOutCubic(0.5)));
+                grad.addColorStop(1, hexToRgba(config.penColor, 0));
+                
+                outputCtx.fillStyle = grad;
+                outputCtx.arc(p.x, p.y, radius, 0, 2 * Math.PI);
+                outputCtx.fill();
+            }
+
+            function hexToRgba(hex, alpha) {
+                let r = parseInt(hex.slice(1, 3), 16);
+                let g = parseInt(hex.slice(3, 5), 16);
+                let b = parseInt(hex.slice(5, 7), 16);
+                return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+            }
+
+            let currentPoint = findBestStartPoint();
+            while(currentPoint) {
+                let currentDir = gradientMap[currentPoint.y * W + currentPoint.x] || {x: (Math.random() - 0.5) * 2, y: (Math.random() - 0.5) * 2};
+                
+                let lineLength = 0;
+                while(currentPoint && lineLength < 2000) { // Limita la lunghezza di una singola linea continua
+                    const currentIdx = Math.round(currentPoint.y) * W + Math.round(currentPoint.x);
+                    if (currentIdx < 0 || currentIdx >= W*H) break;
+
+                    const intensity = intensityMap[currentIdx];
+                    const thickness = config.thicknessMin + (intensity * (config.thicknessMax - config.thicknessMin));
+                    
+                    drawSoftDot(currentPoint, thickness);
+
+                    // Marca come visitato un'area, non solo un pixel
+                    const visitRadius = Math.ceil(thickness / 2);
+                    for (let vy = -visitRadius; vy <= visitRadius; vy++) {
+                        for (let vx = -visitRadius; vx <= visitRadius; vx++) {
+                            const visitX = Math.round(currentPoint.x) + vx;
+                            const visitY = Math.round(currentPoint.y) + vy;
+                            if(visitX >= 0 && visitX < W && visitY >=0 && visitY < H) {
+                                const vIdx = visitY * W + visitX;
+                                if (!visited[vIdx]) {
+                                    visited[vIdx] = 1;
+                                    visitedCount++;
+                                }
+                            }
+                        }
+                    }
+
+                    const nextPoint = findNextPoint(currentPoint, currentDir);
+                    if(nextPoint) {
+                        const newDirVec = { x: nextPoint.x - currentPoint.x, y: nextPoint.y - currentPoint.y };
+                        const mag = Math.sqrt(newDirVec.x**2 + newDirVec.y**2);
+                        if (mag > 0) {
+                            const newDir = { x: newDirVec.x / mag, y: newDirVec.y / mag };
+                            // Interpola vettori per smussare la direzione
+                            currentDir.x = currentDir.x * 0.7 + newDir.x * 0.3;
+                            currentDir.y = currentDir.y * 0.7 + newDir.y * 0.3;
+                        }
+                        currentPoint = nextPoint;
+                    } else {
+                        currentPoint = null;
+                    }
+                    lineLength++;
+                }
+
+                // Trova il prossimo punto di partenza
+                currentPoint = findBestStartPoint();
+            }
+        }
+    });
+    </script>
+</body>
+</html>

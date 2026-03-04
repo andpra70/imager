@@ -1,0 +1,533 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Canvas Crosshatcher - Actual Size</title>
+    <style>
+        body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; gap: 10px; margin-bottom: 50px; }
+
+        canvas {
+            border: 1px solid black;
+            background-color: white;
+            display: block; 
+            margin: auto; 
+        }
+
+        .canvases {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            justify-content: center;
+            width: 100%; 
+        }
+
+        .canvas-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center; 
+            max-width: calc(50% - 20px);
+            min-width: 250px; 
+            max-height: 75vh;
+            overflow: auto;   
+            border: 1px solid #ddd;
+            padding: 10px;
+            box-sizing: border-box;
+        }
+        .canvas-container p { margin-top: 0; }
+
+
+        label, button { padding: 8px 12px; background-color: #f0f0f0; border: 1px solid #ccc; cursor: pointer; border-radius: 4px; }
+        input[type="file"] { display: none; }
+        .controls {
+            display: flex; gap: 10px; align-items: center; margin-bottom: 10px;
+            flex-wrap: wrap; justify-content: center;
+            padding: 15px; border: 2px dashed #ccc; border-radius: 8px;
+            transition: background-color 0.2s, border-color 0.2s;
+        }
+        .controls.dragover {
+            background-color: #e0e0e0;
+            border-color: #aaa;
+        }
+        .controls label, .controls div { display: flex; flex-direction: column; font-size: 0.8em; align-items: center;}
+        .controls input[type="number"] { width: 60px; text-align: right; }
+        progress { width: 80%; max-width: 400px; margin-top: 5px; }
+    </style>
+</head>
+<body>
+    <h1>Canvas Image Crosshatcher</h1>
+
+    <div class="controls" id="dropZone">
+        <input type="file" id="imageLoader" accept="image/*">
+        <label for="imageLoader" id="uploadLabel">Load Image (or Drop Here)</label>
+        <button id="startButton" disabled>Start Crosshatching</button>
+        <button id="stopButton" disabled>Stop</button>
+        <button id="saveSvgButton" disabled>Save SVG</button>
+        <button id="saveJpgButton" disabled>Save JPG</button> <!-- PULSANTE JPG AGGIUNTO -->
+        <div>
+            <label for="darknessThreshold">Agent Min Darkness (0-255):
+                <input type="number" id="darknessThreshold" value="50" min="0" max="255">
+            </label>
+        </div>
+        <div>
+            <label for="lightenAmount">Lighten Amount (1-50):
+                <input type="number" id="lightenAmount" value="10" min="1" max="50">
+            </label>
+        </div>
+        <div>
+            <label for="lineAlpha">Line Alpha (0.01-1.0):
+                <input type="number" id="lineAlpha" value="0.1" min="0.01" max="1.0" step="0.01">
+            </label>
+        </div>
+         <div>
+            <label for="maxPaths">Max Paths:
+                <input type="number" id="maxPaths" value="5000" min="100">
+            </label>
+        </div>
+        <div>
+            <label for="scaleFactor">Output Scale (1-10):
+                <input type="number" id="scaleFactor" value="1" min="1" max="10" step="0.1">
+            </label>
+        </div>
+    </div>
+
+    <progress id="progressBar" value="0" max="100"></progress>
+    <p id="status">Status: Idle</p>
+
+    <div class="canvases">
+        <div class="canvas-container">
+            <p>Original / Working Reference (1x):</p>
+            <canvas id="sourceCanvas"></canvas>
+        </div>
+        <div class="canvas-container">
+            <p>Crosshatched Output (Canvas):</p>
+            <canvas id="outputCanvas"></canvas>
+        </div>
+    </div>
+
+    <script>
+        const imageLoader = document.getElementById('imageLoader');
+        const startButton = document.getElementById('startButton');
+        const stopButton = document.getElementById('stopButton');
+        const saveSvgButton = document.getElementById('saveSvgButton');
+        const saveJpgButton = document.getElementById('saveJpgButton'); // RIFERIMENTO PULSANTE JPG
+        const sourceCanvas = document.getElementById('sourceCanvas');
+        const outputCanvas = document.getElementById('outputCanvas');
+        const statusP = document.getElementById('status');
+        const progressBar = document.getElementById('progressBar');
+        const dropZone = document.getElementById('dropZone');
+        const uploadLabel = document.getElementById('uploadLabel');
+
+        const sCtx = sourceCanvas.getContext('2d', { willReadFrequently: true });
+        const oCtx = outputCanvas.getContext('2d');
+
+        let originalImageData = null;
+        let workingImageData = null;
+        let imgWidth, imgHeight;
+        let stopProcessing = false;
+        let svgElements = [];
+
+        let DARKNESS_THRESHOLD_AGENT;
+        let LIGHTEN_AMOUNT;
+        let LINE_ALPHA;
+        let MAX_PATHS;
+        let SCALE_FACTOR;
+
+        imageLoader.addEventListener('change', (event) => {
+            const file = event.target.files[0];
+            if (file) {
+                processLoadedFile(file);
+            }
+        });
+        startButton.addEventListener('click', startCrosshatching);
+        stopButton.addEventListener('click', () => {
+            stopProcessing = true;
+            statusP.textContent = "Status: Stopping...";
+            stopButton.disabled = true; 
+        });
+        saveSvgButton.addEventListener('click', saveSVG);
+        saveJpgButton.addEventListener('click', saveJPG); // EVENT LISTENER PULSANTE JPG
+
+        // --- Drag and Drop ---
+        dropZone.addEventListener('dragover', (event) => {
+            event.preventDefault(); 
+            dropZone.classList.add('dragover');
+        });
+
+        dropZone.addEventListener('dragleave', () => {
+            dropZone.classList.remove('dragover');
+        });
+
+        dropZone.addEventListener('drop', (event) => {
+            event.preventDefault();
+            dropZone.classList.remove('dragover');
+            const files = event.dataTransfer.files;
+            if (files.length > 0) {
+                const file = files[0];
+                if (file.type.startsWith('image/')) {
+                    processLoadedFile(file);
+                } else {
+                    alert('Please drop an image file.');
+                }
+            }
+        });
+        // --- End Drag and Drop ---
+
+        function processLoadedFile(file) {
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const img = new Image();
+                img.onload = function() {
+                    imgWidth = img.width;
+                    imgHeight = img.height;
+
+                    sourceCanvas.width = imgWidth;
+                    sourceCanvas.height = imgHeight;
+
+                    sCtx.drawImage(img, 0, 0);
+                    originalImageData = sCtx.getImageData(0, 0, imgWidth, imgHeight);
+                    
+                    workingImageData = sCtx.createImageData(imgWidth, imgHeight);
+                    resetWorkingImageData();
+                    sCtx.putImageData(workingImageData, 0, 0);
+
+                    clearOutput(); 
+                    
+                    startButton.disabled = false;
+                    stopButton.disabled = true;
+                    saveSvgButton.disabled = true;
+                    saveJpgButton.disabled = true; // Disabilita anche il pulsante JPG
+                    statusP.textContent = "Status: Image loaded. Ready to start.";
+                    uploadLabel.textContent = `Image: ${file.name.substring(0,20)}... (or Drop Here)`;
+                    stopProcessing = false; 
+                }
+                img.src = e.target.result;
+            }
+            reader.readAsDataURL(file);
+        }
+
+
+        function updateParams() {
+            DARKNESS_THRESHOLD_AGENT = parseInt(document.getElementById('darknessThreshold').value);
+            LIGHTEN_AMOUNT = parseInt(document.getElementById('lightenAmount').value);
+            LINE_ALPHA = parseFloat(document.getElementById('lineAlpha').value);
+            MAX_PATHS = parseInt(document.getElementById('maxPaths').value);
+            SCALE_FACTOR = parseFloat(document.getElementById('scaleFactor').value);
+            progressBar.max = MAX_PATHS;
+        }
+
+        function resetWorkingImageData() {
+            if (!originalImageData) return;
+            for (let i = 0; i < originalImageData.data.length; i += 4) {
+                const r = originalImageData.data[i];
+                const g = originalImageData.data[i + 1];
+                const b = originalImageData.data[i + 2];
+                const grayscale = Math.round(0.299 * r + 0.587 * g + 0.114 * b);
+                workingImageData.data[i] = grayscale;
+                workingImageData.data[i + 1] = grayscale;
+                workingImageData.data[i + 2] = grayscale;
+                workingImageData.data[i + 3] = 255;
+            }
+        }
+
+        function clearOutput() {
+            const currentScale = parseFloat(document.getElementById('scaleFactor').value) || 1;
+            svgElements = [];
+            saveSvgButton.disabled = true;
+            saveJpgButton.disabled = true;
+
+            if (imgWidth && imgHeight) {
+                const outWidth = Math.round(imgWidth * currentScale);
+                const outHeight = Math.round(imgHeight * currentScale);
+
+                outputCanvas.width = outWidth;
+                outputCanvas.height = outHeight;
+                oCtx.fillStyle = 'white';
+                oCtx.fillRect(0, 0, outWidth, outHeight);
+
+            } else { 
+                outputCanvas.width = 10; outputCanvas.height = 10;
+                oCtx.fillStyle = 'white';
+                oCtx.fillRect(0,0,10,10);
+            }
+        }
+
+
+        function getPixelGrayscale(imageData, x, y) {
+            if (x < 0 || x >= imageData.width || y < 0 || y >= imageData.height) {
+                return 255; 
+            }
+            const index = (y * imageData.width + x) * 4;
+            return imageData.data[index]; 
+        }
+
+        function lightenPixel(imageData, x, y, amount) {
+            if (x < 0 || x >= imageData.width || y < 0 || y >= imageData.height) {
+                return;
+            }
+            const index = (y * imageData.width + x) * 4;
+            imageData.data[index] = Math.min(255, imageData.data[index] + amount);
+            imageData.data[index + 1] = Math.min(255, imageData.data[index + 1] + amount);
+            imageData.data[index + 2] = Math.min(255, imageData.data[index + 2] + amount);
+        }
+        
+        function bresenhamLine(x0, y0, x1, y1, callback) {
+            let dx = Math.abs(x1 - x0);
+            let dy = Math.abs(y1 - y0);
+            let sx = (x0 < x1) ? 1 : -1;
+            let sy = (y0 < y1) ? 1 : -1;
+            let err = dx - dy;
+
+            while (true) {
+                callback(x0, y0);
+                if ((x0 === x1) && (y0 === y1)) break;
+                let e2 = 2 * err;
+                if (e2 > -dy) { err -= dy; x0 += sx; }
+                if (e2 < dx) { err += dx; y0 += sy; }
+            }
+        }
+
+        function findDarkestStartPoint(imageData) {
+            let darkestValue = 255; 
+            let startPoint = null;
+            const minDarknessForStart = DARKNESS_THRESHOLD_AGENT > 0 ? DARKNESS_THRESHOLD_AGENT - 1 : 0; 
+
+            const step = Math.max(1, Math.floor(Math.min(imgWidth, imgHeight) / 100)); 
+
+            for (let y = 0; y < imageData.height; y += step) {
+                for (let x = imageData.width - 1; x >= 0; x -= step) {
+                    if (stopProcessing) return null;
+                    const gray = getPixelGrayscale(imageData, x, y);
+                    if (gray < darkestValue && gray <= minDarknessForStart) {
+                        darkestValue = gray;
+                        startPoint = { x, y };
+                    }
+                }
+            }
+            if (!startPoint && step > 1) {
+                 for (let y = 0; y < imageData.height; y++) {
+                    for (let x = imageData.width - 1; x >= 0; x--) {
+                         if (stopProcessing) return null;
+                        const gray = getPixelGrayscale(imageData, x, y);
+                        if (gray < darkestValue && gray <= minDarknessForStart) {
+                            darkestValue = gray;
+                            startPoint = { x, y };
+                        }
+                    }
+                }
+            }
+            return startPoint;
+        }
+
+        async function startCrosshatching() {
+            if (!workingImageData) {
+                alert("Please load an image first.");
+                return;
+            }
+            updateParams(); 
+            stopProcessing = false;
+            startButton.disabled = true;
+            stopButton.disabled = false;
+            saveSvgButton.disabled = true;
+            saveJpgButton.disabled = true; // Disabilita durante l'elaborazione
+            statusP.textContent = "Status: Processing...";
+            progressBar.value = 0;
+
+            resetWorkingImageData();
+            sCtx.putImageData(workingImageData, 0, 0);
+
+            clearOutput(); 
+            svgElements = [];
+
+            oCtx.strokeStyle = `rgba(0, 0, 0, ${LINE_ALPHA})`;
+            oCtx.lineWidth = 1; 
+
+            let pathsDrawn = 0;
+
+            for (pathsDrawn = 0; pathsDrawn < MAX_PATHS; pathsDrawn++) {
+                if (stopProcessing) {
+                    statusP.textContent = `Status: Stopped by user after ${pathsDrawn} paths.`;
+                    break;
+                }
+
+                progressBar.value = pathsDrawn;
+                const startPoint = findDarkestStartPoint(workingImageData);
+
+                if (!startPoint) {
+                    statusP.textContent = `Status: Finished. No more dark points found after ${pathsDrawn} paths.`;
+                    break;
+                }
+                if (pathsDrawn % 10 === 0) {
+                    statusP.textContent = `Status: Drawing path ${pathsDrawn + 1}/${MAX_PATHS}.`;
+                }
+                
+                const currentPath = [{x: startPoint.x, y: startPoint.y}];
+                const visitedInThisPath = new Set();
+                visitedInThisPath.add(`${startPoint.x},${startPoint.y}`);
+
+                let currentX = startPoint.x;
+                let currentY = startPoint.y;
+                
+                const MAX_PATH_LENGTH = Math.max(imgWidth, imgHeight) / 2;
+
+                for (let stepCount = 0; stepCount < MAX_PATH_LENGTH; stepCount++) {
+                    let bestNeighbor = null;
+                    let minGray = 255;
+
+                    const directions = [
+                        {dx: 0, dy: -1}, {dx: 1, dy: -1}, {dx: 1, dy: 0}, {dx: 1, dy: 1},
+                        {dx: 0, dy: 1}, {dx: -1, dy: 1}, {dx: -1, dy: 0}, {dx: -1, dy: -1}
+                    ];
+                    for (let i = directions.length - 1; i > 0; i--) {
+                        const j = Math.floor(Math.random() * (i + 1));
+                        [directions[i], directions[j]] = [directions[j], directions[i]];
+                    }
+
+                    for (const dir of directions) {
+                        const nextX = currentX + dir.dx;
+                        const nextY = currentY + dir.dy;
+
+                        if (visitedInThisPath.has(`${nextX},${nextY}`)) continue;
+
+                        const neighborGray = getPixelGrayscale(workingImageData, nextX, nextY);
+
+                        if (neighborGray < minGray && neighborGray < DARKNESS_THRESHOLD_AGENT) {
+                            minGray = neighborGray;
+                            bestNeighbor = { x: nextX, y: nextY };
+                        }
+                    }
+
+                    if (bestNeighbor) {
+                        currentPath.push(bestNeighbor);
+                        visitedInThisPath.add(`${bestNeighbor.x},${bestNeighbor.y}`);
+                        currentX = bestNeighbor.x;
+                        currentY = bestNeighbor.y;
+                    } else {
+                        break; 
+                    }
+                }
+
+                if (currentPath.length > 1) {
+                    oCtx.beginPath();
+                    oCtx.moveTo(Math.round(currentPath[0].x * SCALE_FACTOR), Math.round(currentPath[0].y * SCALE_FACTOR));
+                    
+                    let pathData = `M${Math.round(currentPath[0].x * SCALE_FACTOR)} ${Math.round(currentPath[0].y * SCALE_FACTOR)}`;
+
+                    for (let i = 1; i < currentPath.length; i++) {
+                        const prevP = currentPath[i-1];
+                        const currP = currentPath[i];
+                        
+                        const scaledCurrX = Math.round(currP.x * SCALE_FACTOR);
+                        const scaledCurrY = Math.round(currP.y * SCALE_FACTOR);
+                        oCtx.lineTo(scaledCurrX, scaledCurrY);
+                        
+                        pathData += ` L${scaledCurrX} ${scaledCurrY}`;
+                        
+                        bresenhamLine(prevP.x, prevP.y, currP.x, currP.y, (lx, ly) => {
+                             lightenPixel(workingImageData, lx, ly, LIGHTEN_AMOUNT);
+                        });
+                    }
+                    oCtx.stroke();
+                    svgElements.push(`<path d="${pathData}"/>`);
+                    
+                    if (pathsDrawn % 50 === 0 || pathsDrawn < 10) { 
+                        sCtx.putImageData(workingImageData, 0, 0);
+                        await new Promise(resolve => setTimeout(resolve, 0));
+                    }
+                }
+            } 
+
+            sCtx.putImageData(workingImageData, 0, 0); 
+            
+            if (pathsDrawn >= MAX_PATHS && !stopProcessing) {
+                 statusP.textContent = `Status: Finished. Reached max paths (${MAX_PATHS}).`;
+            }
+            progressBar.value = pathsDrawn;
+
+            startButton.disabled = false;
+            stopButton.disabled = true;
+            if (svgElements.length > 0) {
+                saveSvgButton.disabled = false;
+                saveJpgButton.disabled = false; // Abilita anche il pulsante JPG
+            }
+            console.log("Crosshatching complete or stopped.");
+        }
+        
+        // --- NUOVA FUNZIONE PER SALVARE JPG ---
+        function saveJPG() {
+            if (!outputCanvas || outputCanvas.width <= 10) {
+                alert("Nothing to save.");
+                return;
+            }
+            
+            // Converte il contenuto del canvas in una Data URL in formato JPEG
+            // Il secondo parametro è la qualità (da 0.0 a 1.0)
+            const dataURL = outputCanvas.toDataURL('image/jpeg', 0.9);
+            
+            // Crea un link temporaneo per avviare il download
+            const a = document.createElement('a');
+            a.href = dataURL;
+            a.download = 'crosshatch_output.jpg';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+
+            statusP.textContent = 'Status: JPG file saved.';
+        }
+
+
+        function generateFullSVGString() {
+            if (!imgWidth || !imgHeight) return '';
+
+            const outWidth = Math.round(imgWidth * SCALE_FACTOR);
+            const outHeight = Math.round(imgHeight * SCALE_FACTOR);
+            
+            const styleGroup = `<g stroke="black" stroke-opacity="${LINE_ALPHA}" stroke-width="1" fill="none">`;
+
+            const svgContent = [
+                `<svg width="${outWidth}" height="${outHeight}" viewBox="0 0 ${outWidth} ${outHeight}" xmlns="http://www.w3.org/2000/svg">`,
+                // Opzionale: aggiungi un rettangolo di sfondo bianco per l'SVG
+                // `<rect width="100%" height="100%" fill="white"/>`,
+                styleGroup,
+                ...svgElements,
+                '</g>',
+                '</svg>'
+            ].join('\n');
+
+            return svgContent;
+        }
+
+        function saveSVG() {
+            const svgString = generateFullSVGString();
+            if (!svgString) {
+                alert("Nothing to save.");
+                return;
+            }
+
+            const blob = new Blob([svgString], { type: 'image/svg+xml' });
+            const url = URL.createObjectURL(blob);
+            
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'crosshatch_output.svg';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            
+            statusP.textContent = 'Status: SVG file saved.';
+        }
+
+        updateParams();
+        ['darknessThreshold', 'lightenAmount', 'lineAlpha', 'maxPaths', 'scaleFactor'].forEach(id => {
+            document.getElementById(id).addEventListener('change', () => {
+                updateParams(); 
+                if (originalImageData) { 
+                    clearOutput(); 
+                }
+            });
+        });
+        clearOutput();
+    </script>
+</body>
+</html>

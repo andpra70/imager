@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rilevamento Posa Umana</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+            background-color: #f0f2f5;
+            color: #333;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin: 0;
+            padding: 20px;
+        }
+        h1 {
+            color: #1a73e8;
+        }
+        #container {
+            margin-top: 20px;
+            padding: 20px;
+            background-color: white;
+            border-radius: 8px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+            text-align: center;
+        }
+        #image-input {
+            margin-bottom: 20px;
+        }
+        #loading-message {
+            color: #e67e22;
+            font-weight: bold;
+            padding: 10px;
+            border: 1px solid #e67e22;
+            border-radius: 5px;
+            background-color: #fdf5e6;
+            display: none; /* Nascosto di default */
+        }
+        canvas {
+            max-width: 100%;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            margin-top: 15px;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>Rilevamento Posa Umana con TensorFlow.js</h1>
+    <p>Carica un'immagine per trovare la posa di una persona e vedere le parti del corpo evidenziate.</p>
+
+    <div id="container">
+        <input type="file" id="image-input" accept="image/*" disabled>
+        <div id="loading-message">Caricamento del modello in corso, attendere...</div>
+        <canvas id="output-canvas"></canvas>
+    </div>
+
+    <!-- Caricamento delle librerie da CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection@latest/dist/pose-detection.min.js"></script>
+
+    <script>
+        // Riferimenti agli elementi HTML
+        const imageInput = document.getElementById('image-input');
+        const canvas = document.getElementById('output-canvas');
+        const ctx = canvas.getContext('2d');
+        const loadingMessage = document.getElementById('loading-message');
+
+        let detector; // La variabile che conterrà il nostro modello
+
+        // Funzione helper per trovare un punto chiave per nome
+        function getKeypoint(keypoints, name) {
+            return keypoints.find(kp => kp.name === name);
+        }
+
+        // Funzione helper per calcolare il rettangolo che contiene un gruppo di punti
+        function getBoundingBoxForPoints(points, padding = 10) {
+            if (!points || points.length === 0 || points.some(p => !p)) {
+                 return null; // Se uno dei punti non è valido, non disegniamo nulla
+            }
+            
+            // Filtra i punti che potrebbero avere una confidence bassa (opzionale ma consigliato)
+            const validPoints = points.filter(p => p.score > 0.3);
+            if (validPoints.length === 0) return null;
+
+            let minX = Infinity, minY = Infinity;
+            let maxX = -Infinity, maxY = -Infinity;
+
+            validPoints.forEach(point => {
+                minX = Math.min(minX, point.x);
+                minY = Math.min(minY, point.y);
+                maxX = Math.max(maxX, point.x);
+                maxY = Math.max(maxY, point.y);
+            });
+
+            // Aggiungi un margine (padding) per rendere il rettangolo più visibile
+            minX -= padding;
+            minY -= padding;
+            maxX += padding;
+            maxY += padding;
+            
+            return {
+                x: minX,
+                y: minY,
+                width: maxX - minX,
+                height: maxY - minY
+            };
+        }
+
+        // Funzione per disegnare i rettangoli e le etichette
+        function drawBoundingBoxes(keypoints) {
+            ctx.strokeStyle = '#00ff00'; // Verde brillante
+            ctx.lineWidth = 4;
+            ctx.fillStyle = '#00ff00';
+            ctx.font = '16px Arial';
+
+            const partsToDraw = {
+                'Testa': [
+                    getKeypoint(keypoints, 'nose'),
+                    getKeypoint(keypoints, 'left_eye'),
+                    getKeypoint(keypoints, 'right_eye'),
+                    getKeypoint(keypoints, 'left_ear'),
+                    getKeypoint(keypoints, 'right_ear')
+                ],
+                'Torso': [
+                    getKeypoint(keypoints, 'left_shoulder'),
+                    getKeypoint(keypoints, 'right_shoulder'),
+                    getKeypoint(keypoints, 'left_hip'),
+                    getKeypoint(keypoints, 'right_hip')
+                ],
+                'Gamba Sinistra': [
+                    getKeypoint(keypoints, 'left_hip'),
+                    getKeypoint(keypoints, 'left_knee'),
+                    getKeypoint(keypoints, 'left_ankle')
+                ],
+                'Gamba Destra': [
+                    getKeypoint(keypoints, 'right_hip'),
+                    getKeypoint(keypoints, 'right_knee'),
+                    getKeypoint(keypoints, 'right_ankle')
+                ],
+                'Mano/Braccio Sinistro': [ // Usiamo gomito e polso per l'avambraccio
+                    getKeypoint(keypoints, 'left_elbow'),
+                    getKeypoint(keypoints, 'left_wrist')
+                ],
+                'Mano/Braccio Destro': [
+                    getKeypoint(keypoints, 'right_elbow'),
+                    getKeypoint(keypoints, 'right_wrist')
+                ],
+                'Piede Sinistro': [ // Disegniamo un piccolo box attorno alla caviglia
+                    getKeypoint(keypoints, 'left_ankle')
+                ],
+                'Piede Destro': [
+                    getKeypoint(keypoints, 'right_ankle')
+                ],
+                'Collo': [ // Il collo è tra le spalle e sotto la testa
+                     getKeypoint(keypoints, 'left_shoulder'),
+                     getKeypoint(keypoints, 'right_shoulder'),
+                     getKeypoint(keypoints, 'nose') // Usato per calcolare la posizione verticale
+                ]
+            };
+
+            for (const [label, points] of Object.entries(partsToDraw)) {
+                let box;
+                // Gestione speciale per il collo, che non è un Bounding Box standard
+                if (label === 'Collo') {
+                    const l_shoulder = points[0];
+                    const r_shoulder = points[1];
+                    const nose = points[2];
+                    if (l_shoulder && r_shoulder && nose && l_shoulder.score > 0.3 && r_shoulder.score > 0.3 && nose.score > 0.3) {
+                       const neckTopY = (l_shoulder.y + r_shoulder.y) / 2 - (Math.abs((l_shoulder.y + r_shoulder.y) / 2 - nose.y) / 2);
+                       const neckBottomY = (l_shoulder.y + r_shoulder.y) / 2;
+                       box = {
+                           x: Math.min(l_shoulder.x, r_shoulder.x),
+                           y: neckTopY,
+                           width: Math.abs(l_shoulder.x - r_shoulder.x),
+                           height: neckBottomY - neckTopY + 10 // Aggiungo un po' di altezza
+                       };
+                    }
+                } else if (label.includes('Piede')) {
+                    // Per i piedi, disegniamo un box con padding maggiore attorno alla caviglia
+                    box = getBoundingBoxForPoints(points, 25);
+                }
+                else {
+                    box = getBoundingBoxForPoints(points, 15);
+                }
+
+                if (box) {
+                    ctx.strokeRect(box.x, box.y, box.width, box.height);
+                    ctx.fillText(label, box.x, box.y - 5);
+                }
+            }
+        }
+        
+        // Funzione principale che gestisce l'analisi dell'immagine
+        async function detectPoseOnImage(image) {
+            loadingMessage.innerText = 'Analisi dell\'immagine in corso...';
+            loadingMessage.style.display = 'block';
+
+            // Adatta le dimensioni della canvas all'immagine
+            canvas.width = image.width;
+            canvas.height = image.height;
+
+            // Disegna l'immagine originale sulla canvas
+            ctx.drawImage(image, 0, 0);
+
+            // Stima la posa
+            const poses = await detector.estimatePoses(image, {
+                maxPoses: 1, // Ci concentriamo su una sola persona
+                flipHorizontal: false
+            });
+
+            if (poses && poses.length > 0) {
+                // Se viene trovata una posa, disegna i rettangoli
+                drawBoundingBoxes(poses[0].keypoints);
+            } else {
+                alert('Nessuna persona rilevata nell\'immagine.');
+            }
+
+            loadingMessage.style.display = 'none';
+        }
+
+        // Gestisce il caricamento del file da parte dell'utente
+        imageInput.addEventListener('change', async (event) => {
+            const file = event.target.files[0];
+            if (!file) {
+                return;
+            }
+
+            const image = new Image();
+            const imageUrl = URL.createObjectURL(file);
+            
+            image.onload = () => {
+                detectPoseOnImage(image);
+                // Libera la memoria dall'URL dell'oggetto
+                URL.revokeObjectURL(imageUrl);
+            };
+            
+            image.src = imageUrl;
+        });
+
+        // Funzione di inizializzazione che carica il modello
+        async function init() {
+            loadingMessage.style.display = 'block';
+            
+            // Carica il modello MoveNet
+            const model = poseDetection.SupportedModels.MoveNet;
+            detector = await poseDetection.createDetector(model);
+            
+            loadingMessage.innerText = 'Modello caricato! Scegli un\'immagine.';
+            setTimeout(() => { loadingMessage.style.display = 'none'; }, 2000);
+
+            // Abilita il pulsante di input file
+            imageInput.disabled = false;
+        }
+
+        // Avvia l'applicazione
+        init();
+
+    </script>
+</body>
+</html>

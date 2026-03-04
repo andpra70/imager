@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SVG a PDF/PNG/JPG Convertitore</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            margin: 20px;
+            background-color: #f4f4f4;
+            color: #333;
+        }
+        .container {
+            background-color: #fff;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }
+        #svgPreview {
+            border: 1px solid #ccc;
+            margin-top: 15px;
+            margin-bottom: 15px;
+            padding: 10px;
+            max-width: 100%; 
+            max-height: 400px; 
+            overflow: auto; 
+            background-color: #eee;
+        }
+        #svgPreview svg {
+            max-width: 100%; 
+            height: auto;
+            display: block;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 15px;
+            text-align: center;
+            text-decoration: none;
+            display: inline-block;
+            font-size: 16px;
+            margin: 10px 5px 0 0;
+            cursor: pointer;
+            border-radius: 4px;
+        }
+        button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        .download-link {
+            margin-top: 15px;
+            margin-right: 10px;
+            padding: 10px 15px;
+            color: white;
+            text-decoration: none;
+            border-radius: 4px;
+            display: inline-block; /* Nascosti di default via JS, poi mostrati */
+        }
+        #downloadLink { background-color: #17a2b8; } 
+        #downloadPngLink { background-color: #28a745; } 
+        #downloadJpgLink { background-color: #ffc107; color:#212529; } 
+        
+        #status {
+            margin-top: 10px;
+            font-style: italic;
+            color: #555;
+            min-height: 1.2em; 
+        }
+        #progressBar {
+            width: 100%;
+            margin-top: 10px;
+            height: 20px;
+        }
+        .controls-group, .downloads-group {
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h1>Convertitore SVG Multi-formato</h1>
+
+        <p>Seleziona un file SVG da caricare:</p>
+        <input type="file" id="svgFile" accept=".svg">
+
+        <div id="status">Nessun file SVG caricato.</div>
+        <progress id="progressBar" value="0" max="100" style="display: none;"></progress>
+
+        <h2>Anteprima SVG:</h2>
+        <div id="svgPreview">
+            <!-- L'SVG caricato verrà mostrato qui -->
+        </div>
+
+        <div class="controls-group">
+            <button id="convertToPdfButton" disabled>Converti in PDF</button>
+            <button id="saveToPngButton" disabled>Salva come PNG</button>
+            <button id="saveToJpgButton" disabled>Salva come JPG</button>
+        </div>
+        
+        <div class="downloads-group">
+            <a id="downloadLink" class="download-link" href="#" download="converted.pdf" style="display:none;">Scarica PDF</a>
+            <a id="downloadPngLink" class="download-link" href="#" download="converted.png" style="display:none;">Scarica PNG</a>
+            <a id="downloadJpgLink" class="download-link" href="#" download="converted.jpg" style="display:none;">Scarica JPG</a>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/svg2pdf.js@2.2.2/dist/svg2pdf.umd.min.js"></script>
+
+    <script>
+        const svgFile = document.getElementById('svgFile');
+        const svgPreview = document.getElementById('svgPreview');
+        const statusDiv = document.getElementById('status');
+        const progressBar = document.getElementById('progressBar');
+
+        const convertToPdfButton = document.getElementById('convertToPdfButton');
+        const saveToPngButton = document.getElementById('saveToPngButton');
+        const saveToJpgButton = document.getElementById('saveToJpgButton');
+        
+        const downloadLink = document.getElementById('downloadLink');
+        const downloadPngLink = document.getElementById('downloadPngLink');
+        const downloadJpgLink = document.getElementById('downloadJpgLink');
+
+        let loadedSvgString = null;
+        let loadedSvgElement = null; 
+        let originalFileName = 'converted';
+
+        function setAllButtonsDisabled(disabled) {
+            convertToPdfButton.disabled = disabled;
+            saveToPngButton.disabled = disabled;
+            saveToJpgButton.disabled = disabled;
+        }
+
+        function hideAllDownloadLinks() {
+            downloadLink.style.display = 'none';
+            downloadPngLink.style.display = 'none';
+            downloadJpgLink.style.display = 'none';
+        }
+
+        function updateProgressBar(value, show = true) {
+            if (show) {
+                progressBar.style.display = 'block';
+            }
+            if (value === null) { // Indeterminato
+                progressBar.removeAttribute('value');
+            } else {
+                progressBar.value = value;
+            }
+        }
+
+        function hideProgressBar() {
+            progressBar.style.display = 'none';
+            progressBar.value = 0; 
+        }
+        
+        svgFile.addEventListener('change', function(event) {
+            hideProgressBar(); // Nasconde la barra se era visibile da un'operazione precedente
+            const file = event.target.files[0];
+            if (file && file.type === "image/svg+xml") {
+                const reader = new FileReader();
+                reader.onloadstart = () => {
+                    statusDiv.textContent = 'Caricamento file SVG...';
+                    updateProgressBar(30, true); // Mostra progresso per il caricamento
+                };
+                reader.onprogress = (event) => { // Potrebbe non essere molto utile per file piccoli
+                    if (event.lengthComputable) {
+                        const percentLoaded = Math.round((event.loaded / event.total) * 100);
+                        updateProgressBar(percentLoaded > 30 ? percentLoaded : 30); // Evita di andare sotto il 30
+                    }
+                };
+                reader.onload = function(e) {
+                    updateProgressBar(100);
+                    setTimeout(hideProgressBar, 200);
+
+                    loadedSvgString = e.target.result;
+                    svgPreview.innerHTML = loadedSvgString; 
+                    
+                    const parser = new DOMParser();
+                    const svgDoc = parser.parseFromString(loadedSvgString, "image/svg+xml");
+                    loadedSvgElement = svgDoc.documentElement;
+
+                    originalFileName = file.name.split('.').slice(0, -1).join('.') || 'converted';
+
+                    setAllButtonsDisabled(false);
+                    hideAllDownloadLinks();
+                    statusDiv.textContent = `File "${file.name}" caricato. Pronto per la conversione.`;
+                };
+                reader.onerror = () => {
+                    hideProgressBar();
+                    statusDiv.textContent = 'Errore durante la lettura del file.';
+                }
+                reader.readAsText(file);
+            } else {
+                svgPreview.innerHTML = '<i>Anteprima non disponibile.</i>';
+                loadedSvgString = null;
+                loadedSvgElement = null;
+                originalFileName = 'converted';
+                setAllButtonsDisabled(true);
+                hideAllDownloadLinks();
+                statusDiv.textContent = 'Per favore, seleziona un file SVG valido.';
+                if (file) { 
+                    alert("Il file selezionato non è un SVG. Per favore, scegli un file .svg");
+                }
+            }
+        });
+
+        function getSvgDimensions(svgElement) {
+            let svgWidth = parseFloat(svgElement.getAttribute('width'));
+            let svgHeight = parseFloat(svgElement.getAttribute('height'));
+            const viewBox = svgElement.getAttribute('viewBox');
+
+            if ((isNaN(svgWidth) || isNaN(svgHeight) || svgWidth <= 0 || svgHeight <= 0) && viewBox) {
+                const parts = viewBox.split(/[\s,]+/); 
+                if (parts.length === 4) {
+                    svgWidth = parseFloat(parts[2]);
+                    svgHeight = parseFloat(parts[3]);
+                }
+            }
+
+            if (isNaN(svgWidth) || isNaN(svgHeight) || svgWidth <= 0 || svgHeight <= 0) {
+                return { width: 300, height: 150, error: "Dimensioni SVG non trovate, usando fallback 300x150." };
+            }
+            return { width: svgWidth, height: svgHeight };
+        }
+
+
+        convertToPdfButton.addEventListener('click', async function() {
+            if (!loadedSvgElement) {
+                alert("Per favore, carica prima un file SVG.");
+                return;
+            }
+
+            statusDiv.textContent = 'Conversione in PDF in corso...';
+            setAllButtonsDisabled(true);
+            hideAllDownloadLinks();
+            updateProgressBar(10, true);
+
+            try {
+                const { jsPDF } = window.jspdf;
+                updateProgressBar(20);
+                
+                let { width: svgWidth, height: svgHeight, error: dimError } = getSvgDimensions(loadedSvgElement);
+                updateProgressBar(30);
+
+                if (dimError) { 
+                    console.warn(dimError + " Usando A4 per il PDF.");
+                    svgWidth = 595.28; 
+                    svgHeight = 841.89; 
+                }
+                
+                const orientation = svgWidth > svgHeight ? 'l' : 'p';
+                updateProgressBar(40);
+
+                const pdf = new jsPDF({
+                    orientation: orientation,
+                    unit: 'pt',
+                    format: [svgWidth, svgHeight]
+                });
+                updateProgressBar(50);
+
+                await pdf.svg(loadedSvgElement, { // Questa è la parte più lunga
+                    x: 0,
+                    y: 0,
+                    width: svgWidth,
+                    height: svgHeight
+                });
+                updateProgressBar(90);
+                
+                const pdfDataUri = pdf.output('datauristring');
+                
+                downloadLink.href = pdfDataUri;
+                downloadLink.download = `${originalFileName}.pdf`;
+                downloadLink.style.display = 'inline-block';
+                statusDiv.textContent = 'PDF generato! Clicca sul link per scaricare.';
+                updateProgressBar(100);
+
+            } catch (error) {
+                console.error("Errore durante la conversione SVG a PDF:", error);
+                statusDiv.textContent = `Errore PDF: ${error.message}`;
+                updateProgressBar(0); // Resetta in caso di errore
+            } finally {
+                setAllButtonsDisabled(false);
+                setTimeout(hideProgressBar, 1500); // Lascia visibile il 100% o lo 0% per un po'
+            }
+        });
+
+        async function renderSvgToCanvas(svgElement, targetWidth, targetHeight, onProgress) {
+            return new Promise((resolve, reject) => {
+                onProgress(10); // Inizio rendering
+                const svgString = new XMLSerializer().serializeToString(svgElement);
+                onProgress(20);
+                const svgBlob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' });
+                const url = URL.createObjectURL(svgBlob);
+                onProgress(30);
+
+                const img = new Image();
+                
+                img.onload = () => {
+                    onProgress(60); // Immagine caricata
+                    const canvas = document.createElement('canvas');
+                    canvas.width = targetWidth;
+                    canvas.height = targetHeight;
+                    const ctx = canvas.getContext('2d');
+                    
+                    ctx.drawImage(img, 0, 0, targetWidth, targetHeight);
+                    onProgress(80); // Immagine disegnata
+                    URL.revokeObjectURL(url); 
+                    onProgress(90);
+                    resolve(canvas);
+                };
+
+                img.onerror = (err) => {
+                    URL.revokeObjectURL(url);
+                    console.error("Errore nel caricare l'SVG come immagine per il canvas:", err);
+                    reject(new Error("Impossibile caricare l'SVG nell'elemento Image."));
+                };
+                
+                img.src = url;
+                onProgress(40); // Sorgente immagine impostata, in attesa di onload
+            });
+        }
+
+        async function handleImageSave(format) {
+            if (!loadedSvgElement) {
+                alert("Per favore, carica prima un file SVG.");
+                return;
+            }
+
+            const formatUpperCase = format.toUpperCase();
+            statusDiv.textContent = `Conversione in ${formatUpperCase} in corso...`;
+            setAllButtonsDisabled(true);
+            hideAllDownloadLinks();
+            updateProgressBar(0, true); // Mostra la barra a 0%
+
+            try {
+                const { width: svgWidth, height: svgHeight, error: dimError } = getSvgDimensions(loadedSvgElement);
+                if (dimError) console.warn(dimError);
+                updateProgressBar(10); // Dopo aver ottenuto le dimensioni
+
+                const canvas = await renderSvgToCanvas(loadedSvgElement, svgWidth, svgHeight, (progress) => {
+                    updateProgressBar(10 + (progress * 0.7)); // Scala il progresso di renderSvgToCanvas (0-100) in un range (es. 10-80)
+                });
+                updateProgressBar(80); // Canvas pronto
+
+                let dataUrl;
+                let downloadLinkElement;
+                let fileExtension;
+
+                if (format === 'png') {
+                    dataUrl = canvas.toDataURL('image/png');
+                    downloadLinkElement = downloadPngLink;
+                    fileExtension = 'png';
+                } else if (format === 'jpg') {
+                    dataUrl = canvas.toDataURL('image/jpeg', 0.9);
+                    downloadLinkElement = downloadJpgLink;
+                    fileExtension = 'jpg';
+                } else {
+                    throw new Error("Formato immagine non supportato");
+                }
+                updateProgressBar(90); // Data URL generato
+
+                downloadLinkElement.href = dataUrl;
+                downloadLinkElement.download = `${originalFileName}.${fileExtension}`;
+                downloadLinkElement.style.display = 'inline-block';
+                statusDiv.textContent = `${formatUpperCase} generato! Clicca sul link per scaricare.`;
+                updateProgressBar(100);
+
+            } catch (error) {
+                console.error(`Errore durante la conversione SVG a ${formatUpperCase}:`, error);
+                statusDiv.textContent = `Errore ${formatUpperCase}: ${error.message}`;
+                updateProgressBar(0);
+            } finally {
+                setAllButtonsDisabled(false);
+                setTimeout(hideProgressBar, 1500);
+            }
+        }
+
+        saveToPngButton.addEventListener('click', () => handleImageSave('png'));
+        saveToJpgButton.addEventListener('click', () => handleImageSave('jpg'));
+
+    </script>
+</body>
+</html>

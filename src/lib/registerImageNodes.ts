@@ -9,6 +9,7 @@ import roughRuntime, { type RoughPathOptions, type RoughApi } from "../vendor/ro
 import marchingSquaresRuntime, { type MarchingSquaresFn } from "../vendor/p5-marching-runtime";
 import { LiteGraph } from "litegraph.js";
 import type { GraphImage } from "../models/graphImage";
+import type { GraphFaceBlendshapeCategory, GraphFaceLandmarksData } from "../models/graphFaceLandmarks";
 import type { GraphMl5Data, Ml5Task } from "../models/graphMl5";
 import type { GraphPalette } from "../models/graphPalette";
 import type { GraphSvg } from "../models/graphSvg";
@@ -126,12 +127,105 @@ interface Ml5ModelLike {
   classify?: (input: CanvasImageSource, callback?: (result: unknown) => void) => unknown;
 }
 
+interface Ml5BodyPixModelLike {
+  segment: (input: CanvasImageSource, callback?: (result: unknown) => void) => unknown;
+  model?: {
+    segmentPeople?: (input: CanvasImageSource, options?: Record<string, unknown>) => Promise<unknown>;
+  };
+}
+
+interface BgSegmentationModelLike {
+  segment: (input: GraphImage) => Promise<ImageData>;
+}
+
+interface MediaPipeFaceLandmarkerLike {
+  detect: (input: CanvasImageSource) => unknown;
+  close?: () => void;
+}
+
+interface MediaPipeFaceLandmarkerCtorLike {
+  createFromOptions: (
+    vision: unknown,
+    options: Record<string, unknown>,
+  ) => Promise<MediaPipeFaceLandmarkerLike>;
+  FACE_LANDMARKS_TESSELATION?: unknown[];
+  FACE_LANDMARKS_RIGHT_EYE?: unknown[];
+  FACE_LANDMARKS_RIGHT_EYEBROW?: unknown[];
+  FACE_LANDMARKS_LEFT_EYE?: unknown[];
+  FACE_LANDMARKS_LEFT_EYEBROW?: unknown[];
+  FACE_LANDMARKS_FACE_OVAL?: unknown[];
+  FACE_LANDMARKS_LIPS?: unknown[];
+  FACE_LANDMARKS_RIGHT_IRIS?: unknown[];
+  FACE_LANDMARKS_LEFT_IRIS?: unknown[];
+}
+
+interface MediaPipeMaskLike {
+  width?: number;
+  height?: number;
+  getAsUint8Array?: () => Uint8Array;
+  getAsFloat32Array?: () => Float32Array;
+  close?: () => void;
+}
+
+interface MediaPipeImageSegmenterLike {
+  segment: (input: CanvasImageSource) => {
+    categoryMask?: MediaPipeMaskLike;
+    confidenceMasks?: MediaPipeMaskLike[];
+  };
+}
+
+interface MediaPipeVisionApi {
+  FilesetResolver: {
+    forVisionTasks: (wasmRoot: string) => Promise<unknown>;
+  };
+  FaceLandmarker: MediaPipeFaceLandmarkerCtorLike;
+  ImageSegmenter: {
+    createFromOptions: (
+      vision: unknown,
+      options: Record<string, unknown>,
+    ) => Promise<MediaPipeImageSegmenterLike>;
+  };
+}
+
+interface MediaPipeFaceLandmarkerResult {
+  faceLandmarks?: Array<Array<{ x: number; y: number; z?: number }>>;
+  faceBlendshapes?: Array<{
+    categories?: Array<{
+      categoryName?: string;
+      displayName?: string;
+      score?: number;
+    }>;
+  }>;
+}
+
+interface FaceLandmarkerConnections {
+  tessellation: unknown[];
+  rightEye: unknown[];
+  rightEyebrow: unknown[];
+  leftEye: unknown[];
+  leftEyebrow: unknown[];
+  faceOval: unknown[];
+  lips: unknown[];
+  rightIris: unknown[];
+  leftIris: unknown[];
+}
+
+interface FaceLandmarkerModelLike {
+  detect: (input: GraphImage) => MediaPipeFaceLandmarkerResult;
+  connections: FaceLandmarkerConnections;
+}
+
 interface Ml5Runtime {
   bodypose?: (options?: Record<string, unknown>, callback?: (model?: unknown) => void) => unknown;
   handpose?: (options?: Record<string, unknown>, callback?: (model?: unknown) => void) => unknown;
   facemesh?: (options?: Record<string, unknown>, callback?: (model?: unknown) => void) => unknown;
   imageClassifier?: (
     model: string,
+    callback?: (model?: unknown) => void,
+  ) => unknown;
+  bodyPix?: (
+    video?: unknown,
+    options?: Record<string, unknown>,
     callback?: (model?: unknown) => void,
   ) => unknown;
 }
@@ -142,6 +236,30 @@ function getMl5Runtime() {
     throw new Error("ml5 runtime is not available.");
   }
   return runtime.ml5;
+}
+
+const MEDIAPIPE_TASKS_VISION_URL =
+  "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.12";
+const MEDIAPIPE_TASKS_WASM_ROOT =
+  "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.12/wasm";
+const MEDIAPIPE_FACE_LANDMARKER_MODEL_URL =
+  "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task";
+const MEDIAPIPE_SELFIE_SEGMENTER_MODEL_URL =
+  "https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/1/selfie_segmenter.tflite";
+
+let mediaPipeVisionPromise: Promise<MediaPipeVisionApi> | null = null;
+
+function importExternalModule(moduleUrl: string) {
+  return import(/* @vite-ignore */ moduleUrl);
+}
+
+function loadMediaPipeVisionApi() {
+  if (!mediaPipeVisionPromise) {
+    mediaPipeVisionPromise = importExternalModule(MEDIAPIPE_TASKS_VISION_URL).then(
+      (module) => module as unknown as MediaPipeVisionApi,
+    );
+  }
+  return mediaPipeVisionPromise;
 }
 
 function isPromiseLike(value: unknown): value is Promise<unknown> {
@@ -257,7 +375,389 @@ function drawMl5Overlay(input: GraphImage, points: Array<{ x: number; y: number 
   return preview;
 }
 
+function normalizeHexColor(value: string) {
+  const trimmed = value.trim();
+  const hex = trimmed.startsWith("#") ? trimmed.slice(1) : trimmed;
+  if (/^[0-9a-fA-F]{6}$/.test(hex)) {
+    return `#${hex.toUpperCase()}`;
+  }
+  if (/^[0-9a-fA-F]{3}$/.test(hex)) {
+    const expanded = hex
+      .split("")
+      .map((channel) => `${channel}${channel}`)
+      .join("");
+    return `#${expanded.toUpperCase()}`;
+  }
+  return "#ACE1AF";
+}
+
+function hexToRgb(value: string) {
+  const normalized = normalizeHexColor(value).slice(1);
+  return {
+    r: Number.parseInt(normalized.slice(0, 2), 16),
+    g: Number.parseInt(normalized.slice(2, 4), 16),
+    b: Number.parseInt(normalized.slice(4, 6), 16),
+  };
+}
+
+function removeBackgroundFromMask(
+  input: GraphImage,
+  personMask: ImageData,
+  options: {
+    threshold: number;
+    softness: number;
+    invertMask: boolean;
+    mode: "transparent" | "color";
+    color: string;
+  },
+) {
+  const sourceContext = input.getContext("2d", { willReadFrequently: true });
+  if (!sourceContext) {
+    throw new Error("2D context not available.");
+  }
+
+  const width = input.width;
+  const height = input.height;
+  const sourcePixels = sourceContext.getImageData(0, 0, width, height).data;
+  const maskPixels = personMask.data;
+  const output = sourceContext.createImageData(width, height);
+  const outputPixels = output.data;
+  const threshold = clamp(Math.round(options.threshold), 0, 255);
+  const softness = clamp(options.softness, 0, 1);
+  const denom = Math.max(1, 255 - threshold);
+  const bgRgb = hexToRgb(options.color);
+
+  for (let index = 0; index < outputPixels.length; index += 4) {
+    const maskAlpha = maskPixels[index + 3] ?? 0;
+    let matte = clamp((maskAlpha - threshold) / denom, 0, 1);
+    if (softness > 0) {
+      const gamma = clamp(1 + softness * 2.5, 1, 4);
+      matte = matte ** gamma;
+    }
+    if (options.invertMask) {
+      matte = 1 - matte;
+    }
+
+    const srcR = sourcePixels[index];
+    const srcG = sourcePixels[index + 1];
+    const srcB = sourcePixels[index + 2];
+    const srcA = sourcePixels[index + 3] / 255;
+    const alpha = matte * srcA;
+
+    if (options.mode === "transparent") {
+      outputPixels[index] = srcR;
+      outputPixels[index + 1] = srcG;
+      outputPixels[index + 2] = srcB;
+      outputPixels[index + 3] = Math.round(alpha * 255);
+      continue;
+    }
+
+    outputPixels[index] = Math.round(srcR * alpha + bgRgb.r * (1 - alpha));
+    outputPixels[index + 1] = Math.round(srcG * alpha + bgRgb.g * (1 - alpha));
+    outputPixels[index + 2] = Math.round(srcB * alpha + bgRgb.b * (1 - alpha));
+    outputPixels[index + 3] = 255;
+  }
+
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext("2d");
+  if (!context) {
+    throw new Error("2D context not available.");
+  }
+  context.putImageData(output, 0, 0);
+  return canvas;
+}
+
+function getPersonMaskFromBodyPixResult(value: unknown): ImageData | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const result = value as {
+    raw?: {
+      personMask?: ImageData | null;
+    };
+  };
+  const mask = result.raw?.personMask;
+  return mask instanceof ImageData ? mask : null;
+}
+
+function createEmptyPersonMask(width: number, height: number) {
+  const safeWidth = Math.max(1, Math.floor(width));
+  const safeHeight = Math.max(1, Math.floor(height));
+  return new ImageData(new Uint8ClampedArray(safeWidth * safeHeight * 4), safeWidth, safeHeight);
+}
+
+async function extractPersonMaskViaSegmentPeople(model: Ml5BodyPixModelLike, input: GraphImage) {
+  const segmentPeople = model.model?.segmentPeople;
+  if (typeof segmentPeople !== "function") {
+    return null;
+  }
+
+  const result = await segmentPeople(input, {
+    multiSegmentation: false,
+    segmentBodyParts: false,
+    flipHorizontal: false,
+  });
+
+  if (!Array.isArray(result) || !result.length) {
+    return createEmptyPersonMask(input.width, input.height);
+  }
+
+  const first = result[0] as {
+    mask?: {
+      toImageData?: () => Promise<ImageData> | ImageData;
+    };
+  };
+  const toImageData = first?.mask?.toImageData;
+  if (typeof toImageData !== "function") {
+    return createEmptyPersonMask(input.width, input.height);
+  }
+
+  const mask = await toImageData.call(first.mask);
+  if (!(mask instanceof ImageData)) {
+    return createEmptyPersonMask(input.width, input.height);
+  }
+  return mask;
+}
+
+async function loadMl5BodyPixModel(): Promise<Ml5BodyPixModelLike> {
+  const ml5 = getMl5Runtime();
+  if (typeof ml5.bodyPix !== "function") {
+    throw new Error("ml5 bodyPix is not available in this bundle.");
+  }
+
+  const model = await new Promise<unknown>((resolve, reject) => {
+    let settled = false;
+    let instance: unknown;
+    const complete = (value?: unknown) => {
+      if (!settled) {
+        settled = true;
+        resolve(value);
+      }
+    };
+    try {
+      instance = ml5.bodyPix?.(
+        undefined,
+        {
+          architecture: "ResNet50",
+          outputStride: 16,
+          quantBytes: 2,
+        },
+        (readyModel) => {
+          complete(readyModel ?? instance);
+        },
+      );
+      if (isPromiseLike(instance)) {
+        void instance.then(complete).catch((error) => reject(error));
+        return;
+      }
+      if (instance && typeof instance === "object") {
+        const maybeReady = (instance as { ready?: unknown }).ready;
+        if (isPromiseLike(maybeReady)) {
+          void maybeReady.then(() => complete(instance)).catch((error) => reject(error));
+        } else {
+          complete(instance);
+        }
+      }
+    } catch (error) {
+      reject(error);
+    }
+  });
+
+  if (!model || typeof model !== "object" || typeof (model as Ml5BodyPixModelLike).segment !== "function") {
+    throw new Error("Invalid ml5 bodyPix model instance.");
+  }
+  return model as Ml5BodyPixModelLike;
+}
+
+async function runBodyPixSegmentation(model: Ml5BodyPixModelLike, input: GraphImage) {
+  try {
+    const lowLevelMask = await extractPersonMaskViaSegmentPeople(model, input);
+    if (lowLevelMask) {
+      return lowLevelMask;
+    }
+  } catch {
+    // fall through to legacy wrapper path
+  }
+
+  const result = await new Promise<unknown>((resolve, reject) => {
+    let settled = false;
+    const complete = (value?: unknown) => {
+      if (!settled) {
+        settled = true;
+        resolve(value);
+      }
+    };
+
+    try {
+      const maybe = model.segment(input, (value) => {
+        complete(value);
+      });
+      if (isPromiseLike(maybe)) {
+        void maybe.then(complete).catch((error) => reject(error));
+        return;
+      }
+      if (maybe !== undefined) {
+        complete(maybe);
+      }
+    } catch (error) {
+      reject(error);
+    }
+  });
+
+  const personMask = getPersonMaskFromBodyPixResult(result);
+  if (!personMask) {
+    return createEmptyPersonMask(input.width, input.height);
+  }
+  return personMask;
+}
+
+async function loadMediaPipeFaceModel(): Promise<Ml5ModelLike> {
+  const visionApi = await loadMediaPipeVisionApi();
+  const vision = await visionApi.FilesetResolver.forVisionTasks(MEDIAPIPE_TASKS_WASM_ROOT);
+  const faceLandmarker = await visionApi.FaceLandmarker.createFromOptions(vision, {
+    baseOptions: {
+      modelAssetPath: MEDIAPIPE_FACE_LANDMARKER_MODEL_URL,
+      delegate: "GPU",
+    },
+    runningMode: "IMAGE",
+    numFaces: 1,
+    outputFaceBlendshapes: false,
+    outputFacialTransformationMatrixes: false,
+  });
+
+  return {
+    detect: (input: CanvasImageSource) => {
+      const width = "width" in input && typeof input.width === "number" ? input.width : 1;
+      const height = "height" in input && typeof input.height === "number" ? input.height : 1;
+      const result = faceLandmarker.detect(input) as {
+        faceLandmarks?: Array<Array<{ x: number; y: number; z?: number }>>;
+      };
+      const landmarks = result.faceLandmarks ?? [];
+      return landmarks.map((face) =>
+        face.map((point) => ({
+          x: point.x * width,
+          y: point.y * height,
+          z: point.z,
+        })),
+      );
+    },
+  };
+}
+
+function createMaskImageDataFromCategoryMask(
+  mask: MediaPipeMaskLike | undefined,
+  sourceWidth: number,
+  sourceHeight: number,
+) {
+  if (!mask) {
+    return createEmptyPersonMask(sourceWidth, sourceHeight);
+  }
+
+  const width = Math.max(1, Math.floor(mask.width ?? sourceWidth));
+  const height = Math.max(1, Math.floor(mask.height ?? sourceHeight));
+  const rgba = new Uint8ClampedArray(width * height * 4);
+
+  const categoryValues = mask.getAsUint8Array?.();
+  if (categoryValues && categoryValues.length >= width * height) {
+    for (let index = 0; index < width * height; index += 1) {
+      // Selfie segmenter category id 0=person, 1=background in this model setup.
+      const alpha = categoryValues[index] === 0 ? 255 : 0;
+      const pixelOffset = index * 4;
+      rgba[pixelOffset] = 255;
+      rgba[pixelOffset + 1] = 255;
+      rgba[pixelOffset + 2] = 255;
+      rgba[pixelOffset + 3] = alpha;
+    }
+    mask.close?.();
+    return new ImageData(rgba, width, height);
+  }
+
+  const confidenceValues = mask.getAsFloat32Array?.();
+  if (confidenceValues && confidenceValues.length >= width * height) {
+    for (let index = 0; index < width * height; index += 1) {
+      const alpha = clamp(Math.round(confidenceValues[index] * 255), 0, 255);
+      const pixelOffset = index * 4;
+      rgba[pixelOffset] = 255;
+      rgba[pixelOffset + 1] = 255;
+      rgba[pixelOffset + 2] = 255;
+      rgba[pixelOffset + 3] = alpha;
+    }
+    mask.close?.();
+    return new ImageData(rgba, width, height);
+  }
+
+  mask.close?.();
+  return createEmptyPersonMask(sourceWidth, sourceHeight);
+}
+
+function resizeMaskToImage(mask: ImageData, width: number, height: number) {
+  if (mask.width === width && mask.height === height) {
+    return mask;
+  }
+  const maskCanvas = document.createElement("canvas");
+  maskCanvas.width = mask.width;
+  maskCanvas.height = mask.height;
+  const maskContext = maskCanvas.getContext("2d");
+  if (!maskContext) {
+    return createEmptyPersonMask(width, height);
+  }
+  maskContext.putImageData(mask, 0, 0);
+
+  const targetCanvas = document.createElement("canvas");
+  targetCanvas.width = width;
+  targetCanvas.height = height;
+  const targetContext = targetCanvas.getContext("2d", { willReadFrequently: true });
+  if (!targetContext) {
+    return createEmptyPersonMask(width, height);
+  }
+  targetContext.drawImage(maskCanvas, 0, 0, width, height);
+  return targetContext.getImageData(0, 0, width, height);
+}
+
+async function loadMediaPipeSelfieSegmenterModel(): Promise<BgSegmentationModelLike> {
+  const visionApi = await loadMediaPipeVisionApi();
+  const vision = await visionApi.FilesetResolver.forVisionTasks(MEDIAPIPE_TASKS_WASM_ROOT);
+
+  const createSegmenter = async (delegate: "GPU" | "CPU") =>
+    visionApi.ImageSegmenter.createFromOptions(vision, {
+      baseOptions: {
+        modelAssetPath: MEDIAPIPE_SELFIE_SEGMENTER_MODEL_URL,
+        delegate,
+      },
+      runningMode: "IMAGE",
+      outputCategoryMask: true,
+      outputConfidenceMasks: true,
+    });
+
+  let segmenter: MediaPipeImageSegmenterLike;
+  try {
+    segmenter = await createSegmenter("GPU");
+  } catch {
+    segmenter = await createSegmenter("CPU");
+  }
+
+  return {
+    segment: async (input: GraphImage) => {
+      const result = segmenter.segment(input);
+      const preferredConfidenceMask = result.confidenceMasks?.[1] ?? result.confidenceMasks?.[0];
+      const baseMask = createMaskImageDataFromCategoryMask(
+        result.categoryMask ?? preferredConfidenceMask,
+        input.width,
+        input.height,
+      );
+      return resizeMaskToImage(baseMask, input.width, input.height);
+    },
+  };
+}
+
 async function loadMl5Model(task: Ml5Task, modelKey: string): Promise<Ml5ModelLike> {
+  if (task === "facemesh") {
+    return loadMediaPipeFaceModel();
+  }
+
   const ml5 = getMl5Runtime();
   if (task === "imageclassifier") {
     if (typeof ml5.imageClassifier !== "function") {
@@ -293,6 +793,22 @@ async function loadMl5Model(task: Ml5Task, modelKey: string): Promise<Ml5ModelLi
     return classifier as Ml5ModelLike;
   }
 
+  const getTaskOptions = (currentTask: Ml5Task): Record<string, unknown> => {
+    if (currentTask === "handpose") {
+      return {
+        maxHands: 2,
+        flipHorizontal: false,
+      };
+    }
+    if (currentTask === "bodypose") {
+      return {
+        modelType: "SINGLEPOSE_LIGHTNING",
+        enableSmoothing: true,
+      };
+    }
+    return {};
+  };
+
   const loader = ml5[task];
   if (typeof loader !== "function") {
     throw new Error(`ml5 ${task} is not available.`);
@@ -308,7 +824,7 @@ async function loadMl5Model(task: Ml5Task, modelKey: string): Promise<Ml5ModelLi
       }
     };
     try {
-      instance = loader({}, (readyModel) => {
+      instance = loader(getTaskOptions(task), (readyModel) => {
         complete(readyModel ?? instance);
       });
       if (isPromiseLike(instance)) {
@@ -469,6 +985,17 @@ function getGraphImageSignature(image: GraphImage | null) {
     .join("|");
 
   return `${image.width}x${image.height}:${values}`;
+}
+
+function isGraphImageReady(value: unknown): value is GraphImage {
+  if (!(value instanceof HTMLCanvasElement)) {
+    return false;
+  }
+  if (value.width <= 0 || value.height <= 0) {
+    return false;
+  }
+  const context = value.getContext("2d");
+  return Boolean(context);
 }
 
 function estimateGraphImageColorCount(image: GraphImage) {
@@ -3132,6 +3659,156 @@ class SvgSimplifyToolNode {
   }
 }
 
+class BgRemoveToolNode {
+  size: [number, number] = [280, 430];
+  properties!: Record<string, unknown>;
+  preview: GraphImage | null = null;
+  status = "idle";
+  executionMs: number | null = null;
+  isRendering = false;
+  lastSignature = "";
+  lastOptionsSignature = "";
+  renderToken = 0;
+  model: BgSegmentationModelLike | null = null;
+  modelPromise: Promise<BgSegmentationModelLike> | null = null;
+
+  constructor() {
+    const node = this as unknown as PreviewAwareNode & BgRemoveToolNode;
+    getMl5Runtime();
+    node.title = createToolTitle("BG Remove");
+    node.properties = {
+      threshold: 12,
+      softness: 0.25,
+      invertMask: false,
+      backgroundMode: "transparent",
+      backgroundColor: "#ACE1AF",
+    };
+    node.addInput("image", "image");
+    node.addOutput("image", "image");
+    node.addWidget("combo", "Mode", "transparent", (value) => {
+      node.properties.backgroundMode = String(value);
+      notifyGraphStateChange(node);
+    }, { values: ["transparent", "color"] });
+    node.addWidget("text", "BG color", "#ACE1AF", (value) => {
+      node.properties.backgroundColor = normalizeHexColor(String(value));
+      notifyGraphStateChange(node);
+    });
+    node.addWidget("slider", "Threshold", 12, (value) => {
+      node.properties.threshold = Math.round(Number(value));
+      notifyGraphStateChange(node);
+    }, { min: 0, max: 128, step: 1 });
+    node.addWidget("slider", "Softness", 0.25, (value) => {
+      node.properties.softness = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0, max: 1, step: 0.01, precision: 2 });
+    node.addWidget("toggle", "Invert mask", false, (value) => {
+      node.properties.invertMask = Boolean(value);
+      notifyGraphStateChange(node);
+    });
+    node.refreshPreviewLayout = () => {
+      refreshNode(node, node.preview, 3);
+    };
+    node.refreshPreviewLayout();
+  }
+
+  getOrLoadModel(this: BgRemoveToolNode) {
+    if (this.model) {
+      return Promise.resolve(this.model);
+    }
+    if (this.modelPromise) {
+      return this.modelPromise;
+    }
+    this.modelPromise = loadMediaPipeSelfieSegmenterModel()
+      .then((model) => {
+        this.model = model;
+        return model;
+      })
+      .finally(() => {
+        this.modelPromise = null;
+      });
+    return this.modelPromise;
+  }
+
+  onExecute(this: PreviewAwareNode & BgRemoveToolNode) {
+    const inputValue = this.getInputData(0);
+    const input = isGraphImageReady(inputValue) ? inputValue : null;
+    if (!input) {
+      this.status = "waiting valid image";
+      this.isRendering = false;
+      this.setOutputData(0, this.preview);
+      this.refreshPreviewLayout();
+      return;
+    }
+
+    const options = {
+      threshold: clamp(Math.round(Number(this.properties.threshold ?? 12)), 0, 128),
+      softness: clamp(Number(this.properties.softness ?? 0.25), 0, 1),
+      invertMask: Boolean(this.properties.invertMask ?? false),
+      mode: String(this.properties.backgroundMode ?? "transparent") === "color"
+        ? "color"
+        : "transparent",
+      color: normalizeHexColor(String(this.properties.backgroundColor ?? "#ACE1AF")),
+    } as const;
+    const signature = getGraphImageSignature(input);
+    const optionsSignature = JSON.stringify(options);
+
+    if (signature !== this.lastSignature || optionsSignature !== this.lastOptionsSignature) {
+      this.lastSignature = signature;
+      this.lastOptionsSignature = optionsSignature;
+      const renderToken = ++this.renderToken;
+      const start = performance.now();
+      this.isRendering = true;
+      this.status = "segmenting...";
+      this.setDirtyCanvas(true, true);
+
+      void this.getOrLoadModel()
+        .then((model) => model.segment(input))
+        .then((personMask) => {
+          if (renderToken !== this.renderToken) {
+            return;
+          }
+          this.preview = removeBackgroundFromMask(input, personMask, options);
+          this.executionMs = performance.now() - start;
+          this.status = "ready";
+          this.isRendering = false;
+          this.setDirtyCanvas(true, true);
+        })
+        .catch((error) => {
+          if (renderToken !== this.renderToken) {
+            return;
+          }
+          this.preview = input;
+          this.executionMs = null;
+          this.status = error instanceof Error ? error.message : "bg remove error";
+          this.isRendering = false;
+          this.setDirtyCanvas(true, true);
+        });
+    }
+
+    this.setOutputData(0, this.preview ?? input);
+    this.refreshPreviewLayout();
+  }
+
+  onDrawBackground(this: PreviewAwareNode & BgRemoveToolNode, context: CanvasRenderingContext2D) {
+    const layout = drawImagePreview(context, this, this.preview, { footerLines: 3 });
+    context.save();
+    context.fillStyle = "rgba(255,255,255,0.65)";
+    context.font = "12px sans-serif";
+    context.fillText(
+      `${String(this.properties.backgroundMode ?? "transparent")} | ${this.status}`,
+      10,
+      layout.footerTop + 12,
+    );
+    context.fillText(
+      `thr ${Number(this.properties.threshold ?? 12)} | soft ${Number(this.properties.softness ?? 0.25).toFixed(2)} | inv ${Boolean(this.properties.invertMask ?? false) ? "on" : "off"}`,
+      10,
+      layout.footerTop + 30,
+    );
+    context.fillText(formatExecutionInfo(this.executionMs), 10, layout.footerTop + 48);
+    context.restore();
+  }
+}
+
 class Ml5ExtractToolNode {
   size: [number, number] = [280, 380];
   properties!: Record<string, unknown>;
@@ -3228,17 +3905,13 @@ class Ml5ExtractToolNode {
   }
 
   onExecute(this: PreviewAwareNode & Ml5ExtractToolNode) {
-    const input = this.getInputData(0) ?? null;
+    const inputValue = this.getInputData(0);
+    const input = isGraphImageReady(inputValue) ? inputValue : null;
     if (!input) {
-      this.preview = null;
-      this.data = null;
-      this.status = "waiting image";
-      this.executionMs = null;
+      this.status = "waiting valid image";
       this.isRendering = false;
-      this.lastSignature = "";
-      this.lastOptionsSignature = "";
-      this.setOutputData(0, null);
-      this.setOutputData(1, null);
+      this.setOutputData(0, this.preview);
+      this.setOutputData(1, this.data);
       this.refreshPreviewLayout();
       return;
     }
@@ -3534,6 +4207,7 @@ export function registerImageNodes() {
   LiteGraph.registerNodeType("tools/marching", MarchingToolNode as unknown as NodeCtor);
   LiteGraph.registerNodeType("tools/rough", RoughToolNode as unknown as NodeCtor);
   LiteGraph.registerNodeType("tools/svg-simplify", SvgSimplifyToolNode as unknown as NodeCtor);
+  LiteGraph.registerNodeType("tools/bg-remove", BgRemoveToolNode as unknown as NodeCtor);
   LiteGraph.registerNodeType("tools/ml5-extract", Ml5ExtractToolNode as unknown as NodeCtor);
   LiteGraph.registerNodeType("output/image", OutputImageNode as unknown as NodeCtor);
   LiteGraph.registerNodeType("output/palette", OutputPaletteNode as unknown as NodeCtor);

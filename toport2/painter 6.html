@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Quantizzazione e Pittura Umana</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 0; padding: 2em; background-color: #f0f2f5; color: #333; }
+        .container { max-width: 1400px; margin: 0 auto; display: flex; flex-direction: column; gap: 1.5em; }
+        h1, h2 { text-align: center; color: #1a237e; }
+        .controls-wrapper { padding: 1.5em; background-color: #ffffff; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        .controls, .outputs { display: flex; flex-wrap: wrap; gap: 1.5em; justify-content: center; align-items: center; }
+        .controls-section { display: flex; flex-wrap: wrap; gap: 1.5em; justify-content: center; align-items: center; padding: 1em; border: 1px dashed #ccc; border-radius: 8px; }
+        .control-group { display: flex; flex-direction: column; gap: 0.5em; align-items: center; }
+        label { font-weight: bold; color: #555; }
+        input[type="range"] { width: 150px; }
+        button { padding: 10px 20px; font-size: 1em; font-weight: bold; color: white; background-color: #3949ab; border: none; border-radius: 5px; cursor: pointer; transition: background-color 0.3s; }
+        button:hover:not(:disabled) { background-color: #1a237e; }
+        button:disabled { background-color: #9e9e9e; cursor: not-allowed; }
+        button.secondary { background-color: #5c6bc0; }
+        button.secondary:hover:not(:disabled) { background-color: #3f51b5; }
+        button.warning { background-color: #f57c00; }
+        .canvases { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.5em; text-align: center; }
+        .canvas-container { background-color: #fff; padding: 1em; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+        canvas, #svgPreview svg { max-width: 100%; height: auto; border: 1px solid #ccc; background-image: linear-gradient(45deg, #eee 25%, transparent 25%), linear-gradient(-45deg, #eee 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #eee 75%), linear-gradient(-45deg, transparent 75%, #eee 75%); background-size: 20px 20px; background-position: 0 0, 0 10px, 10px -10px, -10px 0px; }
+        #quantizedCanvas.mask-active { cursor: crosshair; }
+        #palette { display: flex; flex-wrap: wrap; gap: 5px; padding: 10px; min-height: 30px; border: 1px solid #ccc; background-color: #f9f9f9; }
+        .color-box { width: 20px; height: 20px; border: 1px solid #888; }
+        #status-container { text-align: center; padding: 1em; }
+        #status { font-size: 1.2em; color: #d32f2f; min-height: 1.5em; }
+        #progress-bar-container { display: none; width: 80%; margin: 1em auto; }
+        #progress-bar { width: 100%; height: 20px; }
+        #progress-text { font-weight: bold; color: #1a237e; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Quantizzazione e Pittura Umana</h1>
+        <div class="controls-wrapper">
+             <div class="controls">
+                 <div class="control-group"> <label for="imageLoader">1. Carica Immagine</label> <input type="file" id="imageLoader" name="imageLoader" accept="image/*"/> </div>
+             </div> <hr>
+             <div class="controls">
+                 <div class="controls-section">
+                     <div class="control-group"> <label for="q-param">Colori (Q): <span id="q-value">32</span></label> <input type="range" id="q-param" min="2" max="128" value="32"> </div>
+                     <div class="control-group"> <label for="scale-param">Scala Copia: <span id="scale-value">2</span>x</label> <input type="range" id="scale-param" min="1" max="5" value="2" step="0.5"> </div>
+                     <div class="control-group"> <label for="brush-param">Dim. Pennello: <span id="brush-value">4</span>px</label> <input type="range" id="brush-param" min="1" max="20" value="4"> </div>
+                     <div class="control-group"> <label for="threshold-param">Soglia Pennellata: <span id="threshold-value">2</span>px</label> <input type="range" id="threshold-param" min="0" max="50" value="2"> </div>
+                     <div class="control-group"> <label for="jitter-param">Tremolio: <span id="jitter-value">2</span></label> <input type="range" id="jitter-param" min="0" max="15" value="2"> </div>
+                 </div>
+                 <div class="controls-section">
+                     <div class="control-group"> <label>2. Mascheratura (Opzionale)</label> <button id="maskButton" class="secondary" disabled>Attiva Maschera</button> </div>
+                     <div class="control-group"> <label>Pulisci Maschera</label> <button id="clearMaskButton" class="warning" disabled>Cancella</button> </div>
+                 </div>
+                 <div class="control-group"> <label>3. Esegui</label> <button id="startButton" disabled>Avvia Processo</button> </div>
+             </div>
+        </div>
+        <div id="status-container">
+            <div id="status"></div>
+            <div id="progress-bar-container">
+                <progress id="progress-bar" value="0" max="100"></progress>
+                <div id="progress-text">0%</div>
+            </div>
+        </div>
+        <div class="canvases">
+            <div class="canvas-container"> <h2>Originale</h2> <canvas id="originalCanvas"></canvas> </div>
+            <div class="canvas-container"> <h2>Quantizzata / Area Maschera</h2> <canvas id="quantizedCanvas"></canvas> </div>
+            <div class="canvas-container"> <h2>Copia "Dipinta"</h2> <canvas id="copyCanvas"></canvas> </div>
+            <div class="canvas-container"> <h2>SVG Pennellate (<span id="stroke-count">0</span>)</h2> <div id="svgPreview"></div> </div>
+        </div>
+        <div class="outputs">
+            <div class="canvas-container"> <h2>Palette (<span id="palette-count">0</span> colori)</h2> <div id="palette"></div> </div>
+            <button id="saveJpgButton" disabled>Salva Copia (JPG)</button>
+            <button id="saveSvgButton" disabled>Salva Pennellate (SVG)</button>
+        </div>
+    </div>
+    <canvas id="maskCanvas" style="display: none;"></canvas>
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    // === RIFERIMENTI DOM ===
+    const imageLoader = document.getElementById('imageLoader'), startButton = document.getElementById('startButton'), saveJpgButton = document.getElementById('saveJpgButton'), saveSvgButton = document.getElementById('saveSvgButton'), maskButton = document.getElementById('maskButton'), clearMaskButton = document.getElementById('clearMaskButton');
+    const qParam = document.getElementById('q-param'), qValue = document.getElementById('q-value'), scaleParam = document.getElementById('scale-param'), scaleValue = document.getElementById('scale-value'), brushParam = document.getElementById('brush-param'), brushValue = document.getElementById('brush-value'), thresholdParam = document.getElementById('threshold-param'), thresholdValue = document.getElementById('threshold-value'), jitterParam = document.getElementById('jitter-param'), jitterValue = document.getElementById('jitter-value');
+    const originalCanvas = document.getElementById('originalCanvas'), quantizedCanvas = document.getElementById('quantizedCanvas'), copyCanvas = document.getElementById('copyCanvas'), maskCanvas = document.getElementById('maskCanvas'), originalCtx = originalCanvas.getContext('2d'), quantizedCtx = quantizedCanvas.getContext('2d'), copyCtx = copyCanvas.getContext('2d'), maskCtx = maskCanvas.getContext('2d');
+    const paletteDiv = document.getElementById('palette'), paletteCountSpan = document.getElementById('palette-count'), svgPreview = document.getElementById('svgPreview'), statusDiv = document.getElementById('status'), strokeCountSpan = document.getElementById('stroke-count');
+    const progressBarContainer = document.getElementById('progress-bar-container'), progressBar = document.getElementById('progress-bar'), progressText = document.getElementById('progress-text');
+    
+    // === STATO ===
+    let originalImage = null, quantizedImageData = null, svgContent = '', isMasking = false, isDrawingMask = false;
+
+    // === EVENT LISTENERS ===
+    qParam.addEventListener('input', () => qValue.textContent = qParam.value); scaleParam.addEventListener('input', () => scaleValue.textContent = scaleParam.value); brushParam.addEventListener('input', () => brushValue.textContent = brushParam.value); thresholdParam.addEventListener('input', () => thresholdValue.textContent = thresholdParam.value); jitterParam.addEventListener('input', () => jitterValue.textContent = jitterParam.value);
+    imageLoader.addEventListener('change', (e) => { const file = e.target.files[0]; if (!file) return; const reader = new FileReader(); reader.onload = (event) => { originalImage = new Image(); originalImage.onload = () => { originalCanvas.width = originalImage.width; originalCanvas.height = originalImage.height; originalCtx.drawImage(originalImage, 0, 0); quantizedCanvas.width = originalImage.width; quantizedCanvas.height = originalImage.height; quantizedCtx.clearRect(0, 0, quantizedCanvas.width, quantizedCanvas.height); maskCanvas.width = originalImage.width; maskCanvas.height = originalImage.height; maskCtx.fillStyle = 'white'; maskCtx.fillRect(0, 0, maskCanvas.width, maskCanvas.height); startButton.disabled = false; maskButton.disabled = true; clearMaskButton.disabled = true; setStatus('Immagine caricata. Imposta i parametri e premi "Avvia Processo".'); }; originalImage.src = event.target.result; }; reader.readAsDataURL(file); });
+    startButton.addEventListener('click', runProcess);
+    saveJpgButton.addEventListener('click', () => { const link = document.createElement('a'); link.download = 'copia_dipinta.jpg'; link.href = copyCanvas.toDataURL('image/jpeg', 0.9); link.click(); });
+    saveSvgButton.addEventListener('click', () => { const blob = new Blob([svgContent], { type: 'image/svg+xml' }); const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.download = 'pennellate.svg'; link.href = url; link.click(); URL.revokeObjectURL(url); });
+    maskButton.addEventListener('click', toggleMasking); clearMaskButton.addEventListener('click', clearMask); quantizedCanvas.addEventListener('mousedown', startMaskDraw); quantizedCanvas.addEventListener('mousemove', drawMask); quantizedCanvas.addEventListener('mouseup', stopMaskDraw); quantizedCanvas.addEventListener('mouseleave', stopMaskDraw);
+
+    // === FUNZIONI DI QUANTIZZAZIONE (invariate) ===
+    function quantizeImage(image, maxColors) {
+        // ... Logica di quantizzazione identica ...
+        const tempCanvas = document.createElement('canvas'); const tempCtx = tempCanvas.getContext('2d'); tempCanvas.width = image.width; tempCanvas.height = image.height; tempCtx.drawImage(image, 0, 0); const imageData = tempCtx.getImageData(0, 0, image.width, image.height); const pixels = []; for (let i = 0; i < imageData.data.length; i += 4) { pixels.push([imageData.data[i], imageData.data[i+1], imageData.data[i+2]]); }
+        const getPalette = (pixels, count) => { if (pixels.length === 0) return []; const boxes = [{ pixels: pixels, range: 0, channel: 0 }]; while (boxes.length < count && boxes.length > 0) { let boxToSplitIndex = -1, maxRange = -1; for (let i = 0; i < boxes.length; i++) { if (boxes[i].pixels.length < 2) continue; if (boxes[i].range === 0) { let ranges = [0, 1, 2].map(channel => { let min = 255, max = 0; for (const p of boxes[i].pixels) { if (p[channel] < min) min = p[channel]; if (p[channel] > max) max = p[channel]; } return max - min; }); boxes[i].range = Math.max(...ranges); boxes[i].channel = ranges.indexOf(boxes[i].range); } if (boxes[i].range > maxRange) { maxRange = boxes[i].range; boxToSplitIndex = i; } } if (boxToSplitIndex === -1) break; const boxToSplit = boxes[boxToSplitIndex]; const channel = boxToSplit.channel; boxToSplit.pixels.sort((a, b) => a[channel] - b[channel]); const mid = Math.floor(boxToSplit.pixels.length / 2); const newBox1 = { pixels: boxToSplit.pixels.slice(0, mid), range: 0, channel: 0 }; const newBox2 = { pixels: boxToSplit.pixels.slice(mid), range: 0, channel: 0 }; boxes.splice(boxToSplitIndex, 1, newBox1, newBox2); } return boxes.map(box => { if (box.pixels.length === 0) return null; const avg = [0, 0, 0]; box.pixels.forEach(p => { avg[0] += p[0]; avg[1] += p[1]; avg[2] += p[2]; }); return [ Math.round(avg[0] / box.pixels.length), Math.round(avg[1] / box.pixels.length), Math.round(avg[2] / box.pixels.length) ]; }).filter(Boolean); };
+        const palette = getPalette(pixels, maxColors); const colorMap = new Map(); const quantizedData = new Uint8ClampedArray(imageData.data.length);
+        for (let i = 0; i < imageData.data.length; i += 4) { const r = imageData.data[i], g = imageData.data[i+1], b = imageData.data[i+2]; const originalColorKey = `${r},${g},${b}`; let closestColor; if (colorMap.has(originalColorKey)) { closestColor = colorMap.get(originalColorKey); } else { let minDist = Infinity; for (const pColor of palette) { if(!pColor) continue; const dist = Math.pow(r - pColor[0], 2) + Math.pow(g - pColor[1], 2) + Math.pow(b - pColor[2], 2); if (dist < minDist) { minDist = dist; closestColor = pColor; } } colorMap.set(originalColorKey, closestColor); } if (closestColor) { quantizedData[i] = closestColor[0]; quantizedData[i+1] = closestColor[1]; quantizedData[i+2] = closestColor[2]; quantizedData[i+3] = 255; } }
+        return { palette, quantizedImageData: new ImageData(quantizedData, image.width, image.height) };
+    }
+
+    // === LOGICA PRINCIPALE E DI PITTURA ===
+    async function runProcess() {
+        if (!originalImage) return;
+        disableAllButtons();
+        if (isMasking) toggleMasking();
+        setStatus('Fase 1/2: Quantizzazione colori...');
+        progressBarContainer.style.display = 'none';
+        await sleep(50);
+        const qLevel = parseInt(qParam.value);
+        const result = quantizeImage(originalImage, qLevel);
+        quantizedImageData = result.quantizedImageData;
+        displayPalette(result.palette);
+        quantizedCtx.putImageData(quantizedImageData, 0, 0);
+        maskButton.disabled = false; clearMaskButton.disabled = false;
+        setStatus('Fase 2/2: Pittura delle aree di colore...');
+        progressBarContainer.style.display = 'block';
+        await sleep(50);
+        await paintCopySmart(quantizedImageData, result.palette);
+        setStatus('Processo completato!');
+        progressBarContainer.style.display = 'none';
+        enableSaveButtons(); startButton.disabled = false;
+    }
+
+    async function paintCopySmart(qImageData, palette) {
+        const { width: refWidth, height: refHeight } = qImageData;
+        const scale = parseFloat(scaleParam.value), brushSize = parseInt(brushParam.value), minLength = parseInt(thresholdParam.value), jitterAmount = parseInt(jitterParam.value);
+        copyCanvas.width = refWidth * scale; copyCanvas.height = refHeight * scale;
+        copyCtx.fillStyle = '#FFFFFF'; copyCtx.fillRect(0, 0, copyCanvas.width, copyCanvas.height);
+        
+        const globalVisited = new Uint8Array(refWidth * refHeight).fill(0);
+        const svgLines = [];
+        let totalStrokeCount = 0;
+        const maskData = maskCtx.getImageData(0, 0, refWidth, refHeight).data;
+        const totalPixels = refWidth * refHeight;
+        let processedPixels = 0;
+        updateProgressBar(0, 1);
+
+        for (const color of palette) {
+            copyCtx.strokeStyle = `rgb(${color[0]}, ${color[1]}, ${color[2]})`;
+            copyCtx.lineWidth = brushSize * scale; copyCtx.lineCap = 'round';
+            for (let y = 0; y < refHeight; y++) {
+                for (let x = 0; x < refWidth; x++) {
+                    const idx = y * refWidth + x;
+                    if (globalVisited[idx] === 1 || isPixelMasked(idx, maskData)) continue;
+                    const dataIdx = idx * 4;
+                    if (qImageData.data[dataIdx] === color[0] && qImageData.data[dataIdx+1] === color[1] && qImageData.data[dataIdx+2] === color[2]) {
+                        const region = findContiguousRegion(x, y, color, qImageData, globalVisited, maskData);
+                        processedPixels += region.length;
+                        if (region.length > 0) {
+                            const strokesInRegion = paintRegion(region, color, scale, brushSize, minLength, jitterAmount, svgLines);
+                            totalStrokeCount += strokesInRegion;
+                        }
+                    }
+                }
+            }
+            updateProgressBar(processedPixels, totalPixels);
+            await sleep(1);
+        }
+        updateProgressBar(1, 1);
+        strokeCountSpan.textContent = totalStrokeCount;
+        svgContent = `<svg xmlns="http://www.w3.org/2000/svg" width="${copyCanvas.width}" height="${copyCanvas.height}" style="background-color: white;">\n${svgLines.join('\n')}\n</svg>`;
+        svgPreview.innerHTML = svgContent;
+    }
+
+    function paintRegion(region, color, scale, brushSize, minLength, jitterAmount, svgLines) {
+        let strokesInRegion = 0;
+        const pixelsToPaint = new Set(region.map(p => `${p[0]},${p[1]}`));
+        const sampleSourceArray = region;
+
+        while (pixelsToPaint.size > 0) {
+            let bestStroke = { len: -1 };
+            const sampleSize = Math.min(sampleSourceArray.length, 200);
+            for (let i = 0; i < sampleSize; i++) {
+                const randomIndex = Math.floor(Math.random() * sampleSourceArray.length);
+                const [x, y] = sampleSourceArray[randomIndex];
+                if (!pixelsToPaint.has(`${x},${y}`)) continue; 
+                const stroke = findBestStrokeInRegion(x, y, pixelsToPaint);
+                if (stroke.len > bestStroke.len) { bestStroke = stroke; }
+            }
+            if (bestStroke.len < minLength) break;
+            drawStroke(bestStroke, color, scale, brushSize, jitterAmount, svgLines);
+            strokesInRegion++;
+            removePaintedPixels(bestStroke, pixelsToPaint, brushSize);
+        }
+        return strokesInRegion;
+    }
+    
+    // --- FUNZIONI DI DISEGNO (MODIFICATA) E HELPER (INVARIATE) ---
+
+    function drawStroke(stroke, color, scale, brushSize, jitterAmount, svgLines) {
+        const { x1, y1, x2, y2 } = stroke;
+        const sx1 = x1 * scale, sy1 = y1 * scale, sx2 = x2 * scale, sy2 = y2 * scale;
+        
+        copyCtx.beginPath();
+        copyCtx.moveTo(sx1, sy1);
+        
+        // Se non c'è tremolio, disegna una linea retta
+        if (jitterAmount === 0) {
+            copyCtx.lineTo(sx2, sy2);
+            const svgLine = `    <line x1="${sx1}" y1="${sy1}" x2="${sx2}" y2="${sy2}" stroke="rgb(${color[0]},${color[1]},${color[2]})" stroke-width="${brushSize * scale}" stroke-linecap="round" />`;
+            svgLines.push(svgLine);
+        } else {
+            // Altrimenti, calcola e disegna una curva di Bézier
+            const mx = (sx1 + sx2) / 2;
+            const my = (sy1 + sy2) / 2;
+            
+            const dx = sx2 - sx1;
+            const dy = sy2 - sy1;
+            const len = Math.sqrt(dx*dx + dy*dy);
+            
+            // Vettore perpendicolare normalizzato
+            const perpDx = -dy / (len || 1); 
+            const perpDy = dx / (len || 1);
+            
+            // Spostamento casuale lungo il vettore perpendicolare
+            const rand = (Math.random() - 0.5) * jitterAmount * scale;
+            
+            const cx = mx + rand * perpDx;
+            const cy = my + rand * perpDy;
+
+            copyCtx.quadraticCurveTo(cx, cy, sx2, sy2);
+            const svgPath = `    <path d="M ${sx1} ${sy1} Q ${cx} ${cy} ${sx2} ${sy2}" stroke="rgb(${color[0]},${color[1]},${color[2]})" stroke-width="${brushSize * scale}" stroke-linecap="round" fill="none" />`;
+            svgLines.push(svgPath);
+        }
+        copyCtx.stroke();
+    }
+
+    function findContiguousRegion(startX, startY, color, imageData, globalVisited, maskData) {
+        const { width, height, data } = imageData;
+        const region = []; const queue = [[startX, startY]];
+        const idx = startY * width + startX; globalVisited[idx] = 1;
+        while (queue.length > 0) {
+            const [x, y] = queue.shift(); region.push([x, y]);
+            for (let dy = -1; dy <= 1; dy++) {
+                for (let dx = -1; dx <= 1; dx++) {
+                    if (dx === 0 && dy === 0) continue;
+                    const nx = x + dx, ny = y + dy;
+                    if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
+                        const nIdx = ny * width + nx;
+                        if (globalVisited[nIdx] === 0 && !isPixelMasked(nIdx, maskData)) {
+                             const nDataIdx = nIdx * 4;
+                             if (data[nDataIdx] === color[0] && data[nDataIdx+1] === color[1] && data[nDataIdx+2] === color[2]) {
+                                 globalVisited[nIdx] = 1; queue.push([nx, ny]);
+                             }
+                        }
+                    }
+                }
+            }
+        }
+        return region;
+    }
+    function findBestStrokeInRegion(startX, startY, regionPixels) {
+        const directions = [ { x: 1, y: 0 }, { x: 1, y: -1 }, { x: 0, y: -1 }, { x: -1, y: -1 }, { x: -1, y: 0 }, { x: -1, y: 1 }, { x: 0, y: 1 }, { x: 1, y: 1 } ];
+        let bestStroke = { x1: startX, y1: startY, x2: startX, y2: startY, len: 0 };
+        for (const dir of directions) {
+            let currentX = startX, currentY = startY, len = 0;
+            while (true) {
+                const nextX = currentX + dir.x, nextY = currentY + dir.y;
+                if (regionPixels.has(`${nextX},${nextY}`)) {
+                    currentX = nextX; currentY = nextY; len++;
+                } else { break; }
+            }
+            if (len > bestStroke.len) { bestStroke = { x1: startX, y1: startY, x2: currentX, y2: currentY, len }; }
+        }
+        return bestStroke;
+    }
+    function removePaintedPixels(stroke, pixelsToPaint, brushSize) {
+        const { x1, y1, x2, y2 } = stroke;
+        const halfBrush = Math.ceil(brushSize / 2);
+        const dx = Math.abs(x2 - x1), dy = Math.abs(y2 - y1);
+        const sx = (x1 < x2) ? 1 : -1, sy = (y1 < y2) ? 1 : -1;
+        let err = dx - dy, cx = x1, cy = y1;
+        while (true) {
+            for (let i = -halfBrush; i <= halfBrush; i++) {
+                for (let j = -halfBrush; j <= halfBrush; j++) { pixelsToPaint.delete(`${cx + i},${cy + j}`); }
+            }
+            if ((cx === x2) && (cy === y2)) break;
+            const e2 = 2 * err;
+            if (e2 > -dy) { err -= dy; cx += sx; }
+            if (e2 < dx) { err += dx; cy += sy; }
+        }
+    }
+    function updateProgressBar(value, max) { const percent = max > 0 ? Math.round((value / max) * 100) : 100; progressBar.value = percent; progressText.textContent = `${percent}%`; }
+    function isPixelMasked(index, maskData) { return maskData[index * 4] < 128; }
+    function toggleMasking() { isMasking = !isMasking; quantizedCanvas.classList.toggle('mask-active', isMasking); maskButton.textContent = isMasking ? 'Disattiva Maschera' : 'Attiva Maschera'; maskButton.classList.toggle('warning', isMasking); setStatus(isMasking ? 'Modalità maschera ATTIVA. Disegna sul canvas "Quantizzata" per escludere aree.' : 'Modalità maschera disattivata.'); }
+    function clearMask() { maskCtx.fillStyle = 'white'; maskCtx.fillRect(0, 0, maskCanvas.width, maskCanvas.height); if (quantizedImageData) { quantizedCtx.putImageData(quantizedImageData, 0, 0); } setStatus('Maschera cancellata.'); }
+    function getMousePos(canvas, evt) { const rect = canvas.getBoundingClientRect(); return { x: (evt.clientX - rect.left) / (rect.right - rect.left) * canvas.width, y: (evt.clientY - rect.top) / (rect.bottom - rect.top) * canvas.height }; }
+    function startMaskDraw(e) { if (!isMasking) return; isDrawingMask = true; drawOnMask(e); }
+    function drawMask(e) { if (!isMasking || !isDrawingMask) return; drawOnMask(e); }
+    function stopMaskDraw() { isDrawingMask = false; }
+    function drawOnMask(e) { const pos = getMousePos(quantizedCanvas, e); const brushSize = 10; maskCtx.fillStyle = 'black'; maskCtx.beginPath(); maskCtx.arc(pos.x, pos.y, brushSize, 0, Math.PI * 2); maskCtx.fill(); quantizedCtx.fillStyle = 'rgba(255, 0, 0, 0.4)'; quantizedCtx.beginPath(); quantizedCtx.arc(pos.x, pos.y, brushSize, 0, Math.PI * 2); quantizedCtx.fill(); }
+    function displayPalette(palette) { paletteDiv.innerHTML = ''; palette.forEach(color => { const colorBox = document.createElement('div'); colorBox.className = 'color-box'; colorBox.style.backgroundColor = `rgb(${color[0]}, ${color[1]}, ${color[2]})`; colorBox.title = `RGB(${color.join(', ')})`; paletteDiv.appendChild(colorBox); }); paletteCountSpan.textContent = palette.length; }
+    function rgbToHex(rgb) { if(!rgb) return "#000000"; return "#" + rgb.map(c => c.toString(16).padStart(2, '0')).join(''); }
+    function setStatus(message) { statusDiv.textContent = message; }
+    function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
+    function disableAllButtons() { startButton.disabled = true; saveJpgButton.disabled = true; saveSvgButton.disabled = true; maskButton.disabled = true; clearMaskButton.disabled = true; }
+    function enableSaveButtons() { saveJpgButton.disabled = false; saveSvgButton.disabled = false; }
+});
+</script>
+
+</body>
+</html>

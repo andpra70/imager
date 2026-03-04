@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rilevamento Volto con MediaPipe</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            margin: 20px;
+            background-color: #f0f0f0;
+            color: #333;
+            text-align: center;
+        }
+
+        h1 {
+            color: #0056b3;
+        }
+
+        p {
+            max-width: 600px;
+            margin: 10px auto;
+        }
+
+        /* Contenitore per l'immagine e la canvas di disegno */
+        #image-container {
+            position: relative;
+            display: inline-block;
+            margin-top: 20px;
+            border: 2px dashed #ccc;
+            min-height: 100px; /* Altezza minima per visibilità */
+        }
+        
+        /* Nasconde l'immagine originale, useremo la canvas per mostrare tutto */
+        #source-image {
+           display: none;
+        }
+
+        /* La canvas dove disegneremo l'immagine e i landmark */
+        #output-canvas {
+            max-width: 100%;
+            height: auto;
+            border-radius: 8px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        }
+        
+        /* Stile per l'input file, per renderlo più carino */
+        .file-input-wrapper {
+            margin-top: 20px;
+        }
+
+        .file-input-label {
+            background-color: #007bff;
+            color: white;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            display: inline-block;
+            transition: background-color 0.3s;
+        }
+
+        .file-input-label:hover {
+            background-color: #0056b3;
+        }
+
+        #image-input {
+            display: none; /* Nascondiamo l'input di default */
+        }
+
+        /* Contenitore per i dati dei blendshapes */
+        #blendshapes-container {
+            max-width: 600px;
+            margin: 20px auto;
+            padding: 15px;
+            background-color: #fff;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            text-align: left;
+            font-family: 'Courier New', Courier, monospace;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        }
+
+        #blendshapes-container h3 {
+            margin-top: 0;
+            color: #333;
+            border-bottom: 1px solid #eee;
+            padding-bottom: 10px;
+        }
+        
+        #blendshapes-container ul {
+            list-style-type: none;
+            padding: 0;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        
+        #blendshapes-container li {
+            padding: 4px 0;
+        }
+        
+        /* Messaggio di stato */
+        #status-message {
+            font-weight: bold;
+            color: #d9534f;
+            margin-top: 15px;
+        }
+
+    </style>
+</head>
+<body>
+
+    <h1>Rilevamento Landmark Facciali su Immagine</h1>
+    <p>
+        Carica un'immagine contenente un volto. Il sistema utilizzerà MediaPipe Face Landmarker per identificare 
+        i punti chiave del viso, la mesh e le espressioni (blendshapes).
+    </p>
+
+    <div class="file-input-wrapper">
+        <label for="image-input" class="file-input-label">Scegli un'immagine</label>
+        <input type="file" id="image-input" accept="image/*">
+    </div>
+
+    <div id="status-message">Caricamento del modello in corso... Attendere prego.</div>
+
+    <div id="image-container">
+        <!-- L'immagine caricata dall'utente (nascosta) -->
+        <img id="source-image" />
+        <!-- La canvas su cui disegneremo l'immagine e i risultati -->
+        <canvas id="output-canvas"></canvas>
+    </div>
+
+    <div id="blendshapes-container" style="display: none;">
+        <h3>Dati Blendshapes (Espressioni Facciali)</h3>
+        <ul id="blendshapes-output"></ul>
+    </div>
+
+    <!-- Script JavaScript -->
+    <script type="module">
+        // Importa le classi necessarie da MediaPipe attraverso un CDN
+        import {
+            FaceLandmarker,
+            FilesetResolver,
+            DrawingUtils
+        } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3";
+
+        // Riferimenti agli elementi del DOM
+        const imageInput = document.getElementById('image-input');
+        const sourceImage = document.getElementById('source-image');
+        const canvas = document.getElementById('output-canvas');
+        const ctx = canvas.getContext('2d');
+        const blendshapesContainer = document.getElementById('blendshapes-container');
+        const blendshapesOutput = document.getElementById('blendshapes-output');
+        const statusMessage = document.getElementById('status-message');
+
+        let faceLandmarker;
+        let drawingUtils;
+        
+        // Funzione principale per inizializzare il FaceLandmarker di MediaPipe
+        const createFaceLandmarker = async () => {
+            // Risolve i percorsi dei file necessari per il modello (es. file .wasm)
+            const filesetResolver = await FilesetResolver.forVisionTasks(
+                "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm"
+            );
+            
+            // Crea l'istanza di FaceLandmarker con le opzioni desiderate
+            faceLandmarker = await FaceLandmarker.createFromOptions(filesetResolver, {
+                baseOptions: {
+                    // Percorso del modello pre-addestrato
+                    modelAssetPath: `https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task`,
+                    delegate: "GPU" // Usa la GPU se disponibile per performance migliori
+                },
+                // Modalità 'IMAGE' perché lavoriamo su singole immagini
+                runningMode: "IMAGE", 
+                // Abilita l'output dei blendshapes (es. sorriso, occhi chiusi, etc.)
+                outputFaceBlendshapes: true,
+                numFaces: 1 // Rileva un solo volto per semplicità
+            });
+            
+            // Inizializza l'utility per disegnare sulla canvas
+            drawingUtils = new DrawingUtils(ctx);
+
+            // Aggiorna il messaggio di stato per l'utente
+            statusMessage.innerText = "Modello caricato. Scegli un'immagine per iniziare!";
+            statusMessage.style.color = '#5cb85c'; // Verde per indicare successo
+        };
+
+        // Esegui l'inizializzazione non appena lo script viene caricato
+        createFaceLandmarker();
+        
+        // Gestisce l'evento di caricamento di un nuovo file immagine
+        const handleImageUpload = (event) => {
+            const file = event.target.files[0];
+            if (!file) {
+                return;
+            }
+            
+            // Crea un URL temporaneo per il file e lo assegna all'elemento <img>
+            const imageUrl = URL.createObjectURL(file);
+            sourceImage.src = imageUrl;
+
+            // Una volta che l'immagine è stata caricata nel tag <img>, esegui la predizione
+            sourceImage.onload = async () => {
+                // Assicurati che il modello sia già stato caricato
+                if (!faceLandmarker) {
+                    console.log("Face Landmarker non ancora pronto.");
+                    statusMessage.innerText = "Errore: il modello non è stato caricato. Riprova a ricaricare la pagina.";
+                    statusMessage.style.color = '#d9534f';
+                    return;
+                }
+
+                // Esegui il rilevamento sull'immagine caricata
+                const results = faceLandmarker.detect(sourceImage);
+                
+                // Pulisci la canvas e disegna i risultati
+                drawResults(results);
+
+                // Mostra i dati dei blendshapes
+                displayBlendshapes(results.faceBlendshapes);
+                
+                // Libera la memoria dell'URL temporaneo
+                URL.revokeObjectURL(imageUrl);
+            };
+        };
+
+        // Funzione per disegnare i risultati sulla canvas
+        const drawResults = (results) => {
+            // Imposta le dimensioni della canvas uguali a quelle dell'immagine originale
+            canvas.width = sourceImage.naturalWidth;
+            canvas.height = sourceImage.naturalHeight;
+            
+            // Pulisci la canvas da disegni precedenti
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            // Disegna l'immagine originale sulla canvas
+            ctx.drawImage(sourceImage, 0, 0, canvas.width, canvas.height);
+
+            // Se sono stati rilevati volti, disegna i landmark
+            if (results.faceLandmarks && results.faceLandmarks.length > 0) {
+                // Itera sui volti rilevati (in questo caso, solo uno)
+                for (const landmarks of results.faceLandmarks) {
+                    // Disegna la mesh del viso (tessellation)
+                    drawingUtils.drawConnectors(landmarks, FaceLandmarker.FACE_LANDMARKS_TESSELATION, {
+                        color: "#C0C0C070",
+                        lineWidth: 1
+                    });
+                    // Disegna i contorni di occhi, sopracciglia, labbra, etc.
+                    drawingUtils.drawConnectors(landmarks, FaceLandmarker.FACE_LANDMARKS_RIGHT_EYE, { color: "#FF3030" });
+                    drawingUtils.drawConnectors(landmarks, FaceLandmarker.FACE_LANDMARKS_RIGHT_EYEBROW, { color: "#FF3030" });
+                    drawingUtils.drawConnectors(landmarks, FaceLandmarker.FACE_LANDMARKS_LEFT_EYE, { color: "#30FF30" });
+                    drawingUtils.drawConnectors(landmarks, FaceLandmarker.FACE_LANDMARKS_LEFT_EYEBROW, { color: "#30FF30" });
+                    drawingUtils.drawConnectors(landmarks, FaceLandmarker.FACE_LANDMARKS_FACE_OVAL, { color: "#E0E0E0" });
+                    drawingUtils.drawConnectors(landmarks, FaceLandmarker.FACE_LANDMARKS_LIPS, { color: "#E0E0E0" });
+                    drawingUtils.drawConnectors(landmarks, FaceLandmarker.FACE_LANDMARKS_RIGHT_IRIS, { color: "#FF3030" });
+                    drawingUtils.drawConnectors(landmarks, FaceLandmarker.FACE_LANDMARKS_LEFT_IRIS, { color: "#30FF30" });
+                }
+            }
+        };
+
+        // Funzione per visualizzare i dati dei blendshapes
+        const displayBlendshapes = (faceBlendshapes) => {
+            if (!faceBlendshapes || faceBlendshapes.length === 0) {
+                blendshapesContainer.style.display = 'none';
+                return;
+            }
+            
+            // Pulisci la lista precedente
+            blendshapesOutput.innerHTML = '';
+            
+            // Estrai le categorie (nomi delle espressioni e punteggi)
+            const blendshapeCategories = faceBlendshapes[0].categories;
+            
+            // Crea un elemento <li> per ogni blendshape e lo aggiunge alla lista
+            blendshapeCategories.forEach(shape => {
+                const li = document.createElement('li');
+                li.textContent = `${shape.displayName || shape.categoryName}: ${shape.score.toFixed(4)}`;
+                blendshapesOutput.appendChild(li);
+            });
+            
+            // Rendi visibile il contenitore dei blendshapes
+            blendshapesContainer.style.display = 'block';
+        };
+
+        // Aggiungi l'event listener all'input file
+        imageInput.addEventListener('change', handleImageUpload);
+    </script>
+</body>
+</html>

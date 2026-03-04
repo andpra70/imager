@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Quadtree Painting Algorithm</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: #f0f2f5;
+            color: #333;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin: 0;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1000px;
+            width: 100%;
+            background: #fff;
+            padding: 25px;
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        }
+        h1 {
+            text-align: center;
+            color: #1a73e8;
+            margin-top: 0;
+        }
+        .controls {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 20px;
+            margin-bottom: 20px;
+            padding: 20px;
+            background-color: #f9f9f9;
+            border-radius: 8px;
+            border: 1px solid #ddd;
+        }
+        .control-group {
+            display: flex;
+            flex-direction: column;
+        }
+        .control-group.full-width {
+            grid-column: 1 / -1;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 500;
+        }
+        input[type="file"], input[type="range"], button {
+            width: 100%;
+            box-sizing: border-box;
+        }
+        button {
+            padding: 12px 20px;
+            font-size: 16px;
+            font-weight: bold;
+            color: #fff;
+            background-color: #1a73e8;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: background-color 0.3s, transform 0.1s;
+        }
+        button:hover {
+            background-color: #155ab6;
+        }
+        button:active {
+            transform: scale(0.98);
+        }
+        button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        .progress-container {
+            width: 100%;
+            background-color: #e0e0e0;
+            border-radius: 8px;
+            margin-top: 20px;
+            overflow: hidden;
+            display: none;
+        }
+        #progressBar {
+            width: 0%;
+            height: 25px;
+            background-color: #4caf50;
+            text-align: center;
+            line-height: 25px;
+            color: white;
+            font-weight: bold;
+            transition: width 0.4s ease;
+        }
+        #quadCountInfo {
+            text-align: center;
+            margin-top: 15px;
+            font-size: 1.1em;
+            color: #555;
+            font-weight: 500;
+            display: none;
+        }
+        #outputCanvas {
+            display: block;
+            margin: 20px auto 0;
+            max-width: 100%;
+            border-radius: 8px;
+            background: #eee;
+            border: 1px solid #ccc;
+        }
+        /* --- NUOVO CSS --- */
+        .save-buttons-container {
+            display: none; /* Inizialmente nascosto */
+            justify-content: center;
+            gap: 15px;
+            margin-top: 20px;
+        }
+        #saveButton, #saveSvgButton {
+            width: auto;
+            flex-grow: 1;
+            max-width: 250px;
+        }
+        #saveButton {
+            background-color: #34a853;
+        }
+        #saveButton:hover {
+            background-color: #2b8c45;
+        }
+        #saveSvgButton {
+            background-color: #ff6f00; /* Un colore diverso per l'SVG */
+        }
+        #saveSvgButton:hover {
+            background-color: #e66400;
+        }
+        .slider-value {
+            font-weight: bold;
+            color: #1a73e8;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h1>Quadtree Painting Algorithm</h1>
+
+        <div class="controls">
+            <div class="control-group full-width">
+                <label for="imageLoader">1. Carica un'immagine</label>
+                <input type="file" id="imageLoader" name="imageLoader" accept="image/*"/>
+            </div>
+            <div class="control-group">
+                <label for="paletteSize">Numero Colori: <span id="paletteSizeValue" class="slider-value">12</span></label>
+                <input type="range" id="paletteSize" min="1" max="24" value="12" step="1">
+            </div>
+            <div class="control-group">
+                <label for="varianceThreshold">Soglia Varianza: <span id="varianceValue" class="slider-value">1000</span></label>
+                <input type="range" id="varianceThreshold" min="100" max="5000" value="1000" step="50">
+            </div>
+            <div class="control-group">
+                <label for="minSize">Dimensione Minima: <span id="minSizeValue" class="slider-value">8</span>px</label>
+                <input type="range" id="minSize" min="2" max="32" value="8" step="1">
+            </div>
+        </div>
+
+        <button id="startButton" disabled>Avvia Processo</button>
+
+        <div class="progress-container" id="progressContainer">
+            <div id="progressBar">0%</div>
+        </div>
+        
+        <p id="quadCountInfo"></p>
+
+        <canvas id="outputCanvas"></canvas>
+        
+        <!-- NUOVO: Contenitore per i pulsanti di salvataggio -->
+        <div class="save-buttons-container" id="saveButtonsContainer">
+            <button id="saveButton">Salva come PNG</button>
+            <button id="saveSvgButton">Salva come SVG</button>
+        </div>
+    </div>
+
+    <script>
+    // --- ELEMENTI DOM ---
+    const imageLoader = document.getElementById('imageLoader');
+    const startButton = document.getElementById('startButton');
+    const saveButton = document.getElementById('saveButton');
+    const outputCanvas = document.getElementById('outputCanvas');
+    const ctx = outputCanvas.getContext('2d');
+    
+    // --- NUOVI ELEMENTI DOM ---
+    const saveSvgButton = document.getElementById('saveSvgButton');
+    const saveButtonsContainer = document.getElementById('saveButtonsContainer');
+    
+    const paletteSizeSlider = document.getElementById('paletteSize');
+    const varianceSlider = document.getElementById('varianceThreshold');
+    const minSizeSlider = document.getElementById('minSize');
+    const paletteSizeValueSpan = document.getElementById('paletteSizeValue');
+    const varianceValueSpan = document.getElementById('varianceValue');
+    const minSizeValueSpan = document.getElementById('minSizeValue');
+
+    const progressContainer = document.getElementById('progressContainer');
+    const progressBar = document.getElementById('progressBar');
+    const quadCountInfo = document.getElementById('quadCountInfo');
+
+    // --- STATO DELL'APPLICAZIONE ---
+    let sourceImage = null;
+    let totalPixelsToProcess = 0;
+    let pixelsProcessed = 0;
+    let quadCount = 0;
+    // --- NUOVO STATO PER L'SVG ---
+    let svgRects = []; // Array per contenere gli elementi <rect> dell'SVG
+
+    // --- PARAMETRI ALGORITMO ---
+    const MAX_DEPTH = 10;
+    let PALETTE_SIZE = parseInt(paletteSizeSlider.value);
+    let VARIANCE_THRESHOLD = parseInt(varianceSlider.value);
+    let MIN_SIZE = parseInt(minSizeSlider.value);
+    
+    // --- EVENT LISTENERS E INIZIALIZZAZIONE ---
+    imageLoader.addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if (file) {
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                sourceImage = new Image();
+                sourceImage.onload = () => {
+                    startButton.disabled = false;
+                    const aspectRatio = sourceImage.width / sourceImage.height;
+                    const maxWidth = document.querySelector('.container').clientWidth - 50;
+                    outputCanvas.width = Math.min(sourceImage.width, maxWidth);
+                    outputCanvas.height = outputCanvas.width / aspectRatio;
+                    ctx.drawImage(sourceImage, 0, 0, outputCanvas.width, outputCanvas.height);
+                    saveButtonsContainer.style.display = 'none'; // Nasconde il contenitore
+                    progressContainer.style.display = 'none';
+                    quadCountInfo.style.display = 'none';
+                };
+                sourceImage.src = event.target.result;
+            };
+            reader.readAsDataURL(file);
+        }
+    });
+    
+    paletteSizeSlider.addEventListener('input', (e) => { PALETTE_SIZE = parseInt(e.target.value); paletteSizeValueSpan.textContent = PALETTE_SIZE; });
+    varianceSlider.addEventListener('input', (e) => { VARIANCE_THRESHOLD = parseInt(e.target.value); varianceValueSpan.textContent = VARIANCE_THRESHOLD; });
+    minSizeSlider.addEventListener('input', (e) => { MIN_SIZE = parseInt(e.target.value); minSizeValueSpan.textContent = MIN_SIZE; });
+    startButton.addEventListener('click', () => { if (sourceImage) processImage(); });
+    
+    // Listener per il salvataggio PNG
+    saveButton.addEventListener('click', () => {
+        const link = document.createElement('a');
+        link.download = 'quadtree-painting.png';
+        link.href = outputCanvas.toDataURL('image/png');
+        link.click();
+    });
+
+    // --- NUOVO: Listener per il salvataggio SVG ---
+    saveSvgButton.addEventListener('click', () => {
+        // Costruisce la stringa SVG finale
+        const svgString = `<svg width="${outputCanvas.width}" height="${outputCanvas.height}" xmlns="http://www.w3.org/2000/svg" shape-rendering="crispEdges">
+    ${svgRects.join('\n    ')}
+</svg>`;
+
+        // Crea un Blob (Binary Large Object)
+        const blob = new Blob([svgString], { type: 'image/svg+xml' });
+        
+        // Crea un URL per il Blob
+        const url = URL.createObjectURL(blob);
+        
+        // Simula il click su un link per avviare il download
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = 'quadtree-painting.svg';
+        document.body.appendChild(link);
+        link.click();
+        
+        // Pulisce
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+    });
+
+    // --- FUNZIONI HELPER PER COLORI E PALETTE ---
+    function colorDistanceSquared(c1, c2) {
+        const dr = c1.r - c2.r;
+        const dg = c1.g - c2.g;
+        const db = c1.b - c2.b;
+        return dr * dr + dg * dg + db * db;
+    }
+
+    function findClosestColor(color, palette) {
+        let minDistance = Infinity;
+        let closestColor = palette[0];
+        for (const paletteColor of palette) {
+            const distance = colorDistanceSquared(color, paletteColor);
+            if (distance < minDistance) {
+                minDistance = distance;
+                closestColor = paletteColor;
+            }
+        }
+        return closestColor;
+    }
+
+    async function createPaletteFromImage(imageData, k) {
+        const pixels = [];
+        const samplingRate = Math.max(1, Math.floor(imageData.data.length / 4 / 20000));
+        for (let i = 0; i < imageData.data.length; i += 4 * samplingRate) {
+            pixels.push({ r: imageData.data[i], g: imageData.data[i + 1], b: imageData.data[i + 2] });
+        }
+        if (pixels.length < k) { k = Math.max(1, pixels.length); }
+        let centroids = pixels.slice(0, k).map(p => ({ ...p }));
+        for (let iter = 0; iter < 20; iter++) {
+            const clusters = Array.from({ length: k }, () => []);
+            for (const pixel of pixels) {
+                let minDistance = Infinity, clusterIndex = 0;
+                for (let j = 0; j < k; j++) {
+                    const distance = colorDistanceSquared(pixel, centroids[j]);
+                    if (distance < minDistance) { minDistance = distance; clusterIndex = j; }
+                }
+                clusters[clusterIndex].push(pixel);
+            }
+            let hasConverged = true;
+            for (let j = 0; j < k; j++) {
+                if (clusters[j].length > 0) {
+                    const sum = clusters[j].reduce((acc, p) => ({ r: acc.r + p.r, g: acc.g + p.g, b: acc.b + p.b }), { r: 0, g: 0, b: 0 });
+                    const newCentroid = { r: Math.round(sum.r / clusters[j].length), g: Math.round(sum.g / clusters[j].length), b: Math.round(sum.b / clusters[j].length) };
+                    if (centroids[j] && colorDistanceSquared(newCentroid, centroids[j]) > 0.1) { hasConverged = false; }
+                    centroids[j] = newCentroid;
+                }
+            }
+            if (hasConverged) break;
+        }
+        return centroids;
+    }
+
+    // --- NUOVA FASE DI QUANTIZZAZIONE ---
+    async function quantizeImageData(sourceData, palette) {
+        const quantizedData = new ImageData(sourceData.width, sourceData.height);
+        for (let i = 0; i < sourceData.data.length; i += 4) {
+            const originalColor = { r: sourceData.data[i], g: sourceData.data[i + 1], b: sourceData.data[i + 2] };
+            const closest = findClosestColor(originalColor, palette);
+            quantizedData.data[i]     = closest.r;
+            quantizedData.data[i + 1] = closest.g;
+            quantizedData.data[i + 2] = closest.b;
+            quantizedData.data[i + 3] = 255;
+        }
+        return quantizedData;
+    }
+
+    // --- ALGORITMO QUADTREE ---
+    function analyzeRegion(imageData, x, y, width, height) {
+        let sumR = 0, sumG = 0, sumB = 0, count = 0;
+        const firstPixelIndex = (y * imageData.width + x) * 4;
+        const firstR = imageData.data[firstPixelIndex];
+        const firstG = imageData.data[firstPixelIndex + 1];
+        const firstB = imageData.data[firstPixelIndex + 2];
+        let isSolidColor = true;
+
+        for (let j = y; j < y + height; j++) {
+            for (let i = x; i < x + width; i++) {
+                const index = (j * imageData.width + i) * 4;
+                const r = imageData.data[index], g = imageData.data[index + 1], b = imageData.data[index + 2];
+                if (isSolidColor && (r !== firstR || g !== firstG || b !== firstB)) {
+                    isSolidColor = false;
+                }
+                sumR += r; sumG += g; sumB += b;
+                count++;
+            }
+        }
+        
+        const averageColor = { r: sumR / count, g: sumG / count, b: sumB / count };
+        
+        if (isSolidColor) {
+            return { average: averageColor, variance: 0 };
+        }
+
+        let variance = 0;
+        for (let j = y; j < y + height; j++) {
+            for (let i = x; i < x + width; i++) {
+                const index = (j * imageData.width + i) * 4;
+                const p = { r: imageData.data[index], g: imageData.data[index+1], b: imageData.data[index+2] };
+                variance += colorDistanceSquared(p, averageColor);
+            }
+        }
+        return { average: averageColor, variance: variance / count };
+    }
+
+    async function paintQuadtree(quantizedData, palette, x, y, width, height, depth) {
+        if (width < MIN_SIZE || height < MIN_SIZE || depth > MAX_DEPTH) {
+            const region = analyzeRegion(quantizedData, x, y, width, height);
+            const bestColor = findClosestColor(region.average, palette);
+            drawAndCountRect(x, y, width, height, bestColor); // MODIFICATO
+            updateProgress(width * height);
+            return;
+        }
+
+        const region = analyzeRegion(quantizedData, x, y, width, height);
+        
+        if (region.variance < VARIANCE_THRESHOLD) {
+            const bestColor = findClosestColor(region.average, palette);
+            drawAndCountRect(x, y, width, height, bestColor); // MODIFICATO
+            updateProgress(width * height);
+        } else {
+            const halfW = Math.ceil(width / 2);
+            const halfH = Math.ceil(height / 2);
+            await new Promise(resolve => setTimeout(resolve, 0));
+            await Promise.all([
+                paintQuadtree(quantizedData, palette, x, y, halfW, halfH, depth + 1),
+                paintQuadtree(quantizedData, palette, x + halfW, y, width - halfW, halfH, depth + 1),
+                paintQuadtree(quantizedData, palette, x, y + halfH, halfW, height - halfH, depth + 1),
+                paintQuadtree(quantizedData, palette, x + halfW, y + halfH, width - halfW, height - halfH, depth + 1)
+            ]);
+        }
+    }
+    
+    // --- NUOVO: Funzione modificata per disegnare su Canvas E generare l'SVG ---
+    function drawAndCountRect(x, y, width, height, color) {
+        const r = Math.round(color.r);
+        const g = Math.round(color.g);
+        const b = Math.round(color.b);
+        const fillColor = `rgb(${r}, ${g}, ${b})`;
+
+        // 1. Disegna su Canvas (comportamento precedente)
+        ctx.fillStyle = fillColor;
+        ctx.fillRect(x, y, width, height);
+        
+        // 2. Aggiunge l'elemento <rect> all'array per l'SVG
+        svgRects.push(`<rect x="${x}" y="${y}" width="${width}" height="${height}" fill="${fillColor}" />`);
+
+        quadCount++;
+    }
+
+    function updateProgress(processedArea) {
+        pixelsProcessed += processedArea;
+        const percentage = Math.min(100, Math.round((pixelsProcessed / totalPixelsToProcess) * 100));
+        progressBar.style.width = percentage + '%';
+        progressBar.textContent = percentage + '%';
+    }
+    
+    // --- FLUSSO PRINCIPALE DEL PROCESSO ---
+    async function processImage() {
+        startButton.disabled = true;
+        saveButtonsContainer.style.display = 'none'; // Nasconde il contenitore
+        progressContainer.style.display = 'block';
+        quadCountInfo.style.display = 'none';
+        
+        // 0. Inizializzazione
+        progressBar.style.width = '0%';
+        progressBar.textContent = 'Inizializzazione...';
+        await new Promise(resolve => setTimeout(resolve, 50));
+        outputCanvas.width = sourceImage.width;
+        outputCanvas.height = sourceImage.height;
+        const sourceCanvas = document.createElement('canvas');
+        sourceCanvas.width = sourceImage.width;
+        sourceCanvas.height = sourceImage.height;
+        const sourceCtx = sourceCanvas.getContext('2d');
+        sourceCtx.drawImage(sourceImage, 0, 0);
+        const sourceData = sourceCtx.getImageData(0, 0, sourceCanvas.width, sourceCanvas.height);
+        
+        totalPixelsToProcess = sourceData.width * sourceData.height;
+        pixelsProcessed = 0;
+        quadCount = 0;
+        svgRects = []; // NUOVO: Azzera l'array dei rettangoli SVG
+        
+        // 1. Creazione Palette dall'immagine originale
+        progressBar.textContent = 'Creazione palette (k-means)...';
+        await new Promise(resolve => setTimeout(resolve, 50));
+        const palette = await createPaletteFromImage(sourceData, PALETTE_SIZE);
+        
+        // 2. Quantizzazione Immagine
+        progressBar.textContent = 'Quantizzazione immagine...';
+        await new Promise(resolve => setTimeout(resolve, 50));
+        const quantizedData = await quantizeImageData(sourceData, palette);
+
+        // 3. Esecuzione Quadtree
+        ctx.clearRect(0, 0, outputCanvas.width, outputCanvas.height);
+        progressBar.style.width = '0%';
+        progressBar.textContent = 'Rendering Quadtree...';
+        await new Promise(resolve => setTimeout(resolve, 50));
+        
+        await paintQuadtree(quantizedData, palette, 0, 0, outputCanvas.width, outputCanvas.height, 0);
+
+        // 4. Completamento
+        progressBar.textContent = 'Completato!';
+        const colorText = palette.length === 1 ? 'colore' : 'colori';
+        quadCountInfo.innerHTML = `🎨 Immagine generata con <strong>${quadCount.toLocaleString('it-IT')}</strong> rettangoli e <strong>${palette.length}</strong> ${colorText}.`;
+        quadCountInfo.style.display = 'block';
+        startButton.disabled = false;
+        saveButtonsContainer.style.display = 'flex'; // Mostra il contenitore con entrambi i pulsanti
+    }
+    </script>
+</body>
+</html>

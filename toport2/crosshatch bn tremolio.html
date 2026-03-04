@@ -1,0 +1,531 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Quantizzazione Immagine e Line Art SVG (0-90 Gradi, Tremolio)</title>
+    <style>
+        body { 
+            font-family: sans-serif; 
+            margin: 20px; 
+            background-color: #f4f4f4; 
+            color: #333; 
+        }
+        .container { 
+            display: flex; 
+            flex-wrap: wrap; 
+            gap: 20px; 
+            margin-bottom: 20px; 
+        }
+        .controls, .display-area {
+            background-color: #fff;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            box-sizing: border-box; 
+        }
+        .display-area {
+            width: 100%; 
+        }
+        @media (min-width: 768px) {
+            .container .display-area {
+                 flex: 1;
+                 min-width: 300px;
+            }
+        }
+
+        .controls > div, .display-area > div { 
+            margin-bottom: 10px; 
+        }
+        label { 
+            display: block; 
+            margin-bottom: 5px; 
+            font-weight: bold; 
+        }
+        input[type="file"], input[type="number"], input[type="color"], input[type="range"], button {
+            padding: 8px;
+            margin-top: 5px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-sizing: border-box;
+            vertical-align: middle;
+        }
+        input[type="number"] { 
+            width: 80px; 
+        }
+        input[type="color"] {
+            width: 100px;
+            height: 35px;
+            padding: 2px;
+        }
+        input[type="range"] {
+            width: 150px;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            cursor: pointer;
+            transition: background-color 0.3s ease;
+            margin-right: 5px; 
+        }
+        button:hover { 
+            background-color: #0056b3; 
+        }
+        button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        
+        .canvas-container, .svg-container { 
+            text-align: center; 
+            width: 100%;      
+            border: 1px solid #ccc; 
+            margin-top: 5px;
+            background-color: white;
+        }
+        canvas { 
+            max-width: 100%;   
+            height: auto;      
+            display: block;    
+            margin-left: auto; 
+            margin-right: auto;
+        }
+        .svg-container svg {
+            max-width: 100%;
+            height: auto;
+            display: block;
+            margin-left: auto;
+            margin-right: auto;
+        }
+
+        h2 { 
+            margin-top: 0; 
+            color: #007bff; 
+        }
+        #status, #progressStatus { 
+            margin-top:10px; 
+            font-style: italic; 
+            color: #555;
+        }
+        .progress-bar-container {
+            width: 100%;
+            background-color: #e0e0e0;
+            border-radius: 4px;
+            margin-top: 10px;
+            display: none; 
+        }
+        .progress-bar {
+            width: 0%;
+            height: 20px;
+            background-color: #007bff;
+            border-radius: 4px;
+            text-align: center;
+            line-height: 20px;
+            color: white;
+            font-size: 0.8em;
+            transition: width 0.2s ease-out; 
+        }
+    </style>
+</head>
+<body>
+
+    <h1>Quantizzazione Immagine e Line Art SVG (Angoli 0-90 Gradi, Tremolio)</h1>
+
+    <div class="controls">
+        <div>
+            <label for="imageLoader">Scegli immagine:</label>
+            <input type="file" id="imageLoader" accept="image/*">
+        </div>
+        <div>
+            <label for="levels">Livelli di quantizzazione (2-128):</label>
+            <input type="number" id="levels" value="8" min="2" max="128">
+        </div>
+        <button id="processButton">1. Processa Immagine</button>
+        <div id="status"></div>
+    </div>
+
+    <div class="container">
+        <div class="display-area">
+            <h2>Immagine Originale</h2>
+            <div class="canvas-container">
+                <canvas id="originalCanvas"></canvas>
+            </div>
+        </div>
+        <div class="display-area">
+            <h2>Density Map (Immagine Quantizzata)</h2>
+            <div class="canvas-container">
+                <canvas id="quantizedCanvas"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <div class="controls">
+        <h2>Controlli Line Art SVG</h2>
+        <div>
+            <label for="upscale">Upscale Immagine Destinazione (1-10):</label>
+            <input type="number" id="upscale" value="2" min="1" max="10">
+        </div>
+        <div>
+            <label for="whiteThreshold">Soglia di Bianco (0-255):</label>
+            <input type="number" id="whiteThreshold" value="250" min="0" max="255">
+        </div>
+        <div>
+            <label for="lineSpacing">Passo Interlinea (pixel):</label>
+            <input type="number" id="lineSpacing" value="5" min="1">
+        </div>
+        <div>
+            <label for="lineThickness">Spessore Linea (pixel):</label>
+            <input type="number" id="lineThickness" value="1" min="0.1" step="0.1">
+        </div>
+        <div>
+            <label for="lineColor">Colore Linea:</label>
+            <input type="color" id="lineColor" value="#000000">
+        </div>
+        <div>
+            <label for="lineAlpha">Alpha Linea (0-1):</label>
+            <input type="range" id="lineAlpha" value="1" min="0" max="1" step="0.01">
+            <span id="lineAlphaValue">1.00</span>
+        </div>
+        <div> <!-- NUOVO CONTROLLO TREMOLIO -->
+            <label for="lineWobble">Tremolio Linea (0-100):</label>
+            <input type="range" id="lineWobble" value="0" min="0" max="100" step="1">
+            <span id="lineWobbleValue">0</span>
+        </div>
+        <button id="generateLineArtButton" disabled>2. Genera Line Art SVG</button>
+        <button id="saveSvgButton" disabled>Salva SVG</button>
+        <div id="progressStatus"></div>
+        <div class="progress-bar-container" id="progressBarContainer">
+            <div class="progress-bar" id="progressBar">0%</div>
+        </div>
+    </div>
+
+    <div class="display-area" id="lineArtDisplayArea">
+        <h2>Immagine Line Art SVG</h2>
+        <div id="svgContainer" class="svg-container">
+            <!-- L'SVG verrà inserito qui -->
+        </div>
+    </div>
+
+    <script>
+        const imageLoader = document.getElementById('imageLoader');
+        const processButton = document.getElementById('processButton');
+        const generateLineArtButton = document.getElementById('generateLineArtButton');
+        const saveSvgButton = document.getElementById('saveSvgButton');
+        
+        const levelsInput = document.getElementById('levels');
+        const upscaleInput = document.getElementById('upscale');
+        const whiteThresholdInput = document.getElementById('whiteThreshold');
+        const lineSpacingInput = document.getElementById('lineSpacing');
+        const lineThicknessInput = document.getElementById('lineThickness');
+        const lineColorInput = document.getElementById('lineColor');
+        const lineAlphaInput = document.getElementById('lineAlpha');
+        const lineAlphaValueSpan = document.getElementById('lineAlphaValue');
+        const lineWobbleInput = document.getElementById('lineWobble'); // NUOVO
+        const lineWobbleValueSpan = document.getElementById('lineWobbleValue'); // NUOVO
+
+        const statusDiv = document.getElementById('status');
+        const progressStatusDiv = document.getElementById('progressStatus');
+        const progressBarContainer = document.getElementById('progressBarContainer');
+        const progressBar = document.getElementById('progressBar');
+
+        const originalCanvas = document.getElementById('originalCanvas');
+        const quantizedCanvas = document.getElementById('quantizedCanvas');
+        const svgContainer = document.getElementById('svgContainer');
+
+        const ctxOriginal = originalCanvas.getContext('2d');
+        const ctxQuantized = quantizedCanvas.getContext('2d');
+
+        const SVG_NS = "http://www.w3.org/2000/svg";
+        let currentSvgElement = null; 
+        let isGenerating = false; 
+
+        lineAlphaInput.addEventListener('input', () => {
+            lineAlphaValueSpan.textContent = parseFloat(lineAlphaInput.value).toFixed(2);
+        });
+        lineWobbleInput.addEventListener('input', () => { // NUOVO
+            lineWobbleValueSpan.textContent = lineWobbleInput.value;
+        });
+
+        imageLoader.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                    originalImage = new Image();
+                    originalImage.onload = () => {
+                        originalWidth = originalImage.width;
+                        originalHeight = originalImage.height;
+                        
+                        originalCanvas.width = originalWidth;
+                        originalCanvas.height = originalHeight;
+                        ctxOriginal.drawImage(originalImage, 0, 0);
+                        
+                        quantizedCanvas.width = originalWidth;
+                        quantizedCanvas.height = originalHeight;
+                        ctxQuantized.clearRect(0, 0, originalWidth, originalHeight);
+
+                        svgContainer.innerHTML = ""; 
+                        currentSvgElement = null;
+                        generateLineArtButton.disabled = true;
+                        saveSvgButton.disabled = true;
+                        progressBarContainer.style.display = 'none';
+                        progressStatusDiv.textContent = "";
+                        statusDiv.textContent = "Immagine caricata. Pronto per processare.";
+                    }
+                    originalImage.src = event.target.result;
+                }
+                reader.readAsDataURL(file);
+            }
+        });
+
+        processButton.addEventListener('click', () => {
+            if (!originalImage) {
+                alert("Carica prima un'immagine!");
+                return;
+            }
+            processButton.disabled = true;
+            generateLineArtButton.disabled = true;
+            saveSvgButton.disabled = true;
+            statusDiv.textContent = "Processo di quantizzazione in corso...";
+
+            setTimeout(() => { 
+                const numLevels = parseInt(levelsInput.value);
+                if (numLevels < 2 || numLevels > 128) {
+                    alert("Il numero di livelli deve essere tra 2 e 128.");
+                    statusDiv.textContent = "Errore: numero di livelli non valido.";
+                    processButton.disabled = false; 
+                    return;
+                }
+
+                quantizedCanvas.width = originalWidth;
+                quantizedCanvas.height = originalHeight;
+                
+                ctxOriginal.drawImage(originalImage, 0, 0, originalWidth, originalHeight);
+                const imageData = ctxOriginal.getImageData(0, 0, originalWidth, originalHeight);
+                const data = imageData.data;
+                
+                quantizedLevelsData = new Uint8Array(originalWidth * originalHeight);
+                const quantizedImageData = ctxQuantized.createImageData(originalWidth, originalHeight);
+                const qData = quantizedImageData.data;
+                const step = 256 / numLevels;
+
+                for (let i = 0; i < data.length; i += 4) {
+                    const r = data[i]; const g = data[i+1]; const b = data[i+2];
+                    const grayscale = Math.round(0.299 * r + 0.587 * g + 0.114 * b);
+                    const levelIndex = Math.min(Math.floor(grayscale / step), numLevels - 1);
+                    quantizedLevelsData[i / 4] = levelIndex;
+                    const quantizedGrayscale = (numLevels === 1) ? 0 : Math.round(levelIndex * (255 / (numLevels - 1)));
+                    qData[i] = quantizedGrayscale; qData[i+1] = quantizedGrayscale; qData[i+2] = quantizedGrayscale; qData[i+3] = 255;
+                }
+                
+                ctxQuantized.putImageData(quantizedImageData, 0, 0);
+                statusDiv.textContent = "Immagine quantizzata. Pronto per generare line art SVG.";
+                processButton.disabled = false;
+                generateLineArtButton.disabled = false;
+            }, 10);
+        });
+
+        function applyWobble(coordinate, maxOffset) {
+            if (maxOffset === 0) return coordinate;
+            // Genera un numero casuale tra -maxOffset e +maxOffset
+            const offset = (Math.random() * 2 - 1) * maxOffset;
+            return coordinate + offset;
+        }
+
+        function createAndAppendSvgLine(x1, y1, x2, y2, svgParent, color, thickness, alpha, wobbleAmount) {
+            if (x1 === x2 && y1 === y2 && wobbleAmount === 0) return; // Non disegnare linee di lunghezza zero se non c'è wobble
+
+            // Applica il tremolio ai punti finali. Per linee più lunghe, si potrebbe applicare a punti intermedi
+            // o usare curve di Bezier, ma per segmenti retti questo è più semplice.
+            const wX1 = applyWobble(x1, wobbleAmount);
+            const wY1 = applyWobble(y1, wobbleAmount);
+            const wX2 = applyWobble(x2, wobbleAmount);
+            const wY2 = applyWobble(y2, wobbleAmount);
+
+            if (wX1 === wX2 && wY1 === wY2) return; // Evita linee di lunghezza zero dopo il wobble
+
+            const line = document.createElementNS(SVG_NS, "line");
+            line.setAttribute("x1", wX1); 
+            line.setAttribute("y1", wY1);
+            line.setAttribute("x2", wX2); 
+            line.setAttribute("y2", wY2);
+            line.setAttribute("stroke", color);
+            line.setAttribute("stroke-width", thickness);
+            line.setAttribute("stroke-opacity", alpha);
+            line.setAttribute("stroke-linecap", "round");
+            svgParent.appendChild(line);
+        }
+
+        function yieldToBrowser() {
+            return new Promise(resolve => setTimeout(resolve, 0));
+        }
+
+        generateLineArtButton.addEventListener('click', async () => {
+            if (!quantizedLevelsData) {
+                alert("Processa prima l'immagine per quantizzarla!");
+                return;
+            }
+            if (isGenerating) {
+                alert("Generazione già in corso!");
+                return;
+            }
+            isGenerating = true;
+            
+            generateLineArtButton.disabled = true;
+            processButton.disabled = true;
+            saveSvgButton.disabled = true;
+
+            progressStatusDiv.textContent = "Generazione Line Art SVG in corso...";
+            progressBarContainer.style.display = 'block';
+            progressBar.style.width = '0%';
+            progressBar.textContent = '0%';
+            
+            await yieldToBrowser(); 
+
+            const numLevels = parseInt(levelsInput.value);
+            const upscale = parseInt(upscaleInput.value);
+            const whiteThresholdInputVal = parseInt(whiteThresholdInput.value);
+            const lineSpacing = parseInt(lineSpacingInput.value);
+            const lineThickness = parseFloat(lineThicknessInput.value);
+            const lineColor = lineColorInput.value;
+            const lineAlpha = parseFloat(lineAlphaInput.value);
+            const lineWobble = parseFloat(lineWobbleInput.value); // NUOVO
+
+            // Scala il valore di wobble (0-100) a un range di pixel effettivo
+            // Esempio: un wobble di 100 potrebbe significare uno scostamento massimo di 5 pixel (o lineThickness * X)
+            // Questo fattore di scala è arbitrario e può essere aggiustato.
+            const wobbleScaleFactor = 0.05; // Per 100 di wobble, scostamento max di 5 pixel
+                                          // Potrebbe anche dipendere da lineThickness o upscale
+            const maxWobbleOffset = lineWobble * wobbleScaleFactor * upscale; // Scala con upscale
+
+            const destWidth = originalWidth * upscale;
+            const destHeight = originalHeight * upscale;
+
+            svgContainer.innerHTML = ""; 
+            const svgElement = document.createElementNS(SVG_NS, "svg");
+            
+            svgElement.setAttribute("width", destWidth.toString());
+            svgElement.setAttribute("height", destHeight.toString());
+            svgElement.setAttribute("viewBox", `0 0 ${destWidth} ${destHeight}`);
+            svgElement.setAttribute("xmlns", SVG_NS); 
+
+            svgElement.style.backgroundColor = "white";
+            svgContainer.appendChild(svgElement);
+            currentSvgElement = svgElement;
+
+            const totalAngleVariations = numLevels;
+            let linesDrawn = 0;
+
+            for (let angleVariationIndex = 0; angleVariationIndex < totalAngleVariations; angleVariationIndex++) {
+                
+                let angleRad;
+                if (totalAngleVariations <= 1) {
+                    angleRad = 0; 
+                } else {
+                    angleRad = (angleVariationIndex / (totalAngleVariations - 1)) * (Math.PI / 2);
+                }
+                
+                const cosA = Math.cos(angleRad); const sinA = Math.sin(angleRad);
+                const maxPerpendicularDist = Math.max(destWidth, destHeight) * 1.5; 
+
+                for (let p = -maxPerpendicularDist; p < maxPerpendicularDist; p += lineSpacing) {
+                    const centerX = destWidth / 2; const centerY = destHeight / 2;
+                    const lineStartX = centerX + p * sinA - maxPerpendicularDist * cosA;
+                    const lineStartY = centerY - p * cosA - maxPerpendicularDist * sinA;
+                    const lineEndX = centerX + p * sinA + maxPerpendicularDist * cosA;
+                    const lineEndY = centerY - p * cosA + maxPerpendicularDist * sinA;
+                    
+                    let activeSegment = null;
+                    const totalLength = 2 * maxPerpendicularDist;
+                    const numStepsOnLine = Math.floor(totalLength / Math.max(1, upscale / 2)); 
+
+                    for (let k = 0; k <= numStepsOnLine; k++) {
+                        const t = k / numStepsOnLine;
+                        const currentX = lineStartX + t * (lineEndX - lineStartX);
+                        const currentY = lineStartY + t * (lineEndY - lineStartY);
+                        const roundedCurrentX = Math.round(currentX); 
+                        const roundedCurrentY = Math.round(currentY);
+                        let shouldDrawThisPoint = false;
+
+                        if (roundedCurrentX >= 0 && roundedCurrentX < destWidth && roundedCurrentY >= 0 && roundedCurrentY < destHeight) {
+                            const originalX = Math.floor(roundedCurrentX / upscale);
+                            const originalY = Math.floor(roundedCurrentY / upscale);
+                            if (originalX >= 0 && originalX < originalWidth && originalY >= 0 && originalY < originalHeight) {
+                                const quantizedPixelDataIndex = originalY * originalWidth + originalX;
+                                const pixelLevelIndex = quantizedLevelsData[quantizedPixelDataIndex];
+                                const pixelGrayscaleValue = (numLevels === 1) ? 0 : Math.round(pixelLevelIndex * (255 / (numLevels - 1)));
+                                if (pixelGrayscaleValue < whiteThresholdInputVal) {
+                                    const maxAnglesForThisDarkness = numLevels - pixelLevelIndex;
+                                    if (angleVariationIndex < maxAnglesForThisDarkness) shouldDrawThisPoint = true;
+                                }
+                            }
+                        }
+                        if (shouldDrawThisPoint) {
+                            // Applica il tremolio qui se vuoi che ogni "step" della linea tremi
+                            // Per ora lo applichiamo solo ai punti finali del segmento in createAndAppendSvgLine
+                            const wobbledX = roundedCurrentX; // applyWobble(roundedCurrentX, maxWobbleOffset);
+                            const wobbledY = roundedCurrentY; // applyWobble(roundedCurrentY, maxWobbleOffset);
+
+                            if (activeSegment === null) {
+                                activeSegment = { x1: wobbledX, y1: wobbledY, lastX: wobbledX, lastY: wobbledY };
+                            } else { 
+                                activeSegment.lastX = wobbledX; 
+                                activeSegment.lastY = wobbledY; 
+                            }
+                        } else {
+                            if (activeSegment !== null) {
+                                createAndAppendSvgLine(activeSegment.x1, activeSegment.y1, activeSegment.lastX, activeSegment.lastY, svgElement, lineColor, lineThickness, lineAlpha, maxWobbleOffset);
+                                linesDrawn++;
+                                activeSegment = null; 
+                            }
+                        }
+                    }
+                    if (activeSegment !== null) {
+                         createAndAppendSvgLine(activeSegment.x1, activeSegment.y1, activeSegment.lastX, activeSegment.lastY, svgElement, lineColor, lineThickness, lineAlpha, maxWobbleOffset);
+                         linesDrawn++;
+                         activeSegment = null;
+                    }
+                }
+
+                const progressPercentage = Math.round(((angleVariationIndex + 1) / totalAngleVariations) * 100);
+                progressBar.style.width = progressPercentage + '%';
+                progressBar.textContent = progressPercentage + '%';
+                progressStatusDiv.textContent = `Generazione Line Art SVG: ${progressPercentage}% (${linesDrawn} linee)`;
+
+                await yieldToBrowser(); 
+            } 
+
+            progressStatusDiv.textContent = `Line Art SVG generata con ${linesDrawn} linee!`;
+            generateLineArtButton.disabled = false;
+            processButton.disabled = false;
+            if (linesDrawn > 0) {
+                saveSvgButton.disabled = false;
+            }
+            isGenerating = false;
+        });
+
+        saveSvgButton.addEventListener('click', () => {
+            if (!currentSvgElement) {
+                alert("Nessun SVG da salvare. Genera prima la Line Art.");
+                return;
+            }
+            if (!currentSvgElement.getAttribute("xmlns")) {
+                currentSvgElement.setAttribute("xmlns", SVG_NS);
+            }
+            
+            const svgData = new XMLSerializer().serializeToString(currentSvgElement);
+            const blob = new Blob([svgData], {type: "image/svg+xml;charset=utf-8"});
+            const url = URL.createObjectURL(blob);
+            
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'line_art_wobbly.svg'; // Nome file aggiornato
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            statusDiv.textContent = "SVG salvato.";
+        });
+    </script>
+</body>
+</html>

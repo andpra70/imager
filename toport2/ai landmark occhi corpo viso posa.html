@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Analisi Immagine con MediaPipe</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: #f0f2f5;
+            color: #333;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+        }
+        .container {
+            background-color: #fff;
+            padding: 25px;
+            border-radius: 10px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+            max-width: 800px;
+            width: 100%;
+            text-align: center;
+        }
+        h1 {
+            color: #0056b3;
+        }
+        p {
+            line-height: 1.6;
+        }
+        .controls {
+            margin: 20px 0;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            background-color: #fafafa;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            align-items: center;
+        }
+        .control-group {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+        #file-input {
+            border: 1px solid #ccc;
+            padding: 5px;
+            border-radius: 4px;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: background-color 0.3s;
+        }
+        button:hover:not(:disabled) {
+            background-color: #0056b3;
+        }
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        #status {
+            margin-top: 15px;
+            font-style: italic;
+            color: #666;
+            min-height: 20px;
+        }
+        .output-container {
+            margin-top: 20px;
+            width: 100%;
+            min-height: 200px;
+            border: 1px dashed #ccc;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background-color: #f9f9f9;
+        }
+        #output-canvas {
+            max-width: 100%;
+            height: auto;
+            border-radius: 5px;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h1>Analisi Immagine con MediaPipe</h1>
+        <p>Carica un'immagine per rilevare viso, occhi, posa e altre parti del corpo usando modelli "lite" con backend WebGPU (o CPU).</p>
+
+        <div class="controls">
+            <div class="control-group">
+                <label for="backend-select">Backend di calcolo:</label>
+                <select id="backend-select">
+                    <option value="GPU" selected>WebGPU / GPU (Default)</option>
+                    <option value="CPU">CPU</option>
+                </select>
+            </div>
+            <div class="control-group">
+                <label for="file-input">Scegli un'immagine:</label>
+                <input type="file" id="file-input" accept="image/*">
+            </div>
+            <button id="analyze-btn" disabled>Analizza Immagine</button>
+        </div>
+
+        <p id="status">Caricamento modelli in corso... Attendere prego.</p>
+
+        <div class="output-container">
+            <!-- Immagine sorgente (nascosta) -->
+            <img id="source-image" style="display: none;">
+            <!-- Canvas per mostrare il risultato -->
+            <canvas id="output-canvas"></canvas>
+        </div>
+    </div>
+
+    <!-- Il tag script type="module" è fondamentale per usare le importazioni -->
+    <script type="module">
+        import {
+            FaceDetector,
+            PoseLandmarker,
+            FilesetResolver,
+            DrawingUtils
+        } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.12";
+
+        // Riferimenti agli elementi DOM
+        const fileInput = document.getElementById("file-input");
+        const analyzeBtn = document.getElementById("analyze-btn");
+        const sourceImage = document.getElementById("source-image");
+        const canvas = document.getElementById("output-canvas");
+        const ctx = canvas.getContext("2d");
+        const statusEl = document.getElementById("status");
+        const backendSelect = document.getElementById("backend-select");
+
+        let faceDetector;
+        let poseLandmarker;
+        let drawingUtils;
+
+        // Funzione principale di inizializzazione
+        async function setupMediaPipe() {
+            statusEl.innerText = `Caricamento modelli per ${backendSelect.value}...`;
+            analyzeBtn.disabled = true;
+
+            try {
+                const vision = await FilesetResolver.forVisionTasks(
+                    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.12/wasm"
+                );
+
+                // Crea il PoseLandmarker (modello lite)
+                poseLandmarker = await PoseLandmarker.createFromOptions(vision, {
+                    baseOptions: {
+                        modelAssetPath: "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task",
+                        delegate: backendSelect.value
+                    },
+                    runningMode: "IMAGE",
+                    numPoses: 1 // Analizza una sola persona per semplicità
+                });
+
+                // Crea il FaceDetector (modello short-range, molto leggero)
+                faceDetector = await FaceDetector.createFromOptions(vision, {
+                    baseOptions: {
+                        modelAssetPath: "https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite",
+                        delegate: backendSelect.value
+                    },
+                    runningMode: "IMAGE"
+                });
+
+                drawingUtils = new DrawingUtils(ctx);
+
+                statusEl.innerText = "Modelli caricati. Scegli un'immagine per iniziare.";
+                analyzeBtn.disabled = false;
+            } catch (error) {
+                statusEl.innerText = "Errore nel caricamento. Controlla la console o prova con il backend CPU.";
+                console.error(error);
+            }
+        }
+
+        // Gestisce il cambio di backend
+        backendSelect.addEventListener("change", setupMediaPipe);
+
+        // Gestisce la selezione del file
+        fileInput.addEventListener("change", (e) => {
+            const file = e.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                    sourceImage.src = event.target.result;
+                    // Resetta il canvas quando si carica una nuova immagine
+                    sourceImage.onload = () => {
+                        canvas.width = sourceImage.naturalWidth;
+                        canvas.height = sourceImage.naturalHeight;
+                        ctx.drawImage(sourceImage, 0, 0, canvas.width, canvas.height);
+                        statusEl.innerText = "Immagine caricata. Clicca su 'Analizza Immagine'.";
+                    };
+                };
+                reader.readAsDataURL(file);
+            }
+        });
+
+        // Gestisce il click sul pulsante di analisi
+        analyzeBtn.addEventListener("click", handleAnalysis);
+
+        async function handleAnalysis() {
+            if (!sourceImage.src || !poseLandmarker || !faceDetector) {
+                statusEl.innerText = "Per favore, carica un'immagine prima di analizzare.";
+                return;
+            }
+
+            statusEl.innerText = "Analisi in corso...";
+
+            // Disegna l'immagine originale sul canvas (di nuovo per sicurezza)
+            canvas.width = sourceImage.naturalWidth;
+            canvas.height = sourceImage.naturalHeight;
+            ctx.drawImage(sourceImage, 0, 0, canvas.width, canvas.height);
+
+            // 1. Esegui PoseLandmarker
+            const poseResult = poseLandmarker.detect(sourceImage);
+            if (poseResult.landmarks && poseResult.landmarks.length > 0) {
+                drawPoseAndBoxes(poseResult.landmarks[0]);
+            }
+
+            // 2. Esegui FaceDetector
+            const faceResult = faceDetector.detect(sourceImage);
+            if (faceResult.detections && faceResult.detections.length > 0) {
+                drawFaceAndEyeBoxes(faceResult.detections);
+            }
+
+            statusEl.innerText = "Analisi completata.";
+        }
+        
+        // Funzione per disegnare la posa e i rettangoli derivati
+        function drawPoseAndBoxes(landmarks) {
+            // Disegna lo scheletro della posa (stile PoseNet)
+            drawingUtils.drawLandmarks(landmarks, { color: "#FF0000", lineWidth: 2, radius: 3 });
+            drawingUtils.drawConnectors(landmarks, PoseLandmarker.POSE_CONNECTIONS, { color: "#00FF00", lineWidth: 3 });
+
+            // Scala i landmark alle coordinate del canvas
+            const lm = landmarks.map(l => ({ x: l.x * canvas.width, y: l.y * canvas.height }));
+
+            // Orecchie (landmark 7 e 8)
+            drawBoundingBoxFromPoints([lm[7]], "Orecchio Sx", 15);
+            drawBoundingBoxFromPoints([lm[8]], "Orecchio Dx", 15);
+            
+            // Collo (basato su naso, spalle)
+            const neckTop = lm[0].y;
+            const neckBottom = (lm[11].y + lm[12].y) / 2;
+            const neckLeft = lm[12].x;
+            const neckRight = lm[11].x;
+            const neckBox = { x: neckLeft, y: neckTop, width: neckRight - neckLeft, height: neckBottom - neckTop };
+            drawBoundingBox(neckBox, "Collo");
+
+            // Torso (basato su spalle e fianchi: 11, 12, 23, 24)
+            const torsoBox = getBoundingBoxFromPoints([lm[11], lm[12], lm[23], lm[24]]);
+            drawBoundingBox(torsoBox, "Torso");
+
+            // Piedi (basato su talloni e punte: 29, 30, 31, 32)
+            const feetBox = getBoundingBoxFromPoints([lm[29], lm[30], lm[31], lm[32]]);
+            drawBoundingBox(feetBox, "Piedi");
+        }
+        
+        // Funzione per disegnare i rettangoli del viso e degli occhi
+        function drawFaceAndEyeBoxes(detections) {
+            for (const detection of detections) {
+                // Rettangolo del viso
+                drawBoundingBox(detection.boundingBox, "Viso");
+
+                // Rettangoli degli occhi basati sui keypoints (keypoint 0 e 1)
+                const keypoints = detection.keypoints.map(k => ({x: k.x * canvas.width, y: k.y * canvas.height}));
+                drawBoundingBoxFromPoints([keypoints[0]], "Occhio Dx", 15); // L'occhio destro della persona
+                drawBoundingBoxFromPoints([keypoints[1]], "Occhio Sx", 15); // L'occhio sinistro della persona
+            }
+        }
+
+        // --- Funzioni di utilità per il disegno ---
+
+        function getBoundingBoxFromPoints(points) {
+            if (!points || points.length === 0) return null;
+            let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+            for(const p of points) {
+                if (!p) continue;
+                minX = Math.min(minX, p.x);
+                minY = Math.min(minY, p.y);
+                maxX = Math.max(maxX, p.x);
+                maxY = Math.max(maxY, p.y);
+            }
+            if (minX === Infinity) return null;
+            return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+        }
+        
+        function drawBoundingBoxFromPoints(points, label, padding = 10) {
+            const box = getBoundingBoxFromPoints(points);
+            if (!box) return;
+            const paddedBox = {
+                x: box.x - padding,
+                y: box.y - padding,
+                width: (box.width || 0) + 2 * padding,
+                height: (box.height || 0) + 2 * padding,
+            };
+            drawBoundingBox(paddedBox, label);
+        }
+        
+        function drawBoundingBox(box, label) {
+          if (!box || !box.width || !box.height) return;
+          ctx.beginPath();
+          ctx.lineWidth = 3;
+          ctx.strokeStyle = "green";
+          ctx.rect(box.x, box.y, box.width, box.height);
+          ctx.stroke();
+
+          // Disegna l'etichetta con uno sfondo
+          ctx.fillStyle = "green";
+          ctx.font = "bold 16px Arial";
+          const textWidth = ctx.measureText(label).width;
+          ctx.fillRect(box.x, box.y - 20, textWidth + 10, 20);
+          ctx.fillStyle = "white";
+          ctx.fillText(label, box.x + 5, box.y - 5);
+        }
+
+        // Avvia l'inizializzazione al caricamento dello script
+        setupMediaPipe();
+    </script>
+</body>
+</html>

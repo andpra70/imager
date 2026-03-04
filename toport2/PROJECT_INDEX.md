@@ -1,0 +1,101 @@
+# Project Index
+
+- Totale pagine HTML: 77
+- Stack target: Vite + React JSX
+- Tool nativi: 77
+- Wrapper legacy residui: 0
+- Cartella wrapper legacy: `src/pages/tools`
+
+## Categorie
+
+- AI e Visione: 5
+- Conversione e Output SVG: 9
+- Crosshatching e Line Art: 15
+- Disegno Tradizionale: 4
+- Esperimenti Vari: 8
+- Linee e Astrazioni: 4
+- Mosaici e Tassellazioni: 8
+- Painterly e Stili Artistici: 16
+- Quantizzazione e Halftone: 3
+- Scribble e Tracciati: 4
+- Utility: 1
+
+## Pagine
+
+- Rilevamento Volto con MediaPipe | `ai landmark facciale.html` | AI e Visione | native
+- Analisi Immagine con MediaPipe | `ai landmark occhi corpo viso posa.html` | AI e Visione | native
+- Rilevamento Posa Umana | `ai rilevamento posa persona.html` | AI e Visione | native
+- Rimozione Sfondo con Drag & Drop | `ai rimozione sfondo 2.html` | AI e Visione | native
+- Rimozione Sfondo da Immagine (Corretto) | `ai rimozione sfondo.html` | AI e Visione | native
+- Ritratto a Penna BIC con Linea Continua | `bic.html` | Disegno Tradizionale | native
+- Generatore Stile Boldini a Colori | `boldini 1.html` | Painterly e Stili Artistici | native
+- Generatore Stile Sargent | `boldini a svg.html` | Painterly e Stili Artistici | native
+- Generatore Stile Boldini a SVG | `boldini svg 1.html` | Painterly e Stili Artistici | native
+- Editor Immagine con Bordo e Filtri | `bordo e controlli.html` | Esperimenti Vari | native
+- Generatore di Arte v3 (Ottimizzato) | `campo di densita.html` | Esperimenti Vari | native
+- Generatore Artistico a Carboncino | `carboncino 1.html` | Disegno Tradizionale | native
+- Filtro Stile Van Gogh | `colora su foto.html` | Painterly e Stili Artistici | native
+- Disegno Vettoriale con Tracciamento (SVG) | `copia a matita umano.html` | Conversione e Output SVG | native
+- Generatore di Arte da Immagine (Ottimizzato) | `cranklet 2.html` | Esperimenti Vari | native
+- Generatore di Arte con Colori Quantizzati | `cranklet 3.html` | Esperimenti Vari | native
+- Generatore di Arte con Palette Visibile | `cranklet 4.html` | Esperimenti Vari | native
+- Generatore di Arte da Immagine | `cranklet.html` | Esperimenti Vari | native
+- Quantizzazione Immagine e Line Art Sovrapposta (Adattabile) | `crosshatch 2.html` | Crosshatching e Line Art | native
+- Quantizzazione Immagine e Line Art SVG (0-90 Gradi, Tremolio) | `crosshatch bn tremolio.html` | Crosshatching e Line Art | native
+- Quantizzazione Immagine e Line Art SVG (0-90 Gradi) | `crosshatch bn.html` | Crosshatching e Line Art | native
+- Line Art SVG (Stop, Punti, Sfondo, Semplificata, Angoli, CMYK, Tremolio, JPG) | `crosshatch cymk 3.html` | Crosshatching e Line Art | native
+- Line Art SVG (Max JPG, Offset Canali, Stop, Punti, Sfondo, Semplificata, Angoli, CMYK, Tremolio, JPG) | `crosshatch cymk final.html` | Crosshatching e Line Art | native
+- Line Art SVG (Parametri Scalati su Punta Penna - Corretto) | `crosshatch cymk tremolio ghirigoro penna.html` | Crosshatching e Line Art | native
+- Line Art SVG (Angoli Flessibili, CMYK, Tremolio, Salva JPG) | `crosshatch cymk.html` | Crosshatching e Line Art | native
+- Line Art SVG (Oscillazione Dinamica) | `crosshatch wobbled.html` | Crosshatching e Line Art | native
+- Quantizzazione Immagine e Line Art Sovrapposta | `crosshatch.html` | Crosshatching e Line Art | native
+- Line Art SVG (Offset Canali, Stop, Punti, Sfondo, Semplificata, Angoli, CMYK, Tremolio, JPG) | `crosshatcher cymk 4.html` | Crosshatching e Line Art | native
+- Canvas Crosshatcher - Actual Size | `crosshatcher to jpg e svg.html` | Crosshatching e Line Art | native
+- Canvas Crosshatcher - Actual Size | `crosshatcher to svg 1.html` | Crosshatching e Line Art | native
+- Line Art SVG (Effetto Ghirigoro) | `crosshatching cymk ghirigoro.html` | Crosshatching e Line Art | native
+- Line Art SVG (Effetto Ghirigoro) | `crosshatching cymk tremolio e ghirigoro.html` | Crosshatching e Line Art | native
+- CMYK Quantizer & SVG Effects | `floyd cymk 2.html` | Conversione e Output SVG | native
+- CMYK Quantizer & SVG Halftoner (Cerchi) | `floyd cymk.html` | Conversione e Output SVG | native
+- CMYK Quantizer & SVG Effects (con Downsampling) | `floyd stippling.html` | Conversione e Output SVG | native
+- Image Processor | `floyd.html` | Quantizzazione e Halftone | native
+- Mini HMAC SHA-256 | `hmac.html` | Utility | native
+- Image Tracer JS Demo - URL Specifico | `image to svg 1.html` | Conversione e Output SVG | native
+- Algoritmo Single-Line Painters | `immagine da quadrati.html` | Painterly e Stili Artistici | native
+- Linify con Linee Curve | `linefy 01.html` | Linee e Astrazioni | native
+- Linify Migliorato | `linefy 1.html` | Linee e Astrazioni | native
+- Linify Completo | `linefy 2.html` | Linee e Astrazioni | native
+- Linify Completo con Colore | `linefy colore 1.html` | Linee e Astrazioni | native
+- Indice Progetti Grafici | `lista.html` | Esperimenti Vari | native
+- Canvas Crosshatcher - Actual Size | `matita 2.html` | Crosshatching e Line Art | native
+- Disegnatore Scalabile Alpha Stroke | `matita.html` | Disegno Tradizionale | native
+- Modulatore di Immagini (Corretto) | `modulazione.html` | Esperimenti Vari | native
+- Generatore di Mosaici | `mosaico 1.html` | Mosaici e Tassellazioni | native
+- Generatore di Mosaici e SVG | `mosaico a svg quad.html` | Mosaici e Tassellazioni | native
+- Generatore Mosaici Pittorico | `mosaico adattativo 2.html` | Mosaici e Tassellazioni | native
+- Generatore Mosaici Pittorico | `mosaico adattativo con finitura 1.html` | Mosaici e Tassellazioni | native
+- Generatore Mosaici con Analisi Dettagli | `mosaico svg adattativo 2.html` | Mosaici e Tassellazioni | native
+- Generatore di Mosaici Avanzato | `mosaico svg ottimizzato 1.html` | Mosaici e Tassellazioni | native
+- Generatore di Immagini a Timbro (Intelligente) | `mosaico timbro 1.html` | Mosaici e Tassellazioni | native
+- Quantizzazione e Pittura Artistica Avanzata | `painter 1.html` | Painterly e Stili Artistici | native
+- Quantizzazione e Pittura Ultra-Veloce | `painter 2.html` | Painterly e Stili Artistici | native
+- Quantizzazione e Pittura Ultra-Veloce | `painter 5.html` | Painterly e Stili Artistici | native
+- Quantizzazione e Pittura Umana | `painter 6.html` | Painterly e Stili Artistici | native
+- Generatore Mosaici Pittorico | `painter ottimizzato best.html` | Mosaici e Tassellazioni | native
+- Da Foto a Stampa Punta Secca - Editor Avanzato | `punta secca acquaforte.html` | Disegno Tradizionale | native
+- Simulatore Plotter PWM Ottimizzato | `pwm 2.html` | Quantizzazione e Halftone | native
+- Simulatore Plotter PWM | `pwm bn.html` | Quantizzazione e Halftone | native
+- Quadtree Painting Algorithm | `quadtree 1.html` | Painterly e Stili Artistici | native
+- Quadtree Painting Algorithm | `quadtree to svg.html` | Painterly e Stili Artistici | native
+- Generatore Stile Sargent (con Palette Personalizzata) | `sargent (con Palette Personalizzata).html` | Painterly e Stili Artistici | native
+- Generatore Scribble di Alta Precisione | `scribbler v0.html` | Scribble e Tracciati | native
+- Generatore Scribble - Precisione Estrema | `scribbler v1.html` | Scribble e Tracciati | native
+- Generatore Scribble - Stabile e Preciso | `scribbler v4.html` | Scribble e Tracciati | native
+- Fluid Quantized Painters | `single line painter JPG.html` | Painterly e Stili Artistici | native
+- SVG Single-Line Painters (Optimized for Plotting) | `single line painter SVG 1.html` | Painterly e Stili Artistici | native
+- Fast SVG Painters (Optimized for Plotting) | `single line painter SVG 2 optimized.html` | Painterly e Stili Artistici | native
+- Generatore Scribble di Precisione (Live) | `svg painter optimized 2.html` | Scribble e Tracciati | native
+- SVG Painters with Performance Metrics | `svg painter optimized.html` | Painterly e Stili Artistici | native
+- SVG Simplifier | `svg simplify 0.html` | Conversione e Output SVG | native
+- SVG to G-Code Converter (Path & Polyline - Corretto) | `svg to gcode ok.html` | Conversione e Output SVG | native
+- SVG a PDF/PNG/JPG Convertitore | `svg to pdf jpg png.html` | Conversione e Output SVG | native
+- Convertitore SVG a Rough.js (Veloce) | `svg to rough OK.html` | Conversione e Output SVG | native

@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <title>Mini HMAC SHA-256</title>
+    <style>
+        body { font-family: sans-serif; margin: 10px; font-size: 0.9em; }
+        div { margin-bottom: 15px; padding: 10px; border: 1px solid #ddd; }
+        label { display: block; margin-bottom: 3px; font-weight: bold; }
+        textarea, input[type="text"] { width: calc(100% - 12px); padding: 5px; margin-bottom: 8px; border: 1px solid #ccc; box-sizing: border-box; }
+        button { padding: 8px 12px; cursor: pointer; }
+        pre { background-color: #f4f4f4; padding: 8px; white-space: pre-wrap; word-wrap: break-word; min-height: 20px; border: 1px solid #eee;}
+    </style>
+</head>
+<body>
+
+<h1>Mini HMAC SHA-256</h1>
+
+<div>
+    <h2>1. Genera Pacchetto</h2>
+    <label for="kG">Chiave Segreta:</label>
+    <input type="text" id="kG" value="unaChiaveMoltoSegreta">
+    <label for="dG">Dati da Firmare:</label>
+    <textarea id="dG" rows="3">Questo è un messaggio. Contiene punti.</textarea>
+    <button onclick="gen()">Genera Pacchetto</button>
+    <h3>Pacchetto Generato (Dati.HMAC):</h3>
+    <pre id="pkgOut"></pre>
+</div>
+
+<div>
+    <h2>2. Verifica Pacchetto</h2>
+    <label for="kV">Chiave Segreta (stessa usata per generare):</label>
+    <input type="text" id="kV" value="unaChiaveMoltoSegreta">
+    <label for="pkgIn">Pacchetto da Verificare:</label>
+    <textarea id="pkgIn" rows="3"></textarea>
+    <button onclick="ver()">Verifica Pacchetto</button>
+    <h3>Risultato Verifica:</h3>
+    <pre id="res"></pre>
+</div>
+
+<script>
+    const s2u = (s) => new TextEncoder().encode(s);
+    const u2h = (u) => Array.from(u).map(b => b.toString(16).padStart(2, '0')).join('');
+    const h2u = (h) => {
+        if (h.length % 2 !== 0) throw new Error("Lunghezza esadecimale non valida (dispari).");
+        if (!/^[0-9a-fA-F]*$/.test(h)) throw new Error("HMAC contiene caratteri non esadecimali.");
+        const r = new Uint8Array(h.length / 2);
+        for (let i = 0; i < h.length; i += 2) {
+            r[i/2] = parseInt(h.substring(i, i + 2), 16);
+        }
+        return r;
+    };
+
+    const el = (id) => document.getElementById(id); // Helper per ottenere elementi
+
+    async function gen() {
+        const keyVal = el('kG').value;
+        const dataVal = el('dG').value;
+        const pkgOutEl = el('pkgOut');
+        pkgOutEl.textContent = 'Generazione...';
+
+        if (!keyVal) { pkgOutEl.textContent = 'Errore: Chiave segreta mancante.'; return; }
+
+        try {
+            const cryptoKey = await crypto.subtle.importKey('raw', s2u(keyVal), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+            const sigBuffer = await crypto.subtle.sign('HMAC', cryptoKey, s2u(dataVal));
+            const hmacHex = u2h(new Uint8Array(sigBuffer));
+            const packagedMsg = `${dataVal}.${hmacHex}`;
+            pkgOutEl.textContent = packagedMsg;
+            el('pkgIn').value = packagedMsg; // Auto-popola campo di verifica
+        } catch (e) {
+            console.error('Errore Generazione:', e);
+            pkgOutEl.textContent = `Errore: ${e.message}`;
+        }
+    }
+
+    async function ver() {
+        const keyVal = el('kV').value;
+        const pkgVal = el('pkgIn').value;
+        const resEl = el('res');
+        resEl.textContent = 'Verifica...';
+
+        if (!keyVal || !pkgVal) { resEl.textContent = 'Errore: Chiave o pacchetto mancanti.'; return; }
+
+        try {
+            const lastDotIdx = pkgVal.lastIndexOf('.');
+            if (lastDotIdx === -1) {
+                resEl.textContent = 'Errore Formato: Dati e HMAC devono essere separati da "."'; return;
+            }
+
+            const data = pkgVal.substring(0, lastDotIdx);
+            const hmacHex = pkgVal.substring(lastDotIdx + 1);
+
+            if (!hmacHex) {
+                resEl.textContent = 'Errore Formato: HMAC mancante dopo il separatore "."'; return;
+            }
+            // Un HMAC SHA-256 è 32 bytes = 64 caratteri esadecimali
+            if (hmacHex.length !== 64) {
+                resEl.textContent = `Errore Formato HMAC: Lunghezza attesa 64 caratteri, ricevuti ${hmacHex.length}.`; return;
+            }
+
+            const cryptoKey = await crypto.subtle.importKey('raw', s2u(keyVal), { name: 'HMAC', hash: 'SHA-256' }, false, ['verify']);
+            const hmacBytes = h2u(hmacHex); // h2u ora valida i caratteri hex
+            const isValid = await crypto.subtle.verify('HMAC', cryptoKey, hmacBytes, s2u(data));
+
+            resEl.textContent = isValid ? `VERIFICATO CORRETTAMENTE.\nDati recuperati: "${data}"` : 'FALLITO: HMAC non valido. Dati o chiave potrebbero essere stati alterati.';
+        } catch (e) {
+            console.error('Errore Verifica:', e);
+            resEl.textContent = `Errore verifica: ${e.message}`;
+        }
+    }
+</script>
+
+</body>
+</html>

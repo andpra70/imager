@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Disegno Vettoriale con Tracciamento (SVG)</title>
+    <style>
+        :root {
+            --border-color: #ccc;
+            --background-color: #f4f4f9;
+            --panel-bg-color: #ffffff;
+            --primary-text-color: #333;
+            --accent-color: #007bff;
+            --export-color: #28a745;
+            --shadow-color: rgba(0,0,0,0.1);
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            margin: 0; padding: 20px; background-color: var(--background-color); color: var(--primary-text-color); display: flex; flex-direction: column; align-items: center;
+        }
+        h1, h2, h3 { text-align: center; color: var(--primary-text-color); }
+        h1 { border-bottom: 2px solid var(--accent-color); padding-bottom: 10px; margin-bottom: 20px; }
+        .main-container { display: flex; flex-wrap: wrap; gap: 20px; width: 100%; max-width: 1600px; justify-content: center; }
+        .panel { flex: 1; min-width: 400px; max-width: 800px; background-color: var(--panel-bg-color); border: 1px solid var(--border-color); border-radius: 8px; padding: 20px; box-shadow: 0 4px 8px var(--shadow-color); }
+        .controls-panel, .drawing-panel { display: flex; flex-direction: column; gap: 15px; }
+        .control-group { margin-bottom: 15px; padding: 10px; border: 1px dashed var(--border-color); border-radius: 5px; }
+        .control-group h3 { margin-top: 0; font-size: 1.1em; color: var(--accent-color); }
+        .control-group.export h3 { color: var(--export-color); }
+        label { display: block; margin-bottom: 5px; font-weight: bold; }
+        input[type="file"], input[type="number"], input[type="range"] { width: 100%; box-sizing: border-box; padding: 8px; }
+        button { padding: 10px 15px; color: white; border: none; border-radius: 5px; cursor: pointer; transition: background-color 0.3s; background-color: var(--accent-color); }
+        button:hover { background-color: #0056b3; }
+        button.export-button { background-color: var(--export-color); }
+        button.export-button:hover { background-color: #218838; }
+        button.tool-button.active { background-color: #0056b3; box-shadow: 0 0 5px 2px rgba(0, 123, 255, 0.5); }
+        
+        /* Area di disegno con tracciamento */
+        #drawing-area-container {
+            position: relative;
+            width: 100%;
+            border: 1px solid var(--border-color);
+            background: #e0e0e0;
+            line-height: 0; /* Rimuove spazi extra */
+        }
+        #trace-image {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 1;
+            opacity: 0.5; /* Opacità di default */
+            pointer-events: none; /* Non intercettare il mouse */
+        }
+        #drawing-canvas {
+            position: relative; /* Cambiato per z-index */
+            z-index: 2;
+            background-color: transparent; /* FONDAMENTALE */
+            cursor: crosshair;
+            touch-action: none;
+            width: 100%;
+            height: auto;
+        }
+
+        .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 15px; padding: 10px; border: 1px solid var(--border-color); border-radius: 5px; }
+        #tonal-palette { display: flex; gap: 5px; }
+        .tone-swatch { width: 30px; height: 30px; border: 2px solid var(--border-color); border-radius: 50%; cursor: pointer; transition: transform 0.2s, box-shadow 0.2s; }
+        .tone-swatch:hover { transform: scale(1.1); }
+        .tone-swatch.active { border-color: var(--accent-color); transform: scale(1.1); box-shadow: 0 0 5px 2px rgba(0, 123, 255, 0.5); }
+        .brush-size-container { flex-grow: 1; }
+        .info-text { font-size: 0.9em; color: #555; }
+    </style>
+</head>
+<body>
+
+    <h1>Simulatore di Disegno Vettoriale con Tracciamento (Output SVG)</h1>
+
+    <div class="main-container">
+        <!-- Pannello Controlli -->
+        <div class="panel controls-panel">
+            <h2>Controlli</h2>
+            
+            <div class="control-group">
+                <h3>Carica Immagine da Tracciare</h3>
+                <label for="imageLoader">Seleziona un'immagine per il tracciamento</label>
+                <input type="file" id="imageLoader" accept="image/*">
+            </div>
+
+            <div class="control-group">
+                <h3>Opzioni Tracciamento</h3>
+                <label for="trace-opacity">Opacità Immagine di Sfondo</label>
+                <input type="range" id="trace-opacity" min="0" max="1" value="0.5" step="0.05">
+            </div>
+            
+            <div class="control-group">
+                <h3>Strumenti di Disegno</h3>
+                <div class="toolbar">
+                    <div id="tonal-palette" title="Scegli la matita"></div>
+                    <button id="eraser-tool" class="tool-button" title="Gomma">Gomma</button>
+                    <div class="brush-size-container">
+                        <label for="brush-size">Punta Matita</label>
+                        <input type="range" id="brush-size" min="1" max="50" value="5">
+                    </div>
+                </div>
+            </div>
+
+            <div class="control-group export">
+                <h3>Esportazione SVG</h3>
+                <p class="info-text">Ogni pennellata viene salvata come un tracciato vettoriale. Il fattore di scala viene applicato solo al file SVG finale.</p>
+                <label for="svg-scale-factor">Fattore di Scala per SVG</label>
+                <input type="number" id="svg-scale-factor" value="1" min="0.1" step="0.1">
+                <button id="export-button" class="export-button">Esporta in SVG</button>
+            </div>
+            
+            <button id="clear-button" style="background-color:#dc3545;">Pulisci Foglio</button>
+        </div>
+
+        <!-- Pannello Disegno -->
+        <div class="panel drawing-panel">
+            <h2>Foglio da Disegno</h2>
+            <p class="info-text">Disegna qui. Se hai caricato un'immagine, la vedrai come sfondo da tracciare.</p>
+            <div id="drawing-area-container">
+                <img id="trace-image" src="" alt="">
+                <canvas id="drawing-canvas"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            // === ELEMENTI DOM ===
+            const imageLoader = document.getElementById('imageLoader');
+            const traceImage = document.getElementById('trace-image');
+            const traceOpacitySlider = document.getElementById('trace-opacity');
+            const drawingAreaContainer = document.getElementById('drawing-area-container');
+            const drawingCanvas = document.getElementById('drawing-canvas');
+            const tonalPalette = document.getElementById('tonal-palette');
+            const eraserTool = document.getElementById('eraser-tool');
+            const brushSizeSlider = document.getElementById('brush-size');
+            const exportButton = document.getElementById('export-button');
+            const clearButton = document.getElementById('clear-button');
+            const scaleFactorInput = document.getElementById('svg-scale-factor');
+            
+            const drawCtx = drawingCanvas.getContext('2d');
+
+            // === STATO DELL'APPLICAZIONE ===
+            let isDrawing = false;
+            let currentTool = 'pencil';
+            let currentColor = '#888888';
+            let lastX = 0;
+            let lastY = 0;
+            let svgStrokes = [];
+            let currentPathData = "";
+
+            const tones = [
+                { name: 'Bianco (Carta/Gomma)', color: '#FFFFFF' }, { name: 'Grigio Chiarissimo (2H)', color: '#D3D3D3' },
+                { name: 'Grigio Chiaro (H)', color: '#A9A9A9' }, { name: 'Grigio Medio (HB)', color: '#888888' },
+                { name: 'Grigio Scuro (2B)', color: '#606060' }, { name: 'Grigio Scurissimo (4B)', color: '#404040' },
+                { name: 'Nero (6B)', color: '#202020' }
+            ];
+            
+            // === FUNZIONI DI INIZIALIZZAZIONE E UTILITÀ ===
+            function initializeTonalPalette() {
+                for (let i = 1; i < tones.length; i++) {
+                    const tone = tones[i];
+                    const swatch = document.createElement('div');
+                    swatch.className = 'tone-swatch';
+                    swatch.style.backgroundColor = tone.color;
+                    swatch.dataset.color = tone.color;
+                    swatch.title = tone.name;
+                    if (tone.color === currentColor) swatch.classList.add('active');
+                    swatch.addEventListener('click', () => selectPencil(swatch, tone.color));
+                    tonalPalette.appendChild(swatch);
+                }
+            }
+            
+            function setCanvasSize(width, height) {
+                 drawingCanvas.width = width;
+                 drawingCanvas.height = height;
+                 clearCanvasAndData();
+            }
+
+            function clearCanvasAndData() {
+                 drawCtx.clearRect(0, 0, drawingCanvas.width, drawingCanvas.height);
+                 svgStrokes = [];
+            }
+            
+            // === FUNZIONI DI DISEGNO ===
+            function selectPencil(swatch, color) {
+                currentTool = 'pencil';
+                currentColor = color;
+                document.querySelectorAll('.tone-swatch').forEach(s => s.classList.remove('active'));
+                swatch.classList.add('active');
+                eraserTool.classList.remove('active');
+            }
+
+            function selectEraser() {
+                currentTool = 'eraser';
+                document.querySelectorAll('.tone-swatch').forEach(s => s.classList.remove('active'));
+                eraserTool.classList.add('active');
+            }
+
+            function getMousePos(canvas, evt) {
+                const rect = canvas.getBoundingClientRect();
+                return {
+                    x: evt.clientX - rect.left,
+                    y: evt.clientY - rect.top
+                };
+            }
+
+            function startDrawing(e) {
+                isDrawing = true;
+                const { x, y } = getMousePos(drawingCanvas, e);
+                [lastX, lastY] = [x, y];
+                currentPathData = `M ${x.toFixed(2)} ${y.toFixed(2)}`;
+                drawOnCanvas(x, y);
+            }
+
+            function draw(e) {
+                if (!isDrawing) return;
+                const { x, y } = getMousePos(drawingCanvas, e);
+                drawOnCanvas(x, y);
+                currentPathData += ` L ${x.toFixed(2)} ${y.toFixed(2)}`;
+            }
+            
+            function stopDrawing() {
+                if (!isDrawing) return;
+                isDrawing = false;
+                if (currentPathData) {
+                    const stroke = {
+                        pathData: currentPathData,
+                        color: (currentTool === 'eraser') ? tones[0].color : currentColor,
+                        width: brushSizeSlider.value
+                    };
+                    svgStrokes.push(stroke);
+                }
+                currentPathData = "";
+            }
+
+            function drawOnCanvas(x, y) {
+                drawCtx.lineCap = 'round';
+                drawCtx.lineJoin = 'round';
+                drawCtx.lineWidth = brushSizeSlider.value;
+                drawCtx.strokeStyle = (currentTool === 'eraser') ? tones[0].color : currentColor;
+                drawCtx.beginPath();
+                drawCtx.moveTo(lastX, lastY);
+                drawCtx.lineTo(x, y);
+                drawCtx.stroke();
+                [lastX, lastY] = [x, y];
+            }
+            
+            // === FUNZIONE DI ESPORTAZIONE SVG ===
+            function exportToSVG() {
+                const scale = parseFloat(scaleFactorInput.value) || 1;
+                const originalWidth = drawingCanvas.width;
+                const originalHeight = drawingCanvas.height;
+                const svgWidth = originalWidth * scale;
+                const svgHeight = originalHeight * scale;
+
+                let svgContent = `<svg width="${svgWidth}" height="${svgHeight}" viewBox="0 0 ${originalWidth} ${originalHeight}" xmlns="http://www.w3.org/2000/svg">\n`;
+                svgContent += `  <rect width="100%" height="100%" fill="#FFFFFF"/>\n`;
+                svgStrokes.forEach(stroke => {
+                    svgContent += `  <path d="${stroke.pathData}" fill="none" stroke="${stroke.color}" stroke-width="${stroke.width}" stroke-linecap="round" stroke-linejoin="round"/>\n`;
+                });
+                svgContent += '</svg>';
+
+                const blob = new Blob([svgContent], { type: 'image/svg+xml;charset=utf-8' });
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = 'disegno_vettoriale.svg';
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                URL.revokeObjectURL(url);
+            }
+
+            // === EVENT LISTENERS ===
+            imageLoader.addEventListener('change', e => {
+                const file = e.target.files[0];
+                if (file) {
+                    const reader = new FileReader();
+                    reader.onload = (event) => {
+                        const img = new Image();
+                        img.onload = () => {
+                             // Adatta la canvas alla dimensione dell'immagine
+                             setCanvasSize(img.naturalWidth, img.naturalHeight);
+                             // Mostra l'immagine sotto la canvas
+                             traceImage.src = event.target.result;
+                        };
+                        img.src = event.target.result;
+                    };
+                    reader.readAsDataURL(file);
+                }
+            });
+            
+            traceOpacitySlider.addEventListener('input', (e) => {
+                traceImage.style.opacity = e.target.value;
+            });
+            
+            drawingCanvas.addEventListener('mousedown', startDrawing);
+            drawingCanvas.addEventListener('mousemove', draw);
+            document.addEventListener('mouseup', stopDrawing);
+            drawingCanvas.addEventListener('mouseout', stopDrawing);
+
+            drawingCanvas.addEventListener('touchstart', (e) => { e.preventDefault(); startDrawing(e.touches[0]); });
+            drawingCanvas.addEventListener('touchmove', (e) => { e.preventDefault(); draw(e.touches[0]); });
+            drawingCanvas.addEventListener('touchend', stopDrawing);
+
+            eraserTool.addEventListener('click', selectEraser);
+            clearButton.addEventListener('click', clearCanvasAndData);
+            exportButton.addEventListener('click', exportToSVG);
+            
+            // === INIZIALIZZAZIONE ===
+            initializeTonalPalette();
+            setCanvasSize(800, 600); // Dimensione di default iniziale
+        });
+    </script>
+</body>
+</html>

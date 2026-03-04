@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rimozione Sfondo da Immagine (Corretto)</title>
+    
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 20px;
+            background-color: #f4f7f9;
+            color: #333;
+            text-align: center;
+        }
+        h1 {
+            margin-bottom: 5px;
+        }
+        p {
+            margin-top: 0;
+            color: #666;
+            max-width: 600px;
+        }
+        .upload-btn-wrapper {
+            position: relative;
+            overflow: hidden;
+            display: inline-block;
+            margin: 20px 0;
+        }
+        .btn {
+            border: 2px solid #007bff;
+            color: #007bff;
+            background-color: white;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 18px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.2s ease-in-out;
+        }
+        .upload-btn-wrapper:hover .btn {
+            background-color: #007bff;
+            color: white;
+        }
+        .upload-btn-wrapper input[type=file] {
+            font-size: 100px;
+            position: absolute;
+            left: 0;
+            top: 0;
+            opacity: 0;
+            cursor: pointer;
+        }
+        .output-container {
+            margin-top: 20px;
+            min-height: 100px;
+            max-width: 90vw;
+            border: 1px dashed #ccc;
+            padding: 10px;
+            border-radius: 8px;
+            background-color: white;
+        }
+        canvas {
+            max-width: 100%;
+            height: auto;
+            border-radius: 8px;
+            /* Inizialmente nascosto finché non è pronto */
+            display: none;
+        }
+        #status {
+            font-style: italic;
+            color: #555;
+        }
+    </style>
+
+    <!-- Libreria di Google MediaPipe per la segmentazione -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/selfie_segmentation.js" crossorigin="anonymous"></script>
+</head>
+<body>
+
+    <h1>Rimozione Sfondo da Immagine (AI)</h1>
+    <p>Funziona in locale nel tuo browser. Scegli un'immagine con una persona in primo piano e l'IA rimuoverà lo sfondo, proprio come nella demo di riferimento.</p>
+
+    <!-- Pulsante per caricare il file -->
+    <div class="upload-btn-wrapper">
+      <button class="btn">Scegli un'immagine</button>
+      <input type="file" id="imageInput" accept="image/*" />
+    </div>
+
+    <!-- Questo elemento <img> è usato per caricare l'immagine prima di processarla. Non è visibile all'utente. -->
+    <img id="sourceImage" style="display: none;" />
+    
+    <!-- Area di output dove verrà mostrato il risultato -->
+    <div class="output-container">
+      <p id="status">Il risultato apparirà qui...</p>
+      <canvas id="outputCanvas"></canvas>
+    </div>
+
+    <script>
+        // Riferimenti agli elementi HTML
+        const imageInputElement = document.getElementById('imageInput');
+        const sourceImageElement = document.getElementById('sourceImage');
+        const canvasElement = document.getElementById('outputCanvas');
+        const canvasCtx = canvasElement.getContext('2d');
+        const statusElement = document.getElementById('status');
+
+        // Colore di sfondo da applicare (un verde chiaro, come nella demo)
+        const backgroundColor = '#ACE1AF';
+
+        // Funzione chiamata da MediaPipe quando ha finito di processare l'immagine
+        function onResults(results) {
+            // Nasconde il messaggio di stato e mostra il canvas
+            statusElement.style.display = 'none';
+            canvasElement.style.display = 'block';
+
+            // Imposta le dimensioni del canvas perché corrispondano a quelle dell'immagine originale
+            canvasElement.width = results.image.width;
+            canvasElement.height = results.image.height;
+            
+            canvasCtx.save();
+            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+
+            // 1. Disegna la maschera di segmentazione (dove la persona è bianca e lo sfondo nero)
+            canvasCtx.drawImage(results.segmentationMask, 0, 0, canvasElement.width, canvasElement.height);
+
+            // 2. "source-in": disegna la prossima immagine (quella originale) SOLO sopra i pixel già esistenti (la maschera).
+            // Questo isola la persona dall'immagine originale.
+            canvasCtx.globalCompositeOperation = 'source-in';
+            canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+
+            // 3. "destination-over": disegna la prossima cosa DIETRO a quello che c'è già (la persona isolata).
+            canvasCtx.globalCompositeOperation = 'destination-over';
+            canvasCtx.fillStyle = backgroundColor;
+            canvasCtx.fillRect(0, 0, canvasElement.width, canvasElement.height);
+
+            canvasCtx.restore();
+        }
+
+        // Inizializza il modello di Intelligenza Artificiale (Selfie Segmentation)
+        const selfieSegmentation = new SelfieSegmentation({
+            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/${file}`
+        });
+        selfieSegmentation.setOptions({
+            modelSelection: 1, // 1 è il modello più performante per immagini di paesaggi/persone
+        });
+        // Associa la funzione onResults per essere chiamata con il risultato
+        selfieSegmentation.onResults(onResults);
+
+        // Aggiunge un listener all'input del file: questo si attiva quando l'utente sceglie un file
+        imageInputElement.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) {
+                return;
+            }
+
+            // Mostra un messaggio di stato e nasconde il canvas precedente
+            canvasElement.style.display = 'none';
+            statusElement.style.display = 'block';
+            statusElement.textContent = 'Caricamento immagine e avvio del modello AI...';
+            
+            // --- CORREZIONE CHIAVE ---
+            // Definiamo cosa fare QUANDO l'immagine è caricata, PRIMA di caricarla.
+            // Questo è il modo più robusto per gestire l'evento `onload`.
+            sourceImageElement.onload = function() {
+                // Ora che l'immagine è caricata nell'elemento <img>, inviala al modello AI.
+                selfieSegmentation.send({ image: sourceImageElement });
+
+                // Pulisce la memoria revocando l'URL dell'oggetto, buona pratica.
+                URL.revokeObjectURL(sourceImageElement.src);
+            }
+            
+            // Crea un URL temporaneo per il file scelto dall'utente e lo usa come sorgente
+            // per l'elemento <img> nascosto. Questo farà scattare l'evento `onload` qui sopra.
+            sourceImageElement.src = URL.createObjectURL(file);
+        });
+
+    </script>
+</body>
+</html>

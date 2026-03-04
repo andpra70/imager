@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Linify Migliorato</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: #f4f4f9;
+            color: #333;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin: 0;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+        .container {
+            width: 90vw;
+            max-width: 800px;
+            background: #fff;
+            padding: 25px;
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+            margin-bottom: 20px;
+        }
+        h1 { color: #2c3e50; text-align: center; }
+        p { text-align: center; color: #7f8c8d; }
+        #drop-zone {
+            border: 3px dashed #d0d0e0;
+            border-radius: 10px;
+            padding: 40px 20px;
+            text-align: center;
+            font-size: 1.2em;
+            color: #888;
+            cursor: pointer;
+            transition: background-color 0.3s, border-color 0.3s;
+            margin-bottom: 20px;
+        }
+        #drop-zone.dragover {
+            background-color: #eaf2f8;
+            border-color: #3498db;
+        }
+        #controls { display: none; /* Nascosto di default */ }
+        .control-group {
+            display: flex;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+        .control-group label {
+            min-width: 150px;
+        }
+        input[type="range"] {
+            width: 100%;
+        }
+        #loader {
+            display: none;
+            font-weight: bold;
+            color: #e67e22;
+            margin-top: 10px;
+            text-align: center;
+        }
+        #svg-container { background-color: #fff; }
+        #svg-output { display: block; width: 100%; height: auto; }
+        #save-btn {
+            display: block;
+            width: 100%;
+            padding: 12px;
+            font-size: 1.1em;
+            border: none;
+            background-color: #27ae60;
+            color: white;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+            margin-top: 20px;
+        }
+        #save-btn:hover { background-color: #229954; }
+        #file-input { display: none; }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h1>Linify Migliorato</h1>
+        <p>Trascina un'immagine qui sotto o clicca per selezionarne una.</p>
+        <div id="drop-zone">
+            <span id="drop-zone-text">Trascina un'immagine qui</span>
+        </div>
+
+        <div id="controls">
+            <div class="control-group">
+                <label for="line-count">Numero Linee: <b id="line-count-value">1500</b></label>
+                <input type="range" id="line-count" min="100" max="8000" value="1500" step="100">
+            </div>
+            <div id="loader">Elaborazione...</div>
+            <button id="save-btn">Salva come SVG</button>
+        </div>
+    </div>
+    
+    <div class="container" id="svg-container">
+        <svg id="svg-output" xmlns="http://www.w3.org/2000/svg" version="1.1"></svg>
+    </div>
+
+    <input type="file" id="file-input" accept="image/*">
+
+    <script>
+    document.addEventListener('DOMContentLoaded', () => {
+        const dropZone = document.getElementById('drop-zone');
+        const dropZoneText = document.getElementById('drop-zone-text');
+        const fileInput = document.getElementById('file-input');
+        const controls = document.getElementById('controls');
+        const lineCountSlider = document.getElementById('line-count');
+        const lineCountValue = document.getElementById('line-count-value');
+        const saveBtn = document.getElementById('save-btn');
+        const svgOutput = document.getElementById('svg-output');
+        const loader = document.getElementById('loader');
+
+        let imageBrightnessData = null;
+        let imageWidth = 0;
+        let imageHeight = 0;
+
+        // --- Utility di Debounce ---
+        function debounce(func, delay) {
+            let timeout;
+            return function(...args) {
+                clearTimeout(timeout);
+                timeout = setTimeout(() => func.apply(this, args), delay);
+            };
+        }
+        
+        // --- Gestione Eventi ---
+        dropZone.addEventListener('click', () => fileInput.click());
+        fileInput.addEventListener('change', (e) => handleFiles(e.target.files));
+        
+        ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+            dropZone.addEventListener(eventName, e => {
+                e.preventDefault();
+                e.stopPropagation();
+            });
+        });
+        
+        dropZone.addEventListener('dragover', () => dropZone.classList.add('dragover'));
+        dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+        dropZone.addEventListener('drop', e => {
+            dropZone.classList.remove('dragover');
+            handleFiles(e.dataTransfer.files);
+        });
+
+        const debouncedDraw = debounce(() => {
+            if (imageBrightnessData) drawLinifiedArt();
+        }, 250);
+
+        lineCountSlider.addEventListener('input', () => {
+            lineCountValue.textContent = lineCountSlider.value;
+            debouncedDraw();
+        });
+        
+        saveBtn.addEventListener('click', saveSVG);
+
+        function handleFiles(files) {
+            if (!files.length || !files[0].type.startsWith('image/')) return;
+            
+            const reader = new FileReader();
+            reader.onload = e => {
+                const img = new Image();
+                img.onload = () => {
+                    processImage(img);
+                    controls.style.display = 'block';
+                    dropZoneText.textContent = 'Trascina un\'altra immagine per sostituirla';
+                };
+                img.src = e.target.result;
+            };
+            reader.readAsDataURL(files[0]);
+        }
+
+        function processImage(img) {
+            imageWidth = img.width;
+            imageHeight = img.height;
+            
+            const canvas = document.createElement('canvas');
+            canvas.width = imageWidth;
+            canvas.height = imageHeight;
+            const ctx = canvas.getContext('2d', { willReadFrequently: true });
+            
+            ctx.drawImage(img, 0, 0, imageWidth, imageHeight);
+            const imageData = ctx.getImageData(0, 0, imageWidth, imageHeight).data;
+            
+            imageBrightnessData = new Float32Array(imageWidth * imageHeight);
+            for (let i = 0; i < imageData.length; i += 4) {
+                const r = imageData[i], g = imageData[i + 1], b = imageData[i + 2];
+                const brightness = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+                imageBrightnessData[i / 4] = 1 - brightness; // 1 = scuro, 0 = chiaro
+            }
+            
+            svgOutput.setAttribute('viewBox', `0 0 ${imageWidth} ${imageHeight}`);
+            drawLinifiedArt();
+        }
+        
+        function drawLinifiedArt() {
+            loader.style.display = 'block';
+            svgOutput.innerHTML = '';
+            
+            // Usiamo requestAnimationFrame per assicurarci che il loader sia visibile prima del calcolo pesante
+            requestAnimationFrame(() => {
+                const numLines = parseInt(lineCountSlider.value, 10);
+                const pointGrid = new Uint8Array(imageWidth * imageHeight);
+
+                for (let i = 0; i < numLines; i++) {
+                    let startX, startY, attempts = 0;
+                    do {
+                        startX = Math.floor(Math.random() * imageWidth);
+                        startY = Math.floor(Math.random() * imageHeight);
+                        attempts++;
+                    } while (pointGrid[startY * imageWidth + startX] && attempts < 1000);
+
+                    if (attempts >= 1000) continue;
+
+                    let currentX = startX;
+                    let currentY = startY;
+                    let pathData = `M ${currentX.toFixed(2)} ${currentY.toFixed(2)}`;
+                    let lineLength = 0;
+                    let lastAngle = Math.random() * 2 * Math.PI;
+
+                    for (let j = 0; j < 250; j++) { // Limite di segmenti per linea
+                        pointGrid[Math.round(currentY) * imageWidth + Math.round(currentX)] = 1;
+
+                        const nextPoint = findNextPoint(currentX, currentY, lastAngle, pointGrid);
+                        
+                        if (nextPoint) {
+                            currentX = nextPoint.x;
+                            currentY = nextPoint.y;
+                            pathData += ` L ${currentX.toFixed(2)} ${currentY.toFixed(2)}`;
+                            lastAngle = nextPoint.angle;
+                            lineLength++;
+                        } else {
+                            break;
+                        }
+                    }
+
+                    if (lineLength > 2) { // Disegna solo linee con più di 2 segmenti
+                        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+                        path.setAttribute('d', pathData);
+                        path.setAttribute('stroke', 'black');
+                        path.setAttribute('stroke-width', '0.8');
+                        path.setAttribute('fill', 'none');
+                        path.setAttribute('stroke-linecap', 'round');
+                        svgOutput.appendChild(path);
+                    }
+                }
+                loader.style.display = 'none'; // Nasconde il loader alla fine
+            });
+        }
+        
+        function findNextPoint(cx, cy, previousAngle, grid) {
+            const searchRadius = 15;
+            const angleRange = Math.PI / 1.5; // Cerca in un cono di 120 gradi
+            let bestPoint = null;
+            let maxBrightness = 0.1; // Ignora punti troppo chiari
+
+            // Cerca il punto più scuro in un'area a forma di cono nella direzione di marcia
+            for (let angleOffset = -angleRange / 2; angleOffset <= angleRange / 2; angleOffset += Math.PI / 16) {
+                const currentAngle = previousAngle + angleOffset;
+                
+                // Cerca a diverse distanze lungo questa direzione
+                for (let r = 3; r < searchRadius; r++) {
+                    const nx = cx + r * Math.cos(currentAngle);
+                    const ny = cy + r * Math.sin(currentAngle);
+                    const ix = Math.round(nx);
+                    const iy = Math.round(ny);
+
+                    if (ix < 0 || ix >= imageWidth || iy < 0 || iy >= imageHeight) continue;
+                    
+                    const index = iy * imageWidth + ix;
+                    if (!grid[index]) {
+                        const brightness = imageBrightnessData[index];
+                        if (brightness > maxBrightness) {
+                            maxBrightness = brightness;
+                            bestPoint = { x: nx, y: ny, angle: currentAngle, brightness: brightness };
+                        }
+                    }
+                }
+            }
+
+            if (bestPoint && Math.random() < bestPoint.brightness * 1.5) {
+                return bestPoint;
+            }
+            
+            return null;
+        }
+        
+        function saveSVG() {
+            const svgData = new XMLSerializer().serializeToString(svgOutput);
+            const blob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'linify_art.svg';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }
+    });
+    </script>
+</body>
+</html>

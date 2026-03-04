@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Disegnatore Scalabile Alpha Stroke</title>
+    <style>
+        body { font-family: sans-serif; margin: 20px; background-color: #f0f0f0; display: flex; flex-direction: column; align-items: center; }
+        .main-container { display: flex; flex-wrap: wrap; gap: 20px; justify-content: center; width: 100%; }
+        .canvas-display-area { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+        canvas { border: 1px solid #ccc; max-width: 100%; height: auto; background-color: #fff; image-rendering: pixelated; }
+        .controls { background-color: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); display: flex; flex-direction: column; gap: 10px; align-items: flex-start; margin-bottom: 20px; max-width: 380px; }
+        .controls label, .controls button, .controls input, .controls select { margin-bottom: 5px; }
+        input[type="file"], input[type="number"], select { padding: 8px; border: 1px solid #ccc; border-radius: 4px; width: calc(100% - 18px); box-sizing: border-box; }
+        button { padding: 10px 15px; background-color: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; transition: background-color 0.3s; }
+        button:hover { background-color: #0056b3; }
+        button:disabled { background-color: #ccc; cursor: not-allowed; }
+        .progress-info { margin-top: 10px; font-size: 0.9em; width: 100%; }
+        h1, h2, h3 { color: #333; text-align: center; }
+        .canvas-container { text-align: center; }
+        hr { width:100%; border: 0; border-top: 1px solid #eee; margin: 10px 0; }
+    </style>
+</head>
+<body>
+
+    <h1>Disegnatore Scalabile con Trasparenza (Cerca Scuro, Guida Dinamica)</h1>
+
+    <div class="main-container">
+        <div class="controls">
+            <h3>Impostazioni Immagine e Agenti</h3>
+            <label for="imageLoader">Carica immagine:</label>
+            <input type="file" id="imageLoader" name="imageLoader" accept="image/*">
+            <hr>
+            <label for="canvasScaleFactor">Fattore Scala Canvas Disegno (0.1-6.0):</label>
+            <input type="number" id="canvasScaleFactor" value="2.0" min="0.1" max="6.0" step="0.1"> <!-- Default ridotto -->
+            <hr>
+            <label for="numAgents">Numero Agenti:</label>
+            <input type="number" id="numAgents" value="15" min="1" max="100">
+            <label for="maxStepsPerAgent">Passi Max per Agente (x1000) prima riavvio:</label>
+            <input type="number" id="maxStepsPerAgent" value="10" min="1">
+            <label for="strokeAlpha">Alpha Tratto (0.01 - 1.0):</label>
+            <input type="number" id="strokeAlpha" value="0.1" min="0.01" max="1.0" step="0.01">
+            <label for="fixedGrayValue">Valore Grigio Tratto (0-255):</label>
+            <input type="number" id="fixedGrayValue" value="100" min="0" max="255">
+            <label for="whiteThresholdScribble">Soglia Bianco Guida (0-255):</label>
+            <input type="number" id="whiteThresholdScribble" value="250" min="0" max="255">
+            <label for="stepLengthBase">Lunghezza Passo Base (pixel canvas scalato):</label>
+            <input type="number" id="stepLengthBase" value="5" min="0.5" max="50" step="0.1">
+            <label for="maxAmplitude">Ampiezza Max Oscillazione (pixel canvas scalato):</label>
+            <input type="number" id="maxAmplitude" value="15" min="0" max="100" step="0.1">
+            <label for="maxFreq">Frequenza Max Oscillazione:</label>
+            <input type="number" id="maxFreq" value="0.5" min="0.05" max="2" step="0.05">
+            <label for="bleachAmount">Delta Sbiancamento Guida (1-20):</label>
+            <input type="number" id="bleachAmount" value="3" min="1" max="20">
+            <label for="bleachRadius">Raggio Sbiancamento Guida (px originale):</label>
+            <input type="number" id="bleachRadius" value="0" min="0" max="5">
+            
+            <hr><h3>Comportamento Agente (Cerca Scuro)</h3>
+            <label for="seekDarkInterval">Intervallo Cerca Scuro (passi agente):</label>
+            <input type="number" id="seekDarkInterval" value="5" min="1" max="50">
+            <label for="sensorAngleSpread">Ampiezza Angolo Sensori (°):</label>
+            <input type="number" id="sensorAngleSpread" value="120" min="10" max="360">
+            <label for="sensorNumRays">Numero Raggi Sensore:</label>
+            <input type="number" id="sensorNumRays" value="7" min="3" max="17">
+            <label for="sensorDistanceFactor">Distanza Sensore (x Passo Base):</label>
+            <input type="number" id="sensorDistanceFactor" value="3" min="1" max="20">
+            <label for="turnSpeed">Velocità di Sterzata (0.01-1):</label>
+            <input type="number" id="turnSpeed" value="0.3" min="0.01" max="1" step="0.01">
+
+            <hr><h3>Controllo Similarità (MSE)</h3>
+            <label for="mseCheckInterval">Intervallo Controllo MSE (passi totali):</label>
+            <input type="number" id="mseCheckInterval" value="50000" min="1000">
+            <label for="minMseImprovement">Miglioramento MSE Minimo Richiesto:</label>
+            <input type="number" id="minMseImprovement" value="0.05" min="0.001" max="100" step="0.01">
+            <label for="msePatience">Pazienza MSE (controlli):</label>
+            <input type="number" id="msePatience" value="5" min="1" max="20">
+            <label for="maxTotalSessionSteps">Passi totali massimi sessione (x1000):</label>
+            <input type="number" id="maxTotalSessionSteps" value="5000" min="100">
+
+            <hr>
+            <button id="startButton" disabled>Avvia Disegno</button>
+            <button id="stopButton" disabled>Ferma</button>
+            <button id="downloadCanvasButton" disabled>Scarica Immagine</button>
+            <div class="progress-info" id="progressInfo">Pronto.</div>
+        </div>
+
+        <div class="canvas-display-area">
+            <div class="canvas-container"> <h2>Immagine Originale (Grigi)</h2> <canvas id="originalCanvas"></canvas> </div>
+            <div class="canvas-container"> <h2>Immagine Disegnata (<span id="scaleDisplay"></span>x sul Canvas)</h2> <canvas id="generatedCanvas"></canvas> </div>
+            <div class="canvas-container" id="guidanceMapContainer" style="display:none;"> <h2>Mappa Guida Dinamica (Debug)</h2> <canvas id="guidanceDebugCanvas"></canvas> </div>
+        </div>
+    </div>
+
+    <script>
+        // --- Controlli UI ---
+        const imageLoader = document.getElementById('imageLoader');
+        const startButton = document.getElementById('startButton'); const stopButton = document.getElementById('stopButton');
+        const downloadCanvasButton = document.getElementById('downloadCanvasButton');
+        const progressInfo = document.getElementById('progressInfo');
+        const canvasScaleFactorInput = document.getElementById('canvasScaleFactor'); // Nuovo
+        const scaleDisplaySpan = document.getElementById('scaleDisplay'); // Per mostrare scala corrente
+        const numAgentsInput = document.getElementById('numAgents'); const maxStepsPerAgentInput = document.getElementById('maxStepsPerAgent');
+        const strokeAlphaInput = document.getElementById('strokeAlpha'); 
+        const fixedGrayValueInput = document.getElementById('fixedGrayValue'); 
+        const whiteThresholdScribbleInput = document.getElementById('whiteThresholdScribble');
+        const stepLengthBaseInput = document.getElementById('stepLengthBase'); const maxAmplitudeInput = document.getElementById('maxAmplitude');
+        const maxFreqInput = document.getElementById('maxFreq'); const bleachAmountInput = document.getElementById('bleachAmount');
+        const bleachRadiusInput = document.getElementById('bleachRadius');
+        const seekDarkIntervalInput = document.getElementById('seekDarkInterval');
+        const sensorAngleSpreadInput = document.getElementById('sensorAngleSpread'); const sensorNumRaysInput = document.getElementById('sensorNumRays');
+        const sensorDistanceFactorInput = document.getElementById('sensorDistanceFactor'); const turnSpeedInput = document.getElementById('turnSpeed');
+        const mseCheckIntervalInput = document.getElementById('mseCheckInterval'); const minMseImprovementInput = document.getElementById('minMseImprovement');
+        const msePatienceInput = document.getElementById('msePatience'); const maxTotalSessionStepsInput = document.getElementById('maxTotalSessionSteps');
+        const guidanceMapContainer = document.getElementById('guidanceMapContainer');
+
+        // --- Canvas (come prima) ---
+        const originalCanvas = document.getElementById('originalCanvas'); const generatedCanvas = document.getElementById('generatedCanvas');
+        const guidanceDebugCanvas = document.getElementById('guidanceDebugCanvas');
+        const originalCtx = originalCanvas.getContext('2d', { willReadFrequently: true }); const generatedCtx = generatedCanvas.getContext('2d', { willReadFrequently: true });
+        let guidanceDebugCtx = null; let tempDownscaleCanvas = null;  let tempDownscaleCtx = null;
+
+        // --- Dati Immagine e Agenti ---
+        let staticOriginalImageData = null; let dynamicGuidanceMapData = null; let originalGrayscaleValues = null; 
+        let originalWidth, originalHeight; 
+        let targetCanvasWidth, targetCanvasHeight; // Dimensioni del canvas su cui si disegna (scalato)
+        let CANVAS_SCALE_FACTOR; // Scala del canvas di disegno, dall'input
+
+        let agents = []; let animationFrameId = null; let totalStepsDrawnThisSession = 0; let isDrawing = false;
+
+        // --- Variabili MSE (come prima) ---
+        let lastCheckedMse = Infinity; let bestMseSoFar = Infinity; let stepsSinceLastMseCheck = 0; let noImprovementStreak = 0;
+        
+        imageLoader.addEventListener('change', handleImage); startButton.addEventListener('click', startDrawingProcess);
+        stopButton.addEventListener('click', stopDrawingProcess); downloadCanvasButton.addEventListener('click', () => downloadGeneratedImage(generatedCanvas, `canvas_scaled_${CANVAS_SCALE_FACTOR}x.png`));
+        canvasScaleFactorInput.addEventListener('input', () => { // Aggiorna display scala se l'utente cambia
+             if(scaleDisplaySpan) scaleDisplaySpan.textContent = parseFloat(canvasScaleFactorInput.value).toFixed(1);
+        });
+        if(scaleDisplaySpan) scaleDisplaySpan.textContent = parseFloat(canvasScaleFactorInput.value).toFixed(1); // Iniziale
+
+        function handleImage(e) { 
+            stopDrawingProcess(); 
+            CANVAS_SCALE_FACTOR = parseFloat(canvasScaleFactorInput.value); // Leggi scala all'inizio
+            if (isNaN(CANVAS_SCALE_FACTOR) || CANVAS_SCALE_FACTOR <= 0) CANVAS_SCALE_FACTOR = 1.0;
+
+            const reader = new FileReader();
+            reader.onload = function(event) {
+                const img = new Image();
+                img.onload = function() {
+                    originalWidth = img.width; originalHeight = img.height; 
+                    targetCanvasWidth = Math.max(1, Math.round(originalWidth * CANVAS_SCALE_FACTOR)); // Assicura min 1px
+                    targetCanvasHeight = Math.max(1, Math.round(originalHeight * CANVAS_SCALE_FACTOR));
+
+                    originalCanvas.width = originalWidth; originalCanvas.height = originalHeight;
+                    originalCanvas.style.width = `${Math.min(350, originalWidth)}px`; originalCanvas.style.height = `${(originalHeight / originalWidth) * Math.min(350, originalWidth)}px`;
+                    originalCtx.drawImage(img, 0, 0, originalWidth, originalHeight);
+                    const fullColorImageData = originalCtx.getImageData(0, 0, originalWidth, originalHeight);
+                    staticOriginalImageData = convertToGrayscaleData(fullColorImageData, originalWidth, originalHeight);
+                    originalGrayscaleValues = extractGrayscaleValues(staticOriginalImageData);
+                    originalCtx.putImageData(staticOriginalImageData, 0, 0); 
+                    dynamicGuidanceMapData = new ImageData( new Uint8ClampedArray(staticOriginalImageData.data.buffer.slice(0)), originalWidth, originalHeight);
+                    if (guidanceDebugCanvas) {
+                        guidanceMapContainer.style.display = 'block'; guidanceDebugCanvas.width = originalWidth; guidanceDebugCanvas.height = originalHeight;
+                        guidanceDebugCanvas.style.width = originalCanvas.style.width; guidanceDebugCanvas.style.height = originalCanvas.style.height;
+                        guidanceDebugCtx = guidanceDebugCanvas.getContext('2d'); drawGuidanceMapForDebug(); 
+                    }
+                    generatedCanvas.width = targetCanvasWidth; generatedCanvas.height = targetCanvasHeight;
+                    // Mantieni una dimensione di visualizzazione massima ragionevole per il generatedCanvas
+                    const displayGeneratedMaxWidth = 700; 
+                    const displayGeneratedRatio = targetCanvasHeight / targetCanvasWidth;
+                    generatedCanvas.style.width = `${Math.min(displayGeneratedMaxWidth, targetCanvasWidth)}px`; 
+                    generatedCanvas.style.height = `${displayGeneratedRatio * Math.min(displayGeneratedMaxWidth, targetCanvasWidth)}px`;
+                    initializeGeneratedCanvas();
+                    if (!tempDownscaleCanvas) {
+                        tempDownscaleCanvas = document.createElement('canvas'); tempDownscaleCtx = tempDownscaleCanvas.getContext('2d', {willReadFrequently: true});
+                    }
+                    tempDownscaleCanvas.width = originalWidth; tempDownscaleCanvas.height = originalHeight;
+                    startButton.disabled = false; downloadCanvasButton.disabled = true; 
+                    progressInfo.textContent = "Immagine caricata. Pronto.";
+                }
+                img.src = event.target.result;
+            }
+            if (e.target.files[0]) reader.readAsDataURL(e.target.files[0]);
+        }
+        function initializeGeneratedCanvas() { generatedCtx.fillStyle = 'white'; generatedCtx.fillRect(0, 0, targetCanvasWidth, targetCanvasHeight); }
+        
+        function bleachGuidanceMap(x_canvas, y_canvas) { 
+            const bleach = parseInt(bleachAmountInput.value); const radius = parseInt(bleachRadiusInput.value);
+            // Usa CANVAS_SCALE_FACTOR per tornare alle coordinate originali
+            const x_orig_center = Math.floor(x_canvas / CANVAS_SCALE_FACTOR); 
+            const y_orig_center = Math.floor(y_canvas / CANVAS_SCALE_FACTOR);
+            for (let dy = -radius; dy <= radius; dy++) {
+                for (let dx = -radius; dx <= radius; dx++) {
+                    if (radius > 0 && dx*dx + dy*dy > radius*radius) continue; 
+                    const x_orig = x_orig_center + dx; const y_orig = y_orig_center + dy;
+                    if (x_orig >= 0 && x_orig < originalWidth && y_orig >= 0 && y_orig < originalHeight) {
+                        const index = (y_orig * originalWidth + x_orig) * 4;
+                        const currentVal = dynamicGuidanceMapData.data[index]; const newVal = Math.min(255, currentVal + bleach);
+                        dynamicGuidanceMapData.data[index] = newVal; dynamicGuidanceMapData.data[index + 1] = newVal; dynamicGuidanceMapData.data[index + 2] = newVal;
+                    }
+                }
+            }
+        }
+        function drawGuidanceMapForDebug() { /* ... identica a prima ... */ if (guidanceDebugCtx && dynamicGuidanceMapData) guidanceDebugCtx.putImageData(dynamicGuidanceMapData, 0, 0); }
+        function convertToGrayscaleData(imageData, width, height) { /* ... identica a prima ... */ 
+            const data = imageData.data; const newImageData = new ImageData(new Uint8ClampedArray(data.buffer.slice(0)), width, height);
+            const newData = newImageData.data;
+            for (let i = 0; i < data.length; i += 4) {
+                const r = data[i]; const g = data[i + 1]; const b = data[i + 2]; const gray = Math.round(0.299 * r + 0.587 * g + 0.114 * b);
+                newData[i] = gray; newData[i + 1] = gray; newData[i + 2] = gray; newData[i + 3] = 255;
+            }
+            return newImageData;
+        }
+        function extractGrayscaleValues(imageData) { /* ... identica a prima ... */ const grayValues = new Uint8Array(imageData.width * imageData.height); const data = imageData.data; for (let i = 0, j = 0; i < data.length; i += 4, j++) grayValues[j] = data[i]; return grayValues; }
+        
+        function getGrayscaleFromGuidanceMap(x_canvas, y_canvas) { 
+            if (!dynamicGuidanceMapData) return 255; 
+            // Usa CANVAS_SCALE_FACTOR
+            const x_orig = Math.floor(x_canvas / CANVAS_SCALE_FACTOR); 
+            const y_orig = Math.floor(y_canvas / CANVAS_SCALE_FACTOR);
+            if (x_orig < 0 || x_orig >= originalWidth || y_orig < 0 || y_orig >= originalHeight) return 255; 
+            return dynamicGuidanceMapData.data[(y_orig * originalWidth + x_orig) * 4]; 
+        }
+        function calculateMse() { /* ... identica a prima ... */ 
+            if (!originalGrayscaleValues || !tempDownscaleCtx) return Infinity;
+            tempDownscaleCtx.fillStyle = 'white'; tempDownscaleCtx.fillRect(0,0,originalWidth, originalHeight);
+            tempDownscaleCtx.drawImage(generatedCanvas, 0, 0, targetCanvasWidth, targetCanvasHeight, 0, 0, originalWidth, originalHeight);
+            const downscaledGeneratedImgData = tempDownscaleCtx.getImageData(0, 0, originalWidth, originalHeight);
+            const generatedData = downscaledGeneratedImgData.data; let sumSquaredError = 0;
+            for (let i = 0, j = 0; i < generatedData.length; i += 4, j++) { 
+                const r = generatedData[i]; const g = generatedData[i + 1]; const b = generatedData[i + 2];
+                const generatedGray = Math.round(0.299 * r + 0.587 * g + 0.114 * b);
+                const diff = originalGrayscaleValues[j] - generatedGray; sumSquaredError += diff * diff; 
+            }
+            return sumSquaredError / originalGrayscaleValues.length;
+        }
+
+        class Scribbler {
+            constructor(x_canvas, y_canvas, angle, params) { /* ... identica a prima ... */ 
+                this.id = Math.random().toString(36).substr(2, 5); this.params = params; this.reset(x_canvas, y_canvas, angle);
+            }
+            reset(x_canvas, y_canvas, angle){ /* ... identica a prima ... */ 
+                this.x = x_canvas; this.y = y_canvas; this.prevX = x_canvas; this.prevY = y_canvas; 
+                this.angle = angle; this.targetAngle = angle; this.oscillationPhase = Math.random() * Math.PI * 2;
+                this.stepsTaken = 0; this.active = true; this.stuckCounter = 0;
+                this.turnCooldown = 0; this.justBounced = false; this.stepsSinceLastSeek = 0; 
+            }
+            update() { /* ... identica a prima ... */ 
+                if (!this.active) return;
+                if (this.stepsTaken > this.params.maxStepsPerAgent * 1000 || this.stuckCounter > 50) { this.active = false; findNewStartForAgent(this); return; }
+                this.prevX = this.x; this.prevY = this.y; this.justBounced = false;
+                const currentGrayFromGuidance = getGrayscaleFromGuidanceMap(this.x, this.y); 
+                let shouldDrawThisStep = currentGrayFromGuidance < this.params.whiteThresholdScribble;
+                if (this.stepsSinceLastSeek >= this.params.seekDarkInterval && this.turnCooldown <= 0) {
+                    this.stepsSinceLastSeek = 0; 
+                    const SENSOR_ANGLE_SPREAD_RAD = this.params.sensorAngleSpread * Math.PI / 180; const SENSOR_NUM_RAYS = this.params.sensorNumRays;
+                    const SENSOR_DISTANCE_CANVAS = this.params.stepLengthBase * this.params.sensorDistanceFactor; 
+                    let bestSensorAngle = this.angle; let darkestFoundGray = currentGrayFromGuidance; let foundDarkerPath = false;
+                    const angleStep = SENSOR_NUM_RAYS > 1 ? SENSOR_ANGLE_SPREAD_RAD / (SENSOR_NUM_RAYS -1) : 0;
+                    const startSensorAngle = this.angle - SENSOR_ANGLE_SPREAD_RAD / 2;
+                    for (let i = 0; i < SENSOR_NUM_RAYS; i++) {
+                        const tryAngle = startSensorAngle + i * angleStep;
+                        const sensorX = this.x + Math.cos(tryAngle) * SENSOR_DISTANCE_CANVAS; const sensorY = this.y + Math.sin(tryAngle) * SENSOR_DISTANCE_CANVAS;
+                        const grayAtSensor = getGrayscaleFromGuidanceMap(sensorX, sensorY);
+                        if (grayAtSensor < darkestFoundGray && grayAtSensor < this.params.whiteThresholdScribble) { darkestFoundGray = grayAtSensor; bestSensorAngle = tryAngle; foundDarkerPath = true; }
+                    }
+                    if (foundDarkerPath) { this.targetAngle = bestSensorAngle; this.stuckCounter = 0; }
+                    else if (currentGrayFromGuidance > this.params.whiteThresholdScribble) { this.stuckCounter++; if (this.stuckCounter > 5) { this.targetAngle += (Math.random() - 0.5) * Math.PI * 0.8; this.turnCooldown = 10; } }
+                } else if (currentGrayFromGuidance > this.params.whiteThresholdScribble && this.turnCooldown <=0) { this.stuckCounter++; if (this.stuckCounter > 10) { this.targetAngle += (Math.random() - 0.5) * Math.PI * 0.5; this.turnCooldown = 10; } }
+                this.stepsSinceLastSeek++; this.turnCooldown = Math.max(0, this.turnCooldown -1);
+                const darkness = Math.max(0, (this.params.whiteThresholdScribble - currentGrayFromGuidance) / this.params.whiteThresholdScribble);
+                const currentAmplitudeCanvas = this.params.maxAmplitude * darkness * (0.5 + Math.random() * 0.5); 
+                const currentFreq = this.params.maxFreq * darkness * (0.7 + Math.random() * 0.3);
+                let stepLengthCanvas = this.params.stepLengthBase * (1 - darkness * 0.7); stepLengthCanvas = Math.max(0.5, stepLengthCanvas); 
+                this.oscillationPhase += currentFreq; const oscillationOffsetCanvas = currentAmplitudeCanvas * Math.sin(this.oscillationPhase);
+                let angleDiff = (this.targetAngle - this.angle);
+                while (angleDiff > Math.PI) angleDiff -= 2 * Math.PI; while (angleDiff < -Math.PI) angleDiff += 2 * Math.PI;
+                this.angle += angleDiff * this.params.turnSpeed; this.angle = (this.angle + 2 * Math.PI) % (2 * Math.PI);
+                const dx_main_canvas = Math.cos(this.angle) * stepLengthCanvas; const dy_main_canvas = Math.sin(this.angle) * stepLengthCanvas;
+                const dx_osc_canvas = Math.cos(this.angle + Math.PI / 2) * oscillationOffsetCanvas; const dy_osc_canvas = Math.sin(this.angle + Math.PI / 2) * oscillationOffsetCanvas;
+                this.x += dx_main_canvas + dx_osc_canvas; this.y += dy_main_canvas + dy_osc_canvas;
+                let bounced = false; 
+                if (this.x < 0) { this.x = 0; this.angle = Math.PI - this.angle; bounced = true; }
+                else if (this.x >= targetCanvasWidth) { this.x = targetCanvasWidth - 1; this.angle = Math.PI - this.angle; bounced = true; }
+                if (this.y < 0) { this.y = 0; this.angle = -this.angle; bounced = true; }
+                else if (this.y >= targetCanvasHeight) { this.y = targetCanvasHeight - 1; this.angle = -this.angle; bounced = true; }
+                if (bounced && !this.justBounced) {
+                    this.targetAngle = this.angle + (Math.random() - 0.5) * 0.2; 
+                    this.angle = (this.angle + 2 * Math.PI) % (2 * Math.PI); this.targetAngle = (this.targetAngle + 2 * Math.PI) % (2 * Math.PI); 
+                    this.turnCooldown = 5; this.justBounced = true; this.stuckCounter = 0;
+                }
+                if(shouldDrawThisStep) { this.drawToCanvas(); bleachGuidanceMap(this.x, this.y); }
+                this.stepsTaken++; totalStepsDrawnThisSession++; stepsSinceLastMseCheck++;
+            }
+            drawToCanvas() { 
+                if (!this.active) return;
+                const grayVal = parseInt(this.params.fixedGrayValue); 
+                const alphaVal = parseFloat(this.params.strokeAlpha);  
+                generatedCtx.beginPath(); generatedCtx.moveTo(this.prevX, this.prevY); generatedCtx.lineTo(this.x, this.y);
+                generatedCtx.strokeStyle = `rgba(${grayVal}, ${grayVal}, ${grayVal}, ${alphaVal})`; 
+                const grayForThickness = getGrayscaleFromGuidanceMap(this.x, this.y); 
+                // Lo spessore della linea ora scala con CANVAS_SCALE_FACTOR
+                let baseLineWidth = 0.5 + ( (this.params.whiteThresholdScribble - grayForThickness) / this.params.whiteThresholdScribble ) * 1.0;
+                generatedCtx.lineWidth = Math.max(0.1, baseLineWidth * CANVAS_SCALE_FACTOR); // Assicura spessore minimo
+                generatedCtx.lineCap = 'round'; generatedCtx.stroke();
+            }
+        }
+        
+        function findNewStartForAgent(agent) { /* ... identica a prima (usa CANVAS_SCALE_FACTOR) ... */ 
+            let bestX_orig = -1, bestY_orig = -1; let darkestGrayFound = 256; 
+            const data = dynamicGuidanceMapData.data;
+            for (let y_orig = 0; y_orig < originalHeight; y_orig += 5) { 
+                for (let x_orig = 0; x_orig < originalWidth; x_orig += 5) {
+                    const gray = data[(y_orig * originalWidth + x_orig) * 4];
+                    if (gray < darkestGrayFound && gray < agent.params.whiteThresholdScribble -10) { 
+                        darkestGrayFound = gray; bestX_orig = x_orig; bestY_orig = y_orig;
+                    }
+                }
+            }
+            if (bestX_orig !== -1) {
+                const newX_target = bestX_orig * CANVAS_SCALE_FACTOR + (Math.random() - 0.5) * CANVAS_SCALE_FACTOR * 5;
+                const newY_target = bestY_orig * CANVAS_SCALE_FACTOR + (Math.random() - 0.5) * CANVAS_SCALE_FACTOR * 5;
+                agent.reset(newX_target, newY_target, Math.random() * Math.PI * 2);
+            } else {
+                agent.reset(Math.random() * targetCanvasWidth, Math.random() * targetCanvasHeight, Math.random() * Math.PI * 2);
+            }
+        }
+        function findInitialPositionsForAgents(num) { /* ... identica a prima (usa CANVAS_SCALE_FACTOR) ... */ 
+            const positions = []; if (!dynamicGuidanceMapData) return positions; 
+            const candidates = []; const data = dynamicGuidanceMapData.data; 
+            for (let y_orig = 0; y_orig < originalHeight; y_orig += 3 ) { 
+                for (let x_orig = 0; x_orig < originalWidth; x_orig += 3 ) {
+                    const gray = data[(y_orig * originalWidth + x_orig) * 4];
+                    if (gray < parseFloat(whiteThresholdScribbleInput.value) - 30) { 
+                        candidates.push({x_orig, y_orig, gray});
+                    }
+                }
+            }
+            candidates.sort((a, b) => a.gray - b.gray); 
+            for (let i = 0; i < Math.min(num * 10, candidates.length); i++) { 
+                 if(positions.length >= num) break;
+                 const p_orig = candidates[i % candidates.length];
+                 const p_target_x = p_orig.x_orig * CANVAS_SCALE_FACTOR + (Math.random()-0.5) * CANVAS_SCALE_FACTOR * 3;
+                 const p_target_y = p_orig.y_orig * CANVAS_SCALE_FACTOR + (Math.random()-0.5) * CANVAS_SCALE_FACTOR * 3;
+                 let tooClose = false;
+                 for(const existing_target of positions){
+                     const dist = Math.sqrt((p_target_x - existing_target.x)**2 + (p_target_y - existing_target.y)**2);
+                     if(dist < CANVAS_SCALE_FACTOR * 10) { tooClose = true; break; } 
+                 }
+                 if(!tooClose) positions.push({ x: p_target_x, y: p_target_y });
+            }
+            while(positions.length < num && candidates.length > 0){ 
+                const randIdx = Math.floor(Math.random()*candidates.length); const p_orig = candidates[randIdx];
+                const p_target_x = p_orig.x_orig * CANVAS_SCALE_FACTOR; const p_target_y = p_orig.y_orig * CANVAS_SCALE_FACTOR;
+                 let tooClose = false;
+                 for(const existing_target of positions){
+                     const dist = Math.sqrt((p_target_x - existing_target.x)**2 + (p_target_y - existing_target.y)**2);
+                     if(dist < CANVAS_SCALE_FACTOR * 5) { tooClose = true; break; }
+                 }
+                 if(!tooClose) positions.push({ x: p_target_x, y: p_target_y });
+                 candidates.splice(randIdx, 1); 
+            }
+            while(positions.length < num) positions.push({x: Math.random() * targetCanvasWidth, y: Math.random() * targetCanvasHeight});
+            return positions;
+        }
+
+        function startDrawingProcess() { 
+            if (!staticOriginalImageData) { alert("Carica un'immagine prima!"); return; }
+            if (isDrawing) stopDrawingProcess(); 
+            
+            CANVAS_SCALE_FACTOR = parseFloat(canvasScaleFactorInput.value); // Leggi scala all'avvio
+            if (isNaN(CANVAS_SCALE_FACTOR) || CANVAS_SCALE_FACTOR <= 0) CANVAS_SCALE_FACTOR = 1.0;
+            if(scaleDisplaySpan) scaleDisplaySpan.textContent = CANVAS_SCALE_FACTOR.toFixed(1);
+            
+            // Ricalcola targetCanvasWidth/Height basato sulla scala corrente
+            targetCanvasWidth = Math.max(1, Math.round(originalWidth * CANVAS_SCALE_FACTOR));
+            targetCanvasHeight = Math.max(1, Math.round(originalHeight * CANVAS_SCALE_FACTOR));
+            generatedCanvas.width = targetCanvasWidth;
+            generatedCanvas.height = targetCanvasHeight;
+            const displayGeneratedMaxWidth = 700; 
+            const displayGeneratedRatio = targetCanvasHeight / targetCanvasWidth;
+            generatedCanvas.style.width = `${Math.min(displayGeneratedMaxWidth, targetCanvasWidth)}px`; 
+            generatedCanvas.style.height = `${displayGeneratedRatio * Math.min(displayGeneratedMaxWidth, targetCanvasWidth)}px`;
+
+
+            isDrawing = true; startButton.disabled = true; stopButton.disabled = false; downloadCanvasButton.disabled = true; 
+            totalStepsDrawnThisSession = 0; stepsSinceLastMseCheck = 0; lastCheckedMse = Infinity; bestMseSoFar = Infinity; noImprovementStreak = 0;
+            dynamicGuidanceMapData = new ImageData( new Uint8ClampedArray(staticOriginalImageData.data.buffer.slice(0)), originalWidth, originalHeight);
+            if(guidanceDebugCtx) drawGuidanceMapForDebug();
+            initializeGeneratedCanvas(); agents = []; const num = parseInt(numAgentsInput.value);
+            const agentParams = { 
+                maxStepsPerAgent: parseInt(maxStepsPerAgentInput.value), strokeAlpha: parseFloat(strokeAlphaInput.value), 
+                fixedGrayValue: parseInt(fixedGrayValueInput.value), whiteThresholdScribble: parseFloat(whiteThresholdScribbleInput.value),
+                stepLengthBase: parseFloat(stepLengthBaseInput.value), maxAmplitude: parseFloat(maxAmplitudeInput.value),     
+                maxFreq: parseFloat(maxFreqInput.value), seekDarkInterval: parseInt(seekDarkIntervalInput.value),
+                sensorAngleSpread: parseFloat(sensorAngleSpreadInput.value), sensorNumRays: parseInt(sensorNumRaysInput.value),
+                sensorDistanceFactor: parseFloat(sensorDistanceFactorInput.value), turnSpeed: parseFloat(turnSpeedInput.value)
+            };
+            const initialPos = findInitialPositionsForAgents(num); 
+            for (let i = 0; i < num; i++) { const pos = initialPos[i % initialPos.length]; agents.push(new Scribbler(pos.x, pos.y, Math.random() * Math.PI * 2, agentParams)); }
+            bestMseSoFar = calculateMse(); lastCheckedMse = bestMseSoFar;
+            progressInfo.textContent = `Avvio... Scala: ${CANVAS_SCALE_FACTOR.toFixed(1)}x, MSE iniziale: ${bestMseSoFar.toFixed(3)}`;
+            animateScribble();
+        }
+        function stopDrawingProcess(reason = "Manuale"){ /* ... identica a prima ... */ 
+            if(animationFrameId){ cancelAnimationFrame(animationFrameId); animationFrameId = null; }
+            isDrawing = false; 
+            startButton.disabled = (staticOriginalImageData === null); stopButton.disabled = true;
+            downloadCanvasButton.disabled = (staticOriginalImageData === null || totalStepsDrawnThisSession === 0);
+            if(staticOriginalImageData) progressInfo.textContent = `Disegno fermato (${reason}). Scala: ${CANVAS_SCALE_FACTOR.toFixed(1)}x, MSE Finale: ${bestMseSoFar.toFixed(3)}. Passi: ${totalStepsDrawnThisSession}.`;
+        }
+        function animateScribble() { /* ... identica a prima ... */ 
+            if (!isDrawing) return;
+            const MSE_CHECK_INTERVAL = parseInt(mseCheckIntervalInput.value); const MIN_MSE_IMPROVEMENT = parseFloat(minMseImprovementInput.value);
+            const MSE_PATIENCE = parseInt(msePatienceInput.value); const MAX_TOTAL_SESSION_STEPS = parseInt(maxTotalSessionStepsInput.value) * 1000;
+            const stepsPerAnimFrame = 50; let currentStepsInFrame = 0;
+            while(currentStepsInFrame < stepsPerAnimFrame && isDrawing){
+                let activeAgentInLoop = false;
+                for (let i = 0; i < agents.length; i++) { if (agents[i].active || agents[i].stepsTaken < agents[i].params.maxStepsPerAgent * 1000) { agents[i].update(); activeAgentInLoop = true; } }
+                if (!activeAgentInLoop && agents.every(a => !a.active)) { stopDrawingProcess("Tutti agenti inattivi"); return; }
+                if (totalStepsDrawnThisSession >= MAX_TOTAL_SESSION_STEPS) { stopDrawingProcess("Max passi sessione raggiunto"); return; }
+                if (stepsSinceLastMseCheck >= MSE_CHECK_INTERVAL) {
+                    const currentMse = calculateMse(); stepsSinceLastMseCheck = 0; 
+                    let statusMessage = `Passi: ${totalStepsDrawnThisSession}, Scala: ${CANVAS_SCALE_FACTOR.toFixed(1)}x, MSE: ${currentMse.toFixed(3)}`;
+                    if (currentMse < bestMseSoFar) {
+                        if (bestMseSoFar - currentMse >= MIN_MSE_IMPROVEMENT) { statusMessage += ` (Migliorato da ${bestMseSoFar.toFixed(3)})`; noImprovementStreak = 0; }
+                        else { statusMessage += ` (Miglioramento piccolo < ${MIN_MSE_IMPROVEMENT.toFixed(3)})`; noImprovementStreak++; }
+                        bestMseSoFar = currentMse;
+                    } else { statusMessage += ` (Nessun miglioramento, Best: ${bestMseSoFar.toFixed(3)})`; noImprovementStreak++; }
+                    lastCheckedMse = currentMse; progressInfo.textContent = statusMessage;
+                    if (guidanceDebugCtx) drawGuidanceMapForDebug(); 
+                    if (noImprovementStreak >= MSE_PATIENCE) { stopDrawingProcess(`Convergenza MSE (Pazienza: ${MSE_PATIENCE})`); return; }
+                }
+                currentStepsInFrame++;
+            }
+            if (totalStepsDrawnThisSession % 20000 === 0 && totalStepsDrawnThisSession > 0 && stepsSinceLastMseCheck < MSE_CHECK_INTERVAL) { 
+                 progressInfo.textContent = `Disegnando... Passi: ${totalStepsDrawnThisSession}, Scala: ${CANVAS_SCALE_FACTOR.toFixed(1)}x, Ultimo MSE: ${lastCheckedMse.toFixed(3)}`;
+                 if (guidanceDebugCtx && totalStepsDrawnThisSession % 60000 === 0) drawGuidanceMapForDebug(); 
+            }
+            if (isDrawing) { animationFrameId = requestAnimationFrame(animateScribble); }
+        }
+        function downloadGeneratedImage(canvasElement, filename) { /* ... identica a prima ... */ 
+            if (!canvasElement || canvasElement.width === 0 || totalStepsDrawnThisSession === 0 && canvasElement === generatedCanvas) { alert("Nessuna immagine generata da scaricare o disegno non avviato."); return; }
+            const dataURL = canvasElement.toDataURL('image/png'); const link = document.createElement('a'); link.download = filename;
+            link.href = dataURL; document.body.appendChild(link); link.click(); document.body.removeChild(link);
+        }
+
+    </script>
+</body>
+</html>

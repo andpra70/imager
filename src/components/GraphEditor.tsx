@@ -333,6 +333,29 @@ function GraphEditor() {
     runtimeGraph.onConnectionChange = undefined;
     runtimeCanvas.onNodeMoved = undefined;
 
+    // LiteGraph drop handlers can throw if graph is temporarily null (e.g. teardown races).
+    // Guard them locally to avoid crashing the editor on external drops.
+    const originalProcessDrop = runtimeCanvas.processDrop?.bind(runtimeCanvas);
+    if (originalProcessDrop) {
+      runtimeCanvas.processDrop = (event: DragEvent) => {
+        if (!runtimeCanvas.graph) {
+          event.preventDefault();
+          return false;
+        }
+        return originalProcessDrop(event);
+      };
+    }
+
+    const originalCheckDropItem = runtimeCanvas.checkDropItem?.bind(runtimeCanvas);
+    if (originalCheckDropItem) {
+      runtimeCanvas.checkDropItem = (event: DragEvent) => {
+        if (!runtimeCanvas.graph) {
+          return false;
+        }
+        return originalCheckDropItem(event);
+      };
+    }
+
     const savedGraph = localStorage.getItem(GRAPH_STORAGE_KEY);
     if (savedGraph) {
       try {

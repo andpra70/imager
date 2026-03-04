@@ -1,0 +1,758 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SVG to G-Code Converter (Path & Polyline - Corretto)</title>
+    <style>
+        body { font-family: sans-serif; margin: 20px; background-color: #f4f4f4; color: #333; }
+        .container { background-color: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
+        h1 { text-align: center; color: #2c3e50; }
+        .control-group { margin-bottom: 15px; }
+        label { display: block; margin-bottom: 5px; font-weight: bold; }
+        input[type="file"], input[type="number"], input[type="text"] {
+            width: calc(100% - 22px);
+            padding: 10px;
+            margin-bottom: 5px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+        input[type="checkbox"] { width: auto; margin-right: 5px; vertical-align: middle; }
+        button {
+            background-color: #3498db; color: white; padding: 10px 15px;
+            border: none; border-radius: 4px; cursor: pointer; font-size: 16px; margin-right: 10px;
+        }
+        button:hover { background-color: #2980b9; }
+        button:disabled { background-color: #bdc3c7; cursor: not-allowed; }
+        #svgDisplayContainer {
+            border: 1px solid #ccc; min-height: 200px; max-height: 400px; overflow: auto;
+            margin-bottom: 20px; background-color: #eee; display: flex;
+            justify-content: center; align-items: center;
+        }
+        #svgDisplayContainer svg { max-width: 100%; max-height: 380px; }
+        pre {
+            background-color: #2c3e50; color: #ecf0f1; padding: 15px; border-radius: 4px;
+            overflow-x: auto; max-height: 300px; font-family: "Courier New", Courier, monospace; font-size: 0.9em;
+        }
+        .grid-container { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px; }
+        .column { display: flex; flex-direction: column; }
+        .status { margin-top: 10px; font-style: italic; color: #7f8c8d; }
+        .progress-container { margin-top: 15px; margin-bottom: 10px; }
+        progress { width: 100%; height: 20px; border-radius: 4px; }
+        progress::-webkit-progress-bar { background-color: #ecf0f1; border-radius: 4px; }
+        progress::-webkit-progress-value { background-color: #3498db; border-radius: 4px; transition: width 0.1s ease-in-out; }
+        progress::-moz-progress-bar { background-color: #3498db; border-radius: 4px; transition: width 0.1s ease-in-out; }
+        #progressText { display: block; text-align: center; font-size: 0.9em; margin-top: 5px; }
+        .options-container { margin-bottom: 15px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Convertitore da SVG a G-Code (Path & Polyline - Corretto)</h1>
+
+        <div class="control-group">
+            <label for="svgFile">Scegli file SVG:</label>
+            <input type="file" id="svgFile" accept=".svg">
+        </div>
+
+        <div id="svgDisplayContainer">
+            <p>Nessun SVG caricato</p>
+        </div>
+
+        <div class="progress-container">
+            <progress id="progressBar" value="0" max="100"></progress>
+            <span id="progressText"></span>
+        </div>
+
+        <div class="grid-container">
+            <div class="column">
+                <h2>Parametri Macchina e Opzioni</h2>
+                <div class="control-group">
+                    <label for="feedRate">Feed Rate (mm/min):</label>
+                    <input type="number" id="feedRate" value="1000">
+                </div>
+                <div class="control-group">
+                    <label for="zSafe">Z Sicura (mm):</label>
+                    <input type="number" id="zSafe" value="5">
+                </div>
+                <div class="control-group">
+                    <label for="zDepth">Z Profondità Lavoro (mm, negativo per incidere):</label>
+                    <input type="number" id="zDepth" value="-1">
+                </div>
+                 <div class="control-group">
+                    <label for="toolDiameter">Diametro Utensile (mm, informativo):</label>
+                    <input type="number" id="toolDiameter" value="3" disabled>
+                </div>
+                <div class="control-group">
+                    <label for="scaleFactor">Scala Globale:</label>
+                    <input type="number" id="scaleFactor" value="1" step="0.1">
+                </div>
+                <div class="control-group">
+                    <label for="curveSegments">Segmenti per Curva (solo per Path):</label>
+                    <input type="number" id="curveSegments" value="20" min="2">
+                </div>
+                <div class="options-container control-group">
+                    <input type="checkbox" id="optimizePathOrder" checked>
+                    <label for="optimizePathOrder" style="display: inline;">Ottimizza ordine percorsi (percorso più breve)</label>
+                </div>
+            </div>
+
+            <div class="column">
+                <h2>G-Code Generato</h2>
+                <pre id="gcodeOutput">Il G-Code apparirà qui...</pre>
+                <p id="statusMessage" class="status"></p>
+            </div>
+        </div>
+
+        <div style="text-align: center; margin-top: 20px;">
+            <button id="convertButton" disabled>Converti in G-Code</button>
+            <button id="saveButton" disabled>Salva G-Code</button>
+        </div>
+    </div>
+
+    <script>
+        // Variabili globali e setup UI (invariati)
+        const svgFileInput = document.getElementById('svgFile');
+        const svgDisplayContainer = document.getElementById('svgDisplayContainer');
+        const convertButton = document.getElementById('convertButton');
+        const saveButton = document.getElementById('saveButton');
+        const gcodeOutput = document.getElementById('gcodeOutput');
+        const statusMessage = document.getElementById('statusMessage');
+        const progressBar = document.getElementById('progressBar');
+        const progressText = document.getElementById('progressText');
+
+        const feedRateInput = document.getElementById('feedRate');
+        const zSafeInput = document.getElementById('zSafe');
+        const zDepthInput = document.getElementById('zDepth');
+        const scaleFactorInput = document.getElementById('scaleFactor');
+        const curveSegmentsInput = document.getElementById('curveSegments');
+        const optimizePathOrderCheckbox = document.getElementById('optimizePathOrder');
+
+        let loadedSvgContent = null;
+        let originalFileName = 'gcode_output';
+
+        function updateProgress(value, text = '') {
+            progressBar.value = value;
+            progressText.textContent = text || `${Math.round(value)}%`;
+            if (value === 0 || value === 100) {
+                if (text === '') progressText.textContent = value === 100 ? 'Completato!' : (value === 0 ? '' : `${Math.round(value)}%`);
+            }
+        }
+
+        svgFileInput.addEventListener('change', (event) => {
+            const file = event.target.files[0];
+            if (file) {
+                originalFileName = file.name.replace(/\.[^/.]+$/, "");
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    loadedSvgContent = e.target.result;
+                    svgDisplayContainer.innerHTML = loadedSvgContent;
+                    const svgElementForDisplay = svgDisplayContainer.querySelector('svg');
+                    if (svgElementForDisplay) {
+                        if (!svgElementForDisplay.getAttribute('viewBox')) {
+                            const w = svgElementForDisplay.getAttribute('width');
+                            const h = svgElementForDisplay.getAttribute('height');
+                            if (w && h) svgElementForDisplay.setAttribute('viewBox', `0 0 ${parseFloat(w)} ${parseFloat(h)}`);
+                        }
+                        svgElementForDisplay.style.width = '100%';
+                        svgElementForDisplay.style.height = 'auto';
+                    }
+                    convertButton.disabled = false;
+                    gcodeOutput.textContent = 'SVG caricato. Pronto per la conversione.';
+                    statusMessage.textContent = '';
+                    saveButton.disabled = true;
+                    updateProgress(0);
+                };
+                reader.onerror = () => {
+                    statusMessage.textContent = 'Errore nel caricamento del file SVG.';
+                    convertButton.disabled = true;
+                    updateProgress(0, 'Errore caricamento');
+                }
+                reader.readAsText(file);
+            } else {
+                svgDisplayContainer.innerHTML = '<p>Nessun SVG caricato</p>';
+                loadedSvgContent = null;
+                convertButton.disabled = true;
+                saveButton.disabled = true;
+                gcodeOutput.textContent = 'Il G-Code apparirà qui...';
+                statusMessage.textContent = '';
+                updateProgress(0);
+            }
+        });
+
+        convertButton.addEventListener('click', () => {
+            if (!loadedSvgContent) {
+                statusMessage.textContent = 'Nessun SVG caricato.';
+                updateProgress(0, 'Nessun SVG');
+                return;
+            }
+            const optimizeOrder = optimizePathOrderCheckbox.checked;
+            const conversionTypeText = optimizeOrder ? "ottimizzata" : "standard";
+
+            statusMessage.textContent = `Conversione ${conversionTypeText} in corso...`;
+            gcodeOutput.textContent = 'Attendere...';
+            convertButton.disabled = true;
+            saveButton.disabled = true;
+            updateProgress(0, `Inizio conversione ${conversionTypeText}...`);
+
+            setTimeout(async () => {
+                try {
+                    console.log("Inizio conversione G-Code...");
+                    const gcode = await svgToGcodeController(loadedSvgContent, optimizeOrder, (progress, stageText) => {
+                        updateProgress(progress, stageText);
+                    });
+                    gcodeOutput.textContent = gcode;
+                    saveButton.disabled = gcode.trim() === '' || gcode.startsWith("Errore");
+                    statusMessage.textContent = gcode.startsWith("Errore") ? 'Conversione fallita.' : 'Conversione completata.';
+                    // updateProgress(100, gcode.startsWith("Errore") ? 'Errore' : 'Completato!'); // Già fatto da svgToGcodeController
+                    console.log("Fine conversione G-Code. Risultato:", gcode.startsWith("Errore") ? "Errore" : "Successo");
+                } catch (error) {
+                    console.error(`ERRORE CRITICO durante la conversione ${conversionTypeText}:`, error, error.stack);
+                    gcodeOutput.textContent = `Errore CRITICO durante la conversione: ${error.message}\nControlla la console per dettagli.`;
+                    statusMessage.textContent = 'Errore critico durante la conversione.';
+                    saveButton.disabled = true;
+                    updateProgress(100, 'Errore critico!');
+                } finally {
+                    convertButton.disabled = false;
+                    console.log("Blocco finally eseguito, bottone converti riabilitato.");
+                }
+            }, 10);
+        });
+        
+        saveButton.addEventListener('click', () => {
+            const gcodeText = gcodeOutput.textContent;
+            if (gcodeText && gcodeText !== 'Il G-Code apparirà qui...' && !gcodeText.startsWith("Errore")) {
+                const optimizeOrder = optimizePathOrderCheckbox.checked;
+                const fileNameSuffix = optimizeOrder ? '_optimized' : '_standard';
+                const blob = new Blob([gcodeText], { type: 'text/plain' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `${originalFileName}${fileNameSuffix}.gcode`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+                statusMessage.textContent = 'G-Code salvato.';
+            } else {
+                statusMessage.textContent = 'Nessun G-Code valido da salvare.';
+            }
+        });
+
+        function getTransformMatrix(transformAttr) {
+            let matrix = new DOMMatrix(); 
+            if (!transformAttr) return matrix;
+            const parts = transformAttr.match(/\w+\(.*?\)/g);
+            if (parts) {
+                parts.forEach(part => {
+                    const [type, valueString] = part.split(/[()]/);
+                    const values = valueString.split(/[\s,]+/).map(s => parseFloat(s.trim())).filter(n => !isNaN(n));
+                    
+                    if (type === "translate") {
+                        if (values.length >= 1) matrix = matrix.translate(values[0], values[1] || 0);
+                    } else if (type === "scale") {
+                        if (values.length >= 1) matrix = matrix.scale(values[0], values[1] || values[0]);
+                    } else if (type === "rotate") {
+                        if (values.length >= 1) {
+                            const angle = values[0]; 
+                            const cx = values.length >= 3 ? values[1] : 0; 
+                            const cy = values.length >= 3 ? values[2] : 0;
+                            if (cx !== 0 || cy !== 0) matrix = matrix.translate(cx, cy);
+                            matrix = matrix.rotate(angle);
+                            if (cx !== 0 || cy !== 0) matrix = matrix.translate(-cx, -cy);
+                        }
+                    }
+                });
+            }
+            return matrix;
+        }
+        
+        // Funzioni helper per Bezier (invariate)
+        function cubicBezierPoint(t, startX, startY, cp1x, cp1y, cp2x, cp2y, endX, endY) {
+            const mt = 1 - t;
+            const x = mt * mt * mt * startX + 3 * mt * mt * t * cp1x + 3 * mt * t * t * cp2x + t * t * t * endX;
+            const y = mt * mt * mt * startY + 3 * mt * mt * t * cp1y + 3 * mt * t * t * cp2y + t * t * t * endY;
+            return { x, y };
+        }
+
+        function quadraticBezierPoint(t, startX, startY, cpx, cpy, endX, endY) {
+            const mt = 1 - t;
+            const x = mt * mt * startX + 2 * mt * t * cpx + t * t * endX;
+            const y = mt * mt * startY + 2 * mt * t * cpy + t * t * endY;
+            return { x, y };
+        }
+
+
+        function parseSvgElementForGcode(svgElement, globalScale, feedRate, numCurveSegments) {
+            const tagName = svgElement.tagName.toLowerCase();
+            
+            const transformAttr = svgElement.getAttribute('transform');
+            const transformMatrix = getTransformMatrix(transformAttr);
+            
+            function transformPoint(x, y) {
+                let p = new DOMPoint(x, y).matrixTransform(transformMatrix);
+                return { x: p.x * globalScale, y: p.y * globalScale };
+            }
+
+            let gcodeSegments = [];
+            let startX_abs = NaN, startY_abs = NaN;
+            let endX_abs = NaN, endY_abs = NaN;
+            let localCurrentX = 0, localCurrentY = 0; // Coordinate relative al path/polyline prima della trasformazione
+
+            if (tagName === 'path') {
+                const d = svgElement.getAttribute('d');
+                if (!d) return null;
+                const commands = d.match(/[a-zA-Z][^a-zA-Z]*/g);
+                if (!commands) return null;
+
+                let subpathStartX_local = 0, subpathStartY_local = 0;
+                let lastControlX_local = 0, lastControlY_local = 0;
+
+                for (const commandStr of commands) {
+                    const type = commandStr[0];
+                    const rawArgs = commandStr.substring(1).trim().split(/[\s,]+/).filter(s => s !== "");
+                    let args = rawArgs.map(parseFloat); // NaN se non parsabile
+
+                    // Validazione argomenti più robusta
+                    let expectedArgs;
+                    switch (type.toUpperCase()) {
+                        case 'M': case 'L': case 'T': expectedArgs = 2; break;
+                        case 'H': case 'V': expectedArgs = 1; break;
+                        case 'S': case 'Q': expectedArgs = 4; break;
+                        case 'C': expectedArgs = 6; break;
+                        case 'A': expectedArgs = 7; break; // Non implementato, ma per completezza
+                        case 'Z': expectedArgs = 0; break;
+                        default: console.warn(`Comando path non riconosciuto: ${type}`); continue;
+                    }
+                    if (type.toUpperCase() !== 'Z' && (args.some(isNaN) || args.length % expectedArgs !== 0)) {
+                         console.warn(`Argomenti non validi o numero errato per il comando ${type} del path: ${commandStr.substring(1)}. Saltato. Got ${args.length}, expected multiple of ${expectedArgs}`, args);
+                        continue;
+                    }
+                    
+                    let startOfThisCommandX_local = localCurrentX; 
+                    let startOfThisCommandY_local = localCurrentY;
+
+                    for (let argIndex = 0; argIndex < (type.toUpperCase() === 'Z' ? 1 : args.length); argIndex += expectedArgs) {
+                        let currentArgs = type.toUpperCase() === 'Z' ? [] : args.slice(argIndex, argIndex + expectedArgs);
+
+                        switch (type) {
+                            case 'M': 
+                                localCurrentX = currentArgs[0]; localCurrentY = currentArgs[1];
+                                if (argIndex === 0) { // Solo il primo M/m imposta il subpath start
+                                    subpathStartX_local = localCurrentX; subpathStartY_local = localCurrentY;
+                                }
+                                if (isNaN(startX_abs)) { // Primo M di tutto il path imposta startX_abs
+                                    let tp = transformPoint(localCurrentX, localCurrentY);
+                                    startX_abs = tp.x; startY_abs = tp.y;
+                                } else if (argIndex > 0) { // M successivi sono trattati come L
+                                     let tp = transformPoint(localCurrentX, localCurrentY);
+                                     gcodeSegments.push(`G1 X${tp.x.toFixed(3)} Y${tp.y.toFixed(3)} F${feedRate.toFixed(0)}`);
+                                }
+                                break;
+                            case 'm':
+                                localCurrentX += currentArgs[0]; localCurrentY += currentArgs[1];
+                                if (argIndex === 0) {
+                                    subpathStartX_local = localCurrentX; subpathStartY_local = localCurrentY;
+                                }
+                                if (isNaN(startX_abs)) {
+                                    let tp = transformPoint(localCurrentX, localCurrentY);
+                                    startX_abs = tp.x; startY_abs = tp.y;
+                                } else if (argIndex > 0) {
+                                     let tp = transformPoint(localCurrentX, localCurrentY);
+                                     gcodeSegments.push(`G1 X${tp.x.toFixed(3)} Y${tp.y.toFixed(3)} F${feedRate.toFixed(0)}`);
+                                }
+                                break;
+                            case 'L':
+                                localCurrentX = currentArgs[0]; localCurrentY = currentArgs[1];
+                                let tpL = transformPoint(localCurrentX, localCurrentY);
+                                gcodeSegments.push(`G1 X${tpL.x.toFixed(3)} Y${tpL.y.toFixed(3)} F${feedRate.toFixed(0)}`);
+                                break;
+                            case 'l':
+                                localCurrentX += currentArgs[0]; localCurrentY += currentArgs[1];
+                                let tpl = transformPoint(localCurrentX, localCurrentY);
+                                gcodeSegments.push(`G1 X${tpl.x.toFixed(3)} Y${tpl.y.toFixed(3)} F${feedRate.toFixed(0)}`);
+                                break;
+                            case 'H':
+                                localCurrentX = currentArgs[0];
+                                let tpH = transformPoint(localCurrentX, localCurrentY);
+                                gcodeSegments.push(`G1 X${tpH.x.toFixed(3)} Y${tpH.y.toFixed(3)} F${feedRate.toFixed(0)}`);
+                                break;
+                            case 'h':
+                                localCurrentX += currentArgs[0];
+                                let tph = transformPoint(localCurrentX, localCurrentY);
+                                gcodeSegments.push(`G1 X${tph.x.toFixed(3)} Y${tph.y.toFixed(3)} F${feedRate.toFixed(0)}`);
+                                break;
+                            case 'V':
+                                localCurrentY = currentArgs[0];
+                                let tpV = transformPoint(localCurrentX, localCurrentY);
+                                gcodeSegments.push(`G1 X${tpV.x.toFixed(3)} Y${tpV.y.toFixed(3)} F${feedRate.toFixed(0)}`);
+                                break;
+                            case 'v':
+                                localCurrentY += currentArgs[0];
+                                let tpv = transformPoint(localCurrentX, localCurrentY);
+                                gcodeSegments.push(`G1 X${tpv.x.toFixed(3)} Y${tpv.y.toFixed(3)} F${feedRate.toFixed(0)}`);
+                                break;
+                            case 'C':
+                                const cp1x_C = currentArgs[0], cp1y_C = currentArgs[1];
+                                const cp2x_C = currentArgs[2], cp2y_C = currentArgs[3];
+                                const endX_C = currentArgs[4], endY_C = currentArgs[5];
+                                for (let k = 1; k <= numCurveSegments; k++) {
+                                    const T = k / numCurveSegments;
+                                    const p = cubicBezierPoint(T, startOfThisCommandX_local, startOfThisCommandY_local, cp1x_C, cp1y_C, cp2x_C, cp2y_C, endX_C, endY_C);
+                                    let tp = transformPoint(p.x, p.y);
+                                    gcodeSegments.push(`G1 X${tp.x.toFixed(3)} Y${tp.y.toFixed(3)} F${feedRate.toFixed(0)}`);
+                                }
+                                localCurrentX = endX_C; localCurrentY = endY_C;
+                                lastControlX_local = cp2x_C; lastControlY_local = cp2y_C;
+                                break;
+                            case 'c':
+                                const cp1x_c = startOfThisCommandX_local + currentArgs[0], cp1y_c = startOfThisCommandY_local + currentArgs[1];
+                                const cp2x_c = startOfThisCommandX_local + currentArgs[2], cp2y_c = startOfThisCommandY_local + currentArgs[3];
+                                const endX_c = startOfThisCommandX_local + currentArgs[4], endY_c = startOfThisCommandY_local + currentArgs[5];
+                                for (let k = 1; k <= numCurveSegments; k++) {
+                                    const T = k / numCurveSegments;
+                                    const p = cubicBezierPoint(T, startOfThisCommandX_local, startOfThisCommandY_local, cp1x_c, cp1y_c, cp2x_c, cp2y_c, endX_c, endY_c);
+                                    let tp = transformPoint(p.x, p.y);
+                                    gcodeSegments.push(`G1 X${tp.x.toFixed(3)} Y${tp.y.toFixed(3)} F${feedRate.toFixed(0)}`);
+                                }
+                                lastControlX_local = cp2x_c; lastControlY_local = cp2y_c; 
+                                localCurrentX = endX_c; localCurrentY = endY_c;
+                                break;
+                            case 'S':
+                                let cp1x_S, cp1y_S;
+                                const prevType = commands[commands.indexOf(commandStr)-1]?.[0]?.toUpperCase();
+                                if ('CS'.includes(prevType)) {
+                                    cp1x_S = 2 * startOfThisCommandX_local - lastControlX_local;
+                                    cp1y_S = 2 * startOfThisCommandY_local - lastControlY_local;
+                                } else {
+                                    cp1x_S = startOfThisCommandX_local; cp1y_S = startOfThisCommandY_local;
+                                }
+                                const cp2x_S = currentArgs[0], cp2y_S = currentArgs[1];
+                                const endX_S = currentArgs[2], endY_S = currentArgs[3];
+                                for (let k = 1; k <= numCurveSegments; k++) {
+                                    const T = k / numCurveSegments;
+                                    const p = cubicBezierPoint(T, startOfThisCommandX_local, startOfThisCommandY_local, cp1x_S, cp1y_S, cp2x_S, cp2y_S, endX_S, endY_S);
+                                    let tp = transformPoint(p.x, p.y);
+                                    gcodeSegments.push(`G1 X${tp.x.toFixed(3)} Y${tp.y.toFixed(3)} F${feedRate.toFixed(0)}`);
+                                }
+                                localCurrentX = endX_S; localCurrentY = endY_S;
+                                lastControlX_local = cp2x_S; lastControlY_local = cp2y_S;
+                                break;
+                            case 's':
+                                let cp1x_s, cp1y_s;
+                                const prevType_s = commands[commands.indexOf(commandStr)-1]?.[0]?.toUpperCase();
+                                if ('CS'.includes(prevType_s)) {
+                                    cp1x_s = 2 * startOfThisCommandX_local - lastControlX_local; 
+                                    cp1y_s = 2 * startOfThisCommandY_local - lastControlY_local;
+                                } else {
+                                    cp1x_s = startOfThisCommandX_local; cp1y_s = startOfThisCommandY_local;
+                                }
+                                const cp2x_s = startOfThisCommandX_local + currentArgs[0], cp2y_s = startOfThisCommandY_local + currentArgs[1];
+                                const endX_s = startOfThisCommandX_local + currentArgs[2], endY_s = startOfThisCommandY_local + currentArgs[3];
+                                for (let k = 1; k <= numCurveSegments; k++) {
+                                    const T = k / numCurveSegments;
+                                    const p = cubicBezierPoint(T, startOfThisCommandX_local, startOfThisCommandY_local, cp1x_s, cp1y_s, cp2x_s, cp2y_s, endX_s, endY_s);
+                                    let tp = transformPoint(p.x, p.y);
+                                    gcodeSegments.push(`G1 X${tp.x.toFixed(3)} Y${tp.y.toFixed(3)} F${feedRate.toFixed(0)}`);
+                                }
+                                lastControlX_local = cp2x_s; lastControlY_local = cp2y_s; 
+                                localCurrentX = endX_s; localCurrentY = endY_s;
+                                break;
+                            case 'Q':
+                                const cpx_Q = currentArgs[0], cpy_Q = currentArgs[1];
+                                const endX_Q = currentArgs[2], endY_Q = currentArgs[3];
+                                for (let k = 1; k <= numCurveSegments; k++) {
+                                    const T = k / numCurveSegments;
+                                    const p = quadraticBezierPoint(T, startOfThisCommandX_local, startOfThisCommandY_local, cpx_Q, cpy_Q, endX_Q, endY_Q);
+                                    let tp = transformPoint(p.x, p.y);
+                                    gcodeSegments.push(`G1 X${tp.x.toFixed(3)} Y${tp.y.toFixed(3)} F${feedRate.toFixed(0)}`);
+                                }
+                                localCurrentX = endX_Q; localCurrentY = endY_Q;
+                                lastControlX_local = cpx_Q; lastControlY_local = cpy_Q;
+                                break;
+                            case 'q':
+                                const cpx_q = startOfThisCommandX_local + currentArgs[0], cpy_q = startOfThisCommandY_local + currentArgs[1];
+                                const endX_q = startOfThisCommandX_local + currentArgs[2], endY_q = startOfThisCommandY_local + currentArgs[3];
+                                for (let k = 1; k <= numCurveSegments; k++) {
+                                    const T = k / numCurveSegments;
+                                    const p = quadraticBezierPoint(T, startOfThisCommandX_local, startOfThisCommandY_local, cpx_q, cpy_q, endX_q, endY_q);
+                                    let tp = transformPoint(p.x, p.y);
+                                    gcodeSegments.push(`G1 X${tp.x.toFixed(3)} Y${tp.y.toFixed(3)} F${feedRate.toFixed(0)}`);
+                                }
+                                lastControlX_local = cpx_q; lastControlY_local = cpy_q; 
+                                localCurrentX = endX_q; localCurrentY = endY_q;
+                                break;
+                            case 'T':
+                                let cpx_T, cpy_T;
+                                const prevType_T = commands[commands.indexOf(commandStr)-1]?.[0]?.toUpperCase();
+                                if ('QT'.includes(prevType_T)) {
+                                    cpx_T = 2 * startOfThisCommandX_local - lastControlX_local;
+                                    cpy_T = 2 * startOfThisCommandY_local - lastControlY_local;
+                                } else {
+                                    cpx_T = startOfThisCommandX_local; cpy_T = startOfThisCommandY_local;
+                                }
+                                const endX_T = currentArgs[0], endY_T = currentArgs[1];
+                                for (let k = 1; k <= numCurveSegments; k++) {
+                                    const T = k / numCurveSegments;
+                                    const p = quadraticBezierPoint(T, startOfThisCommandX_local, startOfThisCommandY_local, cpx_T, cpy_T, endX_T, endY_T);
+                                    let tp = transformPoint(p.x, p.y);
+                                    gcodeSegments.push(`G1 X${tp.x.toFixed(3)} Y${tp.y.toFixed(3)} F${feedRate.toFixed(0)}`);
+                                }
+                                localCurrentX = endX_T; localCurrentY = endY_T;
+                                lastControlX_local = cpx_T; lastControlY_local = cpy_T;
+                                break;
+                            case 't':
+                                let cpx_t, cpy_t;
+                                const prevType_t = commands[commands.indexOf(commandStr)-1]?.[0]?.toUpperCase();
+                                if ('QT'.includes(prevType_t)) {
+                                    cpx_t = 2 * startOfThisCommandX_local - lastControlX_local; 
+                                    cpy_t = 2 * startOfThisCommandY_local - lastControlY_local;
+                                } else {
+                                    cpx_t = startOfThisCommandX_local; cpy_t = startOfThisCommandY_local;
+                                }
+                                const endX_t = startOfThisCommandX_local + currentArgs[0], endY_t = startOfThisCommandY_local + currentArgs[1];
+                                for (let k = 1; k <= numCurveSegments; k++) {
+                                    const T = k / numCurveSegments;
+                                    const p = quadraticBezierPoint(T, startOfThisCommandX_local, startOfThisCommandY_local, cpx_t, cpy_t, endX_t, endY_t);
+                                    let tp = transformPoint(p.x, p.y);
+                                    gcodeSegments.push(`G1 X${tp.x.toFixed(3)} Y${tp.y.toFixed(3)} F${feedRate.toFixed(0)}`);
+                                }
+                                lastControlX_local = cpx_t; lastControlY_local = cpy_t; 
+                                localCurrentX = endX_t; localCurrentY = endY_t;
+                                break;
+                            case 'Z': case 'z':
+                                if (localCurrentX !== subpathStartX_local || localCurrentY !== subpathStartY_local) {
+                                     let tpZ = transformPoint(subpathStartX_local, subpathStartY_local);
+                                     gcodeSegments.push(`G1 X${tpZ.x.toFixed(3)} Y${tpZ.y.toFixed(3)} F${feedRate.toFixed(0)} ; Close path`);
+                                }
+                                localCurrentX = subpathStartX_local; localCurrentY = subpathStartY_local;
+                                break;
+                            default: // Già gestito all'inizio del ciclo comandi
+                        }
+                        // Dopo ogni sotto-comando (es. in un M x y x y), aggiorna startOfThisCommand per il prossimo (raro, ma per C,c,S,s,Q,q,T,t)
+                        startOfThisCommandX_local = localCurrentX;
+                        startOfThisCommandY_local = localCurrentY;
+                    }
+                }
+                let finalTransformedPointPath = transformPoint(localCurrentX, localCurrentY);
+                endX_abs = finalTransformedPointPath.x;
+                endY_abs = finalTransformedPointPath.y;
+
+            } else if (tagName === 'polyline') {
+                const pointsAttr = svgElement.getAttribute('points');
+                if (!pointsAttr) return null;
+                
+                const pointsArray = pointsAttr.trim().split(/[\s,]+/).map(parseFloat);
+                if (pointsArray.length < 2 || pointsArray.some(isNaN)) { 
+                    console.warn("Polyline con attributo points non valido o insufficiente:", pointsAttr, pointsArray);
+                    return null;
+                }
+
+                for (let i = 0; i < pointsArray.length; i += 2) {
+                    const x = pointsArray[i];
+                    const y = pointsArray[i+1];
+                    if (x === undefined || y === undefined || isNaN(x) || isNaN(y)) { // Dovrebbe essere già filtrato da .some(isNaN)
+                        console.warn("Coppia di coordinate non valida in polyline (dovrebbe essere impossibile):", pointsArray.slice(i, i+2));
+                        continue; 
+                    }
+
+                    localCurrentX = x; localCurrentY = y; // Aggiorna coordinate locali
+                    let tp = transformPoint(localCurrentX, localCurrentY);
+
+                    if (i === 0) { 
+                        startX_abs = tp.x;
+                        startY_abs = tp.y;
+                    } else { 
+                        gcodeSegments.push(`G1 X${tp.x.toFixed(3)} Y${tp.y.toFixed(3)} F${feedRate.toFixed(0)}`);
+                    }
+                    // L'ultimo punto valido imposta endX_abs/endY_abs
+                    endX_abs = tp.x; 
+                    endY_abs = tp.y;
+                }
+            } else {
+                return null; 
+            }
+
+            if (isNaN(startX_abs) || isNaN(startY_abs) || isNaN(endX_abs) || isNaN(endY_abs)) {
+                console.warn("Elemento scartato a causa di coordinate NaN finali:", svgElement.tagName, {startX_abs, startY_abs, endX_abs, endY_abs});
+                return null;
+            }
+            if (gcodeSegments.length === 0) {
+                // Se un path ha solo M, o una polyline un solo punto, startX/Y/endX/Y sono validi ma non c'è da tagliare.
+                // console.log("Elemento scartato perché non produce segmenti di taglio (es. punto singolo o solo M):", svgElement.tagName);
+                return null;
+            }
+
+            return {
+                startX: startX_abs,
+                startY: startY_abs,
+                endX: endX_abs,
+                endY: endY_abs,
+                gcodeSegments: gcodeSegments,
+                originalElement: svgElement 
+            };
+        }
+
+        async function svgToGcodeController(svgString, optimizeOrder, progressCallback) {
+            console.log("svgToGcodeController avviato. Ottimizzazione:", optimizeOrder);
+            const feedRate = parseFloat(feedRateInput.value);
+            const zSafe = parseFloat(zSafeInput.value);
+            const zDepth = parseFloat(zDepthInput.value);
+            const scale = parseFloat(scaleFactorInput.value);
+            const numCurveSegments = parseInt(curveSegmentsInput.value);
+
+            if (isNaN(feedRate) || isNaN(zSafe) || isNaN(zDepth) || isNaN(scale) || isNaN(numCurveSegments)) {
+                progressCallback(100, "Errore parametri");
+                console.error("Errore parametri macchina.");
+                return "Errore: Parametri macchina non validi.";
+            }
+
+            const parser = new DOMParser();
+            const svgDoc = parser.parseFromString(svgString, "image/svg+xml");
+            if (svgDoc.getElementsByTagName("parsererror").length > 0) {
+                progressCallback(100, "Errore parsing SVG");
+                console.error("Errore parsing SVG:", svgDoc.getElementsByTagName("parsererror")[0].textContent);
+                return "Errore: SVG malformato o non valido.";
+            }
+
+            const allElements = Array.from(svgDoc.querySelectorAll('path, polyline'));
+            if (allElements.length === 0) {
+                progressCallback(100, "Nessun path/polyline");
+                console.log("Nessun elemento path o polyline trovato.");
+                return "Nessun elemento <path> o <polyline> trovato nell'SVG.";
+            }
+            
+            console.log(`Trovati ${allElements.length} elementi (path/polyline).`);
+            let parsedElementsData = [];
+            const totalElementsToParse = allElements.length;
+            const parsingProgressEnd = optimizeOrder ? 35 : 90; 
+            const orderingProgressStart = 40; 
+            const orderingProgressEnd = 95;   
+
+            progressCallback(5, `Parsing elementi (0/${totalElementsToParse})`);
+
+            for (let i = 0; i < totalElementsToParse; i++) {
+                const svgEl = allElements[i];
+                const elementData = parseSvgElementForGcode(svgEl, scale, feedRate, numCurveSegments);
+                if (elementData) {
+                    parsedElementsData.push(elementData);
+                } else {
+                    // console.log("Elemento scartato da parseSvgElementForGcode:", svgEl.tagName, svgEl.getAttribute('d') || svgEl.getAttribute('points'));
+                }
+                if (i % Math.max(1, Math.floor(totalElementsToParse / 20)) === 0 || i === totalElementsToParse - 1) {
+                    const currentParsingProgress = 5 + (i + 1) / totalElementsToParse * (parsingProgressEnd - 5);
+                    progressCallback(currentParsingProgress, `Parsing elementi (${i+1}/${totalElementsToParse})`);
+                    if (totalElementsToParse > 20) await new Promise(resolve => setTimeout(resolve, 0)); // Non bloccare UI per file grandi
+                }
+            }
+            
+            console.log(`Elementi parsati validi: ${parsedElementsData.length} su ${totalElementsToParse}`);
+            if (parsedElementsData.length === 0) {
+                progressCallback(100, "Nessun elemento valido");
+                return "Nessun elemento <path> o <polyline> valido trovato o producibile in G-Code.";
+            }
+
+            let finalGcode = [];
+            finalGcode.push('G21 ; Imposta unità a mm');
+            finalGcode.push('G90 ; Posizionamento assoluto');
+            finalGcode.push('G17 ; Selezione piano XY');
+            finalGcode.push(`G0 Z${zSafe.toFixed(3)} ; Solleva a Z sicura iniziale`);
+            finalGcode.push('M3 S1000 ; Avvio mandrino (esempio)');
+
+            let currentToolX_GcodeGen = 0; // Usato per la generazione effettiva del G0 X Y
+            let currentToolY_GcodeGen = 0;
+            
+            let elementsToProcess = [...parsedElementsData]; 
+
+            if (optimizeOrder) {
+                console.log("Inizio ottimizzazione ordine...");
+                let optimizationToolX = 0; // Usato solo per calcolo distanze nell'ottimizzazione
+                let optimizationToolY = 0;
+                let remainingForOptimization = [...parsedElementsData]; // Lavora su una copia per l'ottimizzazione
+                const totalElementsToOrder = remainingForOptimization.length;
+                elementsToProcess = []; // La lista ordinata verrà ricostruita qui
+
+                progressCallback(orderingProgressStart, `Ottimizzazione ordine (0/${totalElementsToOrder})`);
+                let elementsOptimizedCount = 0;
+                let optimizationIterations = 0;
+
+                while (remainingForOptimization.length > 0) {
+                    optimizationIterations++;
+                    if (optimizationIterations > totalElementsToOrder * 2 && totalElementsToOrder > 0) { // Safety break
+                        console.error("POSSIBILE CICLO INFINITO IN OTTIMIZZAZIONE!", remainingForOptimization);
+                        progressCallback(100, "Errore: ciclo inf. ottim.");
+                        return "Errore: ciclo infinito durante l'ottimizzazione.";
+                    }
+
+                    let closestElement = null;
+                    let closestElementIndex = -1;
+                    let minDistanceSq = Infinity;
+
+                    for (let i = 0; i < remainingForOptimization.length; i++) {
+                        const el = remainingForOptimization[i];
+                        const dx = el.startX - optimizationToolX;
+                        const dy = el.startY - optimizationToolY;
+                        const distSq = dx * dx + dy * dy; 
+                        if (distSq < minDistanceSq) {
+                            minDistanceSq = distSq;
+                            closestElement = el;
+                            closestElementIndex = i;
+                        }
+                    }
+
+                    if (closestElement) {
+                        elementsToProcess.push(closestElement); // Aggiungi all'array ordinato
+                        optimizationToolX = closestElement.endX; 
+                        optimizationToolY = closestElement.endY;
+                        remainingForOptimization.splice(closestElementIndex, 1); 
+                        elementsOptimizedCount++;
+
+                        if (elementsOptimizedCount % Math.max(1, Math.floor(totalElementsToOrder / 20)) === 0 || elementsOptimizedCount === totalElementsToOrder) {
+                            const currentOrderingProgress = orderingProgressStart + (elementsOptimizedCount / totalElementsToOrder) * (orderingProgressEnd - orderingProgressStart);
+                            progressCallback(currentOrderingProgress, `Ottimizzazione ordine (${elementsOptimizedCount}/${totalElementsToOrder})`);
+                             if (totalElementsToOrder > 20) await new Promise(resolve => setTimeout(resolve, 0));
+                        }
+                    } else { 
+                        console.error("ERRORE OTTIMIZZAZIONE: Nessun closestElement trovato, ma remainingForOptimization non è vuoto!", remainingForOptimization);
+                        progressCallback(100, "Errore ottimizzazione");
+                        return "Errore: Fallimento nel trovare il prossimo elemento durante l'ottimizzazione.";
+                    }
+                }
+                 console.log("Fine ottimizzazione ordine.");
+            }
+            
+            const finalProcessingStageStart = optimizeOrder ? orderingProgressEnd : parsingProgressEnd;
+            progressCallback(finalProcessingStageStart, `Generazione G-Code (0/${elementsToProcess.length})`);
+            console.log(`Inizio generazione G-Code finale per ${elementsToProcess.length} elementi.`);
+
+            for (let i = 0; i < elementsToProcess.length; i++) {
+                const element = elementsToProcess[i];
+                finalGcode.push(`G0 X${element.startX.toFixed(3)} Y${element.startY.toFixed(3)}`);
+                finalGcode.push(`G1 Z${zDepth.toFixed(3)} F${(feedRate / 2).toFixed(0)}`);
+                finalGcode.push(...element.gcodeSegments);
+                finalGcode.push(`G0 Z${zSafe.toFixed(3)}`);
+                
+                currentToolX_GcodeGen = element.endX; 
+                currentToolY_GcodeGen = element.endY;
+
+                if (i % Math.max(1, Math.floor(elementsToProcess.length / 10)) === 0 || i === elementsToProcess.length - 1) {
+                     const currentGenerationProgress = finalProcessingStageStart + ((i + 1) / elementsToProcess.length) * (95 - finalProcessingStageStart);
+                     progressCallback(currentGenerationProgress, `Generazione G-Code (${i+1}/${elementsToProcess.length})`);
+                     if (elementsToProcess.length > 10) await new Promise(resolve => setTimeout(resolve, 0));
+                }
+            }
+
+            finalGcode.push('M5 ; Arresto mandrino');
+            finalGcode.push(`G0 X${currentToolX_GcodeGen.toFixed(3)} Y${currentToolY_GcodeGen.toFixed(3)} ; Ritorno all'ultima posizione X,Y`);
+            finalGcode.push(`G0 Z${zSafe.toFixed(3)} ; Assicura Z sicura`);
+            finalGcode.push('G0 X0 Y0 ; Ritorno a origine XY (opzionale)');
+            finalGcode.push('M2 ; Fine programma');
+            
+            progressCallback(100, 'G-Code generato!');
+            console.log("Generazione G-Code completata con successo.");
+            return finalGcode.join('\n');
+        }
+    </script>
+</body>
+</html>

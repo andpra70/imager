@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Da Foto a Stampa Punta Secca - Editor Avanzato</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: #f0f0f0;
+            color: #333;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin: 0;
+            padding: 2rem;
+            min-height: 100vh;
+        }
+        h1, h2 {
+            color: #1a1a1a;
+            text-align: center;
+        }
+        #main-container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 2rem;
+            justify-content: center;
+            width: 100%;
+            max-width: 1400px;
+        }
+        #controls-column {
+            flex: 1;
+            min-width: 320px;
+            max-width: 400px;
+        }
+        #output-column {
+            flex: 2;
+            min-width: 400px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .control-box {
+            background-color: #fff;
+            padding: 1.5rem;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            margin-bottom: 1rem;
+        }
+        .parameter-grid {
+            display: grid;
+            grid-template-columns: auto 1fr auto;
+            gap: 1rem;
+            align-items: center;
+        }
+        label {
+            font-weight: bold;
+        }
+        select, input, button {
+            padding: 0.5rem 1rem;
+            border-radius: 5px;
+            border: 1px solid #ccc;
+            font-size: 1rem;
+            box-sizing: border-box;
+            width: 100%;
+        }
+        input[type="range"] { padding: 0; }
+        input[type="checkbox"] { width: auto; }
+        input[type="color"] { padding: 0.2rem; height: 40px; }
+        .slider-value {
+            font-family: monospace;
+            min-width: 40px;
+            text-align: right;
+        }
+        .button-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem;
+            margin-top: 1rem;
+        }
+        #convertButton {
+            grid-column: 1 / -1;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        .save-btn { background-color: #28a745; }
+        .save-btn:hover { background-color: #218838; }
+        .save-svg-btn { background-color: #fd7e14; }
+        .save-svg-btn:hover { background-color: #e36400; }
+
+        button:disabled {
+            background-color: #aaa;
+            cursor: not-allowed;
+        }
+        #status {
+            margin-top: 1rem;
+            font-style: italic;
+            color: #555;
+            min-height: 20px;
+            text-align: center;
+        }
+        #canvas-output {
+            background-color: white;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+            border-radius: 4px;
+            max-width: 100%;
+            height: auto;
+        }
+        .hidden { display: none; }
+    </style>
+</head>
+<body>
+
+    <h1>Convertitore: da Fotografia a Stampa Punta Secca/Acquaforte</h1>
+
+    <div id="main-container">
+        <div id="controls-column">
+            <div class="control-box">
+                <h2>1. Carica Immagine</h2>
+                <input type="file" id="imageLoader" name="imageLoader" accept="image/*"/>
+            </div>
+
+            <div class="control-box">
+                <h2>2. Imposta Parametri</h2>
+                <label for="styleSelector">Preset:</label>
+                <select id="styleSelector">
+                    <option value="rembrandt">Rembrandt</option>
+                    <option value="moderno">Moderno</option>
+                    <option value="custom">Personalizzato</option>
+                </select>
+                <hr style="margin: 1.5rem 0;">
+                <div class="parameter-grid">
+                    <label for="paramAngolo">Angolo Etching</label>
+                    <input type="range" id="paramAngolo" min="0" max="180" step="5">
+                    <span class="slider-value" id="valAngolo">45°</span>
+
+                    <label for="paramLuminosita">Luminosità</label>
+                    <input type="range" id="paramLuminosita" min="0.5" max="1.5" step="0.05">
+                    <span class="slider-value" id="valLuminosita">1.1</span>
+
+                    <label for="paramContrasto">Contrasto</label>
+                    <input type="range" id="paramContrasto" min="1" max="2.5" step="0.1">
+                    <span class="slider-value" id="valContrasto">1.5</span>
+
+                    <label for="paramDensita">Densità Linee</label>
+                    <input type="range" id="paramDensita" min="1" max="10" step="1">
+                    <span class="slider-value" id="valDensita">5</span>
+                    
+                    <label for="paramIrregolarita">Irregolarità</label>
+                    <input type="range" id="paramIrregolarita" min="0.1" max="1" step="0.1">
+                    <span class="slider-value" id="valIrregolarita">0.8</span>
+
+                    <label for="paramAssorbimento">Assorbimento</label>
+                    <input type="range" id="paramAssorbimento" min="0" max="1" step="0.05">
+                    <span class="slider-value" id="valAssorbimento">0.3</span>
+
+                    <label for="paramInchiostro">Inchiostro</label>
+                    <input type="color" id="paramInchiostro" value="#3a2e2f">
+                    <span></span>
+
+                    <label for="paramPatina">Patina Antica</label>
+                    <input type="checkbox" id="paramPatina" checked>
+                    <span></span>
+                </div>
+            </div>
+
+            <div class="control-box">
+                <h2>3. Genera e Salva</h2>
+                <button id="convertButton" disabled>Converti</button>
+                <div class="button-grid">
+                    <button id="savePngButton" class="save-btn" disabled>Salva PNG</button>
+                    <button id="saveJpgButton" class="save-btn" disabled>Salva JPG</button>
+                    <button id="saveSvgButton" class="save-svg-btn" disabled>Salva SVG (Linee)</button>
+                </div>
+                <div id="status">Seleziona un'immagine per iniziare.</div>
+            </div>
+        </div>
+
+        <div id="output-column">
+             <h2>Risultato (Anteprima Raster)</h2>
+             <canvas id="canvas-output"></canvas>
+        </div>
+    </div>
+    
+    <canvas id="canvas-working" class="hidden"></canvas>
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    // === ELEMENTI DOM ===
+    const imageLoader = document.getElementById('imageLoader');
+    const convertButton = document.getElementById('convertButton');
+    const allSaveButtons = [
+        document.getElementById('savePngButton'),
+        document.getElementById('saveJpgButton'),
+        document.getElementById('saveSvgButton')
+    ];
+    const statusDiv = document.getElementById('status');
+    const styleSelector = document.getElementById('styleSelector');
+    
+    const workingCanvas = document.getElementById('canvas-working');
+    const workingCtx = workingCanvas.getContext('2d');
+    const outputCanvas = document.getElementById('canvas-output');
+    const outputCtx = outputCanvas.getContext('2d');
+
+    const controls = {
+        angolo: document.getElementById('paramAngolo'),
+        luminosita: document.getElementById('paramLuminosita'),
+        contrasto: document.getElementById('paramContrasto'),
+        densita: document.getElementById('paramDensita'),
+        irregolarita: document.getElementById('paramIrregolarita'),
+        assorbimento: document.getElementById('paramAssorbimento'),
+        inchiostro: document.getElementById('paramInchiostro'),
+        patina: document.getElementById('paramPatina'),
+    };
+    const values = {
+        angolo: document.getElementById('valAngolo'),
+        luminosita: document.getElementById('valLuminosita'),
+        contrasto: document.getElementById('valContrasto'),
+        densita: document.getElementById('valDensita'),
+        irregolarita: document.getElementById('valIrregolarita'),
+        assorbimento: document.getElementById('valAssorbimento'),
+    };
+
+    let originalImage = null;
+    let svgLineData = [];
+
+    // === PRESET ===
+    const presets = {
+        rembrandt: {
+            angolo: 45, luminosita: 1.1, contrasto: 1.5, densita: 5, irregolarita: 0.8,
+            assorbimento: 0.3, inchiostro: '#3a2e2f', patina: true,
+        },
+        moderno: {
+            angolo: 30, luminosita: 1.2, contrasto: 1.2, densita: 7, irregolarita: 0.4,
+            assorbimento: 0.1, inchiostro: '#202020', patina: false,
+        }
+    };
+
+    // === GESTORI EVENTI ===
+    imageLoader.addEventListener('change', e => {
+        const reader = new FileReader();
+        reader.onload = event => {
+            originalImage = new Image();
+            originalImage.onload = () => {
+                convertButton.disabled = false;
+                allSaveButtons.forEach(btn => btn.disabled = true);
+                statusDiv.textContent = 'Immagine caricata. Pronto per la conversione.';
+                const aspectRatio = originalImage.width / originalImage.height;
+                const previewWidth = Math.min(originalImage.width, 600);
+                outputCanvas.width = previewWidth;
+                outputCanvas.height = previewWidth / aspectRatio;
+                outputCtx.drawImage(originalImage, 0, 0, outputCanvas.width, outputCanvas.height);
+            };
+            originalImage.src = event.target.result;
+        };
+        reader.readAsDataURL(e.target.files[0]);
+    });
+
+    convertButton.addEventListener('click', () => {
+        if (!originalImage) return;
+        statusDiv.textContent = 'Conversione in corso...';
+        convertButton.disabled = true;
+        allSaveButtons.forEach(btn => btn.disabled = true);
+        
+        setTimeout(() => {
+            const config = getCurrentConfigFromUI();
+            const risultato = converti_foto_in_acquaforte(originalImage, config);
+            outputCanvas.width = risultato.width;
+            outputCanvas.height = risultato.height;
+            outputCtx.drawImage(risultato, 0, 0);
+            statusDiv.textContent = 'Conversione completata! Pronto per salvare.';
+            convertButton.disabled = false;
+            allSaveButtons.forEach(btn => btn.disabled = false);
+        }, 50);
+    });
+
+    allSaveButtons[0].addEventListener('click', () => saveCanvasAs('stampa.png', 'image/png'));
+    allSaveButtons[1].addEventListener('click', () => saveCanvasAs('stampa.jpg', 'image/jpeg', 0.9));
+    allSaveButtons[2].addEventListener('click', () => saveSvg());
+
+    styleSelector.addEventListener('change', () => {
+        if (styleSelector.value !== 'custom') applyPreset(styleSelector.value);
+    });
+
+    Object.keys(controls).forEach(key => {
+        controls[key].addEventListener('input', () => {
+            if (values[key]) {
+                const suffix = key === 'angolo' ? '°' : '';
+                values[key].textContent = controls[key].value + suffix;
+            }
+            styleSelector.value = 'custom';
+        });
+    });
+
+    // === FUNZIONI LOGICHE ===
+
+    function getCurrentConfigFromUI() {
+        const densitaBase = 12 - parseFloat(controls.densita.value);
+        return {
+            angolo: parseFloat(controls.angolo.value),
+            luminosita: parseFloat(controls.luminosita.value),
+            contrasto: parseFloat(controls.contrasto.value),
+            irregolarita: parseFloat(controls.irregolarita.value),
+            patina: controls.patina.checked,
+            inchiostro: controls.inchiostro.value,
+            assorbimento: parseFloat(controls.assorbimento.value),
+            cross_hatching_intenso: parseFloat(controls.contrasto.value) > 1.6,
+            spaziatura_scuri: Math.max(2, densitaBase - 2),
+            spaziatura_medi: Math.max(3, densitaBase),
+            spaziatura_chiari: Math.max(4, densitaBase + 3),
+        };
+    }
+    
+    function applyPreset(style) {
+        const config = presets[style];
+        for (const key in config) {
+            if (controls[key]) {
+                if (controls[key].type === 'checkbox') controls[key].checked = config[key];
+                else controls[key].value = config[key];
+                
+                if (values[key]) {
+                    const suffix = key === 'angolo' ? '°' : '';
+                    values[key].textContent = config[key] + suffix;
+                }
+            }
+        }
+    }
+    
+    applyPreset('rembrandt');
+
+    function saveCanvasAs(filename, mimeType, quality) {
+        let canvasToSave = outputCanvas;
+        if (mimeType === 'image/jpeg') {
+            const jpgCanvas = document.createElement('canvas');
+            jpgCanvas.width = outputCanvas.width;
+            jpgCanvas.height = outputCanvas.height;
+            const jpgCtx = jpgCanvas.getContext('2d');
+            jpgCtx.fillStyle = '#FFFFFF';
+            jpgCtx.fillRect(0, 0, jpgCanvas.width, jpgCanvas.height);
+            jpgCtx.drawImage(outputCanvas, 0, 0);
+            canvasToSave = jpgCanvas;
+        }
+        const link = document.createElement('a');
+        link.download = filename;
+        link.href = canvasToSave.toDataURL(mimeType, quality);
+        link.click();
+    }
+
+    function saveSvg() {
+        if (svgLineData.length === 0) return alert("Nessun dato vettoriale da salvare.");
+        statusDiv.textContent = 'Generazione SVG...';
+        setTimeout(() => {
+            const config = getCurrentConfigFromUI();
+            const svgString = generateSvgString(svgLineData, outputCanvas.width, outputCanvas.height, config);
+            const blob = new Blob([svgString], { type: 'image/svg+xml' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.download = 'stampa-linee.svg';
+            link.href = url;
+            link.click();
+            URL.revokeObjectURL(url);
+            statusDiv.textContent = 'File SVG salvato.';
+        }, 50);
+    }
+    
+    // ===============================================================================
+    // FUNZIONE DI CONVERSIONE PRINCIPALE
+    // ===============================================================================
+    function converti_foto_in_acquaforte(immagine_originale, config) {
+        svgLineData = [];
+        statusDiv.textContent = 'Fase 1: Preparazione...';
+        const MAX_DIM = 1200;
+        const scale = Math.min(1, MAX_DIM / immagine_originale.width, MAX_DIM / immagine_originale.height);
+        const width = Math.round(immagine_originale.width * scale);
+        const height = Math.round(immagine_originale.height * scale);
+        workingCanvas.width = width;
+        workingCanvas.height = height;
+
+        workingCtx.filter = `grayscale(1) contrast(${config.contrasto}) brightness(${config.luminosita})`;
+        workingCtx.drawImage(immagine_originale, 0, 0, width, height);
+        workingCtx.filter = 'none';
+        const immagineNitidaData = workingCtx.getImageData(0, 0, width, height);
+        
+        const finalCanvas = document.createElement('canvas');
+        finalCanvas.width = width;
+        finalCanvas.height = height;
+        const finalCtx = finalCanvas.getContext('2d');
+        crea_carta_stampa(finalCtx, width, height);
+
+        const linesCanvas = document.createElement('canvas');
+        linesCanvas.width = width;
+        linesCanvas.height = height;
+        const linesCtx = linesCanvas.getContext('2d');
+        linesCtx.fillStyle = config.inchiostro;
+        const pixels = immagineNitidaData.data;
+
+        statusDiv.textContent = 'Fase 4 & 5: Incisione (Hatching)...';
+
+        // Pre-calcolo valori trigonometrici per l'angolo principale e quello incrociato (+90°)
+        const angleRad = config.angolo * Math.PI / 180;
+        const cosA = Math.cos(angleRad);
+        const sinA = Math.sin(angleRad);
+        const crossAngleRad = angleRad + Math.PI / 2;
+        const cosCA = Math.cos(crossAngleRad);
+        const sinCA = Math.sin(crossAngleRad);
+
+        for (let y = 0; y < height; y++) {
+            for (let x = 0; x < width; x++) {
+                const i = (y * width + x) * 4;
+                const luminosita = pixels[i];
+
+                let densita_linee, spaziatura_linee, opacita;
+                
+                if (luminosita < 85) {
+                    densita_linee = 0.9; spaziatura_linee = config.spaziatura_scuri;
+                    opacita = (1 - luminosita / 85) * 0.7 + 0.3;
+                } else if (luminosita < 170) {
+                    densita_linee = 0.6; spaziatura_linee = config.spaziatura_medi;
+                    opacita = (1 - (luminosita - 85) / 85) * 0.5 + 0.1;
+                } else {
+                    densita_linee = 0.2; spaziatura_linee = config.spaziatura_chiari;
+                    opacita = (1 - (luminosita - 170) / 85) * 0.2;
+                }
+                
+                const finalOpacity = opacita * config.irregolarita;
+                linesCtx.globalAlpha = finalOpacity;
+
+                const roundedSpacing = Math.round(spaziatura_linee);
+                
+                // Hatching con angolo variabile
+                const hatchValue = y * cosA - x * sinA;
+                if (Math.random() < densita_linee && Math.abs(hatchValue % roundedSpacing) < 1) {
+                    linesCtx.fillRect(x, y, 1, 1);
+                    svgLineData.push({ x, y, opacity: finalOpacity });
+                }
+                
+                // Cross-Hatching (angolo + 90°)
+                const crossHatchValue = y * cosCA - x * sinCA;
+                if (luminosita < 40 && config.cross_hatching_intenso && Math.abs(crossHatchValue % roundedSpacing) < 1) {
+                    linesCtx.fillRect(x, y, 1, 1);
+                    svgLineData.push({ x, y, opacity: finalOpacity });
+                }
+            }
+        }
+
+        statusDiv.textContent = 'Fase 6-8: Finitura...';
+        finalCtx.globalAlpha = 1;
+        finalCtx.drawImage(linesCanvas, 0, 0);
+
+        if(config.assorbimento > 0){
+            finalCtx.filter = `blur(${config.assorbimento}px)`;
+            finalCtx.drawImage(finalCanvas, 0, 0);
+            finalCtx.filter = 'none';
+        }
+
+        if (config.patina) applica_invecchiamento(finalCtx, width, height);
+        
+        aggiungi_bordi_lastra(finalCtx, width, height);
+        return finalCanvas;
+    }
+
+    function generateSvgString(lineData, width, height, config) {
+        let svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" style="background-color: #fdfbf5;">\n`;
+        svg += `  <title>Stampa Acquaforte (Linee Vettoriali)</title>\n`;
+        svg += `  <g fill="${config.inchiostro}" shape-rendering="crispEdges">\n`;
+        let rects = lineData.map(p => 
+            `    <rect x="${p.x}" y="${p.y}" width="1" height="1" opacity="${p.opacity.toFixed(3)}"/>`
+        ).join('\n');
+        svg += rects;
+        svg += '\n  </g>\n</svg>';
+        return svg;
+    }
+
+    // === FUNZIONI AUSILIARIE (grafica) ===
+    function crea_carta_stampa(ctx, w, h) {
+        ctx.fillStyle = "#fdfbf5"; ctx.fillRect(0, 0, w, h);
+        const noise = ctx.createImageData(w, h); const d = noise.data;
+        for (let i = 0; i < d.length; i += 4) {
+            const v = (Math.random() - 0.5) * 20;
+            d[i]=240+v; d[i+1]=235+v; d[i+2]=225+v; d[i+3]=15;
+        }
+        ctx.putImageData(noise, 0, 0);
+    }
+    function applica_invecchiamento(ctx, w, h) {
+        ctx.globalAlpha = 0.15; ctx.fillStyle = '#a38d6d';
+        ctx.fillRect(0, 0, w, h); ctx.globalAlpha = 1.0;
+    }
+    function aggiungi_bordi_lastra(ctx, w, h) {
+        const p = Math.min(w, h) * 0.04;
+        ctx.save();
+        ctx.beginPath(); ctx.rect(p, p, w - p * 2, h - p * 2); ctx.clip();
+        const size = 2;
+        ctx.strokeStyle = 'rgba(0,0,0,0.2)'; ctx.lineWidth = size;
+        ctx.strokeRect(p, p, w - p * 2, h - p * 2);
+        ctx.strokeStyle = 'rgba(255,255,255,0.3)'; ctx.lineWidth = size;
+        ctx.strokeRect(p + size, p + size, w - p * 2 - size * 2, h - p * 2 - size * 2);
+        ctx.restore();
+    }
+});
+</script>
+
+</body>
+</html>

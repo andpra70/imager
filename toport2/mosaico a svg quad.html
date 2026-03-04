@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Generatore di Mosaici e SVG</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: #f0f2f5;
+            color: #333;
+            margin: 0;
+            padding: 2rem;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .container {
+            background-color: white;
+            padding: 2rem;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+            width: 100%;
+            max-width: 800px;
+        }
+        h1, h2 { text-align: center; }
+        h1 { color: #1a73e8; margin-top: 0; }
+        h2 { color: #333; border-bottom: 2px solid #eee; padding-bottom: 0.5rem; margin-top: 0; }
+        
+        .controls {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            margin-bottom: 2rem;
+            padding: 1.5rem;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+        }
+        .control-group { display: flex; flex-direction: column; }
+        label { font-weight: bold; margin-bottom: 0.5rem; color: #555; }
+        input, button, a.button {
+            padding: 0.75rem;
+            border-radius: 4px;
+            border: 1px solid #ccc;
+            font-size: 1rem;
+        }
+        button, a.button {
+            background-color: #1a73e8;
+            color: white;
+            border: none;
+            cursor: pointer;
+            font-weight: bold;
+            transition: background-color 0.2s;
+        }
+        button:hover, a.button:hover { background-color: #1558b3; }
+        button:disabled { background-color: #9e9e9e; cursor: not-allowed; }
+        #generateBtn { grid-column: 1 / -1; }
+        
+        .progress-container { display: none; margin-top: 1.5rem; text-align: center; }
+        progress { width: 100%; height: 25px; border-radius: 4px; }
+        
+        .outputs { display: grid; grid-template-columns: 1fr; gap: 2rem; margin-top: 2rem; }
+        .output-box { text-align: center; }
+        img, canvas, svg {
+            max-width: 100%;
+            height: auto;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            background-image: linear-gradient(45deg, #f9f9f9 25%, transparent 25%), linear-gradient(-45deg, #f9f9f9 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #f9f9f9 75%), linear-gradient(-45deg, transparent 75%, #f9f9f9 75%);
+            background-size: 20px 20px;
+            background-position: 0 0, 0 10px, 10px -10px, -10px 0px;
+        }
+        .palette-container { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; margin-top: 1rem; padding: 1rem; border: 1px solid #eee; border-radius: 4px; }
+        .color-box { width: 50px; height: 50px; border-radius: 4px; box-shadow: 0 2px 4px rgba(0,0,0,0.2); }
+        
+        .action-buttons { margin-top: 1rem; display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap; }
+        .action-buttons button, .action-buttons a { display: none; }
+        .action-buttons a.button { text-decoration: none; }
+        #saveBtn, #saveSvgBtn { background-color: #28a745; }
+        #saveBtn:hover, #saveSvgBtn:hover { background-color: #218838; }
+        #generateSvgBtn { background-color: #ff9800; }
+        #generateSvgBtn:hover { background-color: #fb8c00; }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h1>Generatore di Mosaici e SVG</h1>
+
+        <div class="controls">
+            <!-- Controlli esistenti -->
+            <div class="control-group">
+                <label for="imageInput">1. Scegli un'immagine</label>
+                <input type="file" id="imageInput" accept="image/*">
+            </div>
+            <div class="control-group">
+                <label for="numColors">2. Numero di colori (N)</label>
+                <input type="number" id="numColors" value="16" min="2" max="256">
+            </div>
+            <div class="control-group">
+                <label for="tileSize">3. Dimensione tassello (px)</label>
+                <input type="number" id="tileSize" value="10" min="2" max="50">
+            </div>
+            <button id="generateBtn">4. Genera Mosaico</button>
+        </div>
+
+        <div id="progressContainer" class="progress-container">
+            <p id="progressLabel">Elaborazione in corso...</p>
+            <progress id="progressBar" value="0" max="100"></progress>
+        </div>
+
+        <div class="outputs">
+            <div class="output-box" id="originalBox" style="display:none;">
+                <h2>Immagine Originale</h2>
+                <img id="originalImage" src="" alt="Immagine Originale">
+            </div>
+            <div class="output-box" id="resultBox" style="display:none;">
+                <h2>Palette e Mosaico</h2>
+                <div id="paletteContainer" class="palette-container"></div>
+                <canvas id="resultCanvas"></canvas>
+                <div class="action-buttons">
+                    <a id="saveBtn" href="#" download="mosaico.png" class="button">Salva Mosaico (PNG)</a>
+                    <button id="generateSvgBtn">Genera SVG Vettoriale</button>
+                </div>
+            </div>
+            <div class="output-box" id="svgBox" style="display:none;">
+                <h2>SVG Vettoriale (<span id="shapeCount">0</span> forme)</h2>
+                <div id="svgContainer"></div>
+                <div class="action-buttons">
+                     <a id="saveSvgBtn" href="#" download="mosaico.svg" class="button">Salva SVG</a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- SELETTORI DOM ---
+        const imageInput = document.getElementById('imageInput');
+        const numColorsInput = document.getElementById('numColors');
+        const tileSizeInput = document.getElementById('tileSize');
+        const generateBtn = document.getElementById('generateBtn');
+        const progressContainer = document.getElementById('progressContainer');
+        const progressBar = document.getElementById('progressBar');
+        const progressLabel = document.getElementById('progressLabel');
+        const originalBox = document.getElementById('originalBox');
+        const originalImage = document.getElementById('originalImage');
+        const resultBox = document.getElementById('resultBox');
+        const paletteContainer = document.getElementById('paletteContainer');
+        const resultCanvas = document.getElementById('resultCanvas');
+        const saveBtn = document.getElementById('saveBtn');
+        const generateSvgBtn = document.getElementById('generateSvgBtn');
+        const svgBox = document.getElementById('svgBox');
+        const svgContainer = document.getElementById('svgContainer');
+        const shapeCount = document.getElementById('shapeCount');
+        const saveSvgBtn = document.getElementById('saveSvgBtn');
+        let sourceImage = new Image();
+
+        // --- GESTIONE EVENTI ---
+
+        imageInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                    sourceImage.src = event.target.result;
+                    sourceImage.onload = () => {
+                        originalImage.src = sourceImage.src;
+                        originalBox.style.display = 'block';
+                        resultBox.style.display = 'none';
+                        svgBox.style.display = 'none';
+                    };
+                };
+                reader.readAsDataURL(file);
+            }
+        });
+
+        generateBtn.addEventListener('click', async () => {
+            if (!sourceImage.src) {
+                alert("Per favore, scegli prima un'immagine.");
+                return;
+            }
+            uiResetForGeneration();
+            
+            const numColors = parseInt(numColorsInput.value);
+            const tileSize = parseInt(tileSizeInput.value);
+
+            try {
+                updateProgress(0, "Fase 1/2: Estraggo la palette ottimale...");
+                const palette = await extractPalette(sourceImage, numColors);
+                displayPalette(palette);
+                
+                updateProgress(50, "Fase 2/2: Costruisco il mosaico...");
+                await drawMosaic(sourceImage, resultCanvas, palette, tileSize);
+
+                updateProgress(100, "Completato!");
+                resultBox.style.display = 'block';
+                saveBtn.style.display = 'block';
+                generateSvgBtn.style.display = 'block';
+                saveBtn.href = resultCanvas.toDataURL('image/png');
+
+            } catch (error) {
+                console.error("Errore durante la generazione del mosaico:", error);
+                alert("Si è verificato un errore. Controlla la console per i dettagli.");
+            } finally {
+                setTimeout(() => {
+                    progressContainer.style.display = 'none';
+                    generateBtn.disabled = false;
+                }, 1000);
+            }
+        });
+
+        generateSvgBtn.addEventListener('click', async () => {
+            generateSvgBtn.disabled = true;
+            generateSvgBtn.textContent = 'Elaborazione...';
+            svgBox.style.display = 'none';
+            saveSvgBtn.style.display = 'none';
+
+            try {
+                const tileSize = parseInt(tileSizeInput.value);
+                await generateSvgFromMosaic(resultCanvas, tileSize);
+                svgBox.style.display = 'block';
+                saveSvgBtn.style.display = 'block';
+            } catch (error) {
+                 console.error("Errore durante la generazione SVG:", error);
+                 alert("Si è verificato un errore durante la generazione SVG.");
+            } finally {
+                generateSvgBtn.disabled = false;
+                generateSvgBtn.textContent = 'Genera SVG Vettoriale';
+            }
+        });
+        
+        saveSvgBtn.addEventListener('click', () => {
+            const svgElement = svgContainer.querySelector('svg');
+            if (!svgElement) return;
+            const svgData = new XMLSerializer().serializeToString(svgElement);
+            const blob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            saveSvgBtn.href = url;
+            // La pulizia dell'URL non è strettamente necessaria con i browser moderni, ma è buona pratica
+            setTimeout(() => URL.revokeObjectURL(url), 100);
+        });
+
+        // --- FUNZIONI DI UI ---
+        
+        function uiResetForGeneration() {
+            generateBtn.disabled = true;
+            progressContainer.style.display = 'block';
+            progressBar.value = 0;
+            resultBox.style.display = 'none';
+            svgBox.style.display = 'none';
+            paletteContainer.innerHTML = '';
+        }
+
+        function updateProgress(value, label) {
+            progressBar.value = value;
+            progressLabel.textContent = label;
+        }
+
+        function displayPalette(palette) {
+            paletteContainer.innerHTML = '';
+            palette.forEach(color => {
+                const colorBox = document.createElement('div');
+                colorBox.className = 'color-box';
+                const rgb = `rgb(${color.r}, ${color.g}, ${color.b})`;
+                colorBox.style.backgroundColor = rgb;
+                colorBox.title = rgb;
+                paletteContainer.appendChild(colorBox);
+            });
+        }
+        
+        // --- LOGICA MOSAICO (invariata) ---
+        // (Ho omesso le funzioni `extractPalette`, `drawMosaic` e le loro utility per brevità, 
+        // ma devono essere presenti qui, esattamente come nella risposta precedente)
+        
+        // Copia e incolla qui le funzioni:
+        // - extractPalette(image, k)
+        // - drawMosaic(image, canvas, palette, tileSize)
+        // - colorDistance(c1, c2)
+        // - averageColor(pixels)
+        // - getAverageColorFromData(data)
+        // - areCentroidsEqual(centroids1, centroids2)
+        // Assicurati che siano presenti nel tuo script!
+        
+        // <FUNZIONI PRECEDENTI QUI>
+        function extractPalette(image, k) { return new Promise((resolve) => { const tempCanvas = document.createElement('canvas'); const tempCtx = tempCanvas.getContext('2d'); tempCanvas.width = image.width; tempCanvas.height = image.height; tempCtx.drawImage(image, 0, 0); const imageData = tempCtx.getImageData(0, 0, image.width, image.height).data; const pixels = []; const samplingRate = Math.max(1, Math.floor(Math.sqrt(imageData.length / 4 / 20000))); for (let i = 0; i < imageData.length; i += 4 * samplingRate) { pixels.push({ r: imageData[i], g: imageData[i + 1], b: imageData[i + 2] }); } let centroids = pixels.slice(0, k).map(() => pixels[Math.floor(Math.random() * pixels.length)]); const maxIterations = 20; let currentIteration = 0; function iterate() { const clusters = Array.from({ length: k }, () => []); for (const pixel of pixels) { let minDist = Infinity; let closestCentroidIndex = 0; for (let i = 0; i < centroids.length; i++) { const dist = colorDistance(pixel, centroids[i]); if (dist < minDist) { minDist = dist; closestCentroidIndex = i; } } clusters[closestCentroidIndex].push(pixel); } const newCentroids = []; for (let i = 0; i < k; i++) { if (clusters[i].length > 0) { newCentroids[i] = averageColor(clusters[i]); } else { newCentroids[i] = pixels[Math.floor(Math.random() * pixels.length)]; } } currentIteration++; const progress = (currentIteration / maxIterations) * 50; updateProgress(progress, `Fase 1/2: Ottimizzo palette (iterazione ${currentIteration}/${maxIterations})`); if (currentIteration >= maxIterations || areCentroidsEqual(centroids, newCentroids)) { resolve(newCentroids.map(c => ({ r: Math.round(c.r), g: Math.round(c.g), b: Math.round(c.b) }))); return; } centroids = newCentroids; setTimeout(iterate, 0); } iterate(); }); }
+        function drawMosaic(image, canvas, palette, tileSize) { return new Promise((resolve) => { canvas.width = image.width; canvas.height = image.height; const ctx = canvas.getContext('2d'); const tempCanvas = document.createElement('canvas'); tempCanvas.width = image.width; tempCanvas.height = image.height; const tempCtx = tempCanvas.getContext('2d'); tempCtx.drawImage(image, 0, 0); let y = 0; function drawRow() { for (let x = 0; x < image.width; x += tileSize) { const blockImageData = tempCtx.getImageData(x, y, Math.min(tileSize, image.width - x), Math.min(tileSize, image.height - y)).data; const avgColor = getAverageColorFromData(blockImageData); let closestColor = palette[0]; let minDistance = Infinity; for (const color of palette) { const distance = colorDistance(avgColor, color); if (distance < minDistance) { minDistance = distance; closestColor = color; } } ctx.fillStyle = `rgb(${closestColor.r}, ${closestColor.g}, ${closestColor.b})`; ctx.fillRect(x, y, tileSize, tileSize); } y += tileSize; const progress = 50 + (y / image.height) * 50; updateProgress(Math.min(100, progress), `Fase 2/2: Disegno il mosaico... (${Math.round(progress)}%)`); if (y < image.height) { setTimeout(drawRow, 0); } else { resolve(); } } drawRow(); }); }
+        function colorDistance(c1, c2) { return (c1.r - c2.r) ** 2 + (c1.g - c2.g) ** 2 + (c1.b - c2.b) ** 2; }
+        function averageColor(pixels) { const total = pixels.reduce((acc, pixel) => { acc.r += pixel.r; acc.g += pixel.g; acc.b += pixel.b; return acc; }, { r: 0, g: 0, b: 0 }); return { r: total.r / pixels.length, g: total.g / pixels.length, b: total.b / pixels.length }; }
+        function getAverageColorFromData(data) { let r = 0, g = 0, b = 0, count = 0; for (let i = 0; i < data.length; i += 4) { r += data[i]; g += data[i + 1]; b += data[i + 2]; count++; } return { r: r / count, g: g / count, b: b / count }; }
+        function areCentroidsEqual(centroids1, centroids2) { if (centroids1.length !== centroids2.length) return false; for(let i=0; i < centroids1.length; i++) { if(Math.round(centroids1[i].r) !== Math.round(centroids2[i].r) || Math.round(centroids1[i].g) !== Math.round(centroids2[i].g) || Math.round(centroids1[i].b) !== Math.round(centroids2[i].b)) { return false; } } return true; }
+        // </FUNZIONI PRECEDENTI QUI>
+
+
+        // --- NUOVA LOGICA SVG ---
+
+        /**
+         * Funzione principale per la generazione dell'SVG
+         * @param {HTMLCanvasElement} canvas - Il canvas del mosaico
+         * @param {number} tileSize - La dimensione del tassello
+         */
+        async function generateSvgFromMosaic(canvas, tileSize) {
+            // 1. Crea una griglia di dati dal canvas del mosaico
+            const tileGrid = createTileGrid(canvas, tileSize);
+            
+            // 2. Trova tutte le forme (componenti connesse)
+            const shapes = await findShapes(tileGrid);
+            
+            // 3. Renderizza le forme in un elemento SVG
+            renderSvg(shapes, tileGrid.width, tileGrid.height, tileSize, canvas.width, canvas.height);
+        }
+
+        /**
+         * Crea una griglia 2D di colori leggendo dal canvas del mosaico.
+         */
+        function createTileGrid(canvas, tileSize) {
+            const ctx = canvas.getContext('2d');
+            const gridWidth = Math.floor(canvas.width / tileSize);
+            const gridHeight = Math.floor(canvas.height / tileSize);
+            const grid = [];
+
+            for (let y = 0; y < gridHeight; y++) {
+                const row = [];
+                for (let x = 0; x < gridWidth; x++) {
+                    const px = x * tileSize;
+                    const py = y * tileSize;
+                    // Leggi un singolo pixel al centro del tassello per determinarne il colore
+                    const data = ctx.getImageData(px + tileSize / 2, py + tileSize / 2, 1, 1).data;
+                    row.push(`rgb(${data[0]}, ${data[1]}, ${data[2]})`);
+                }
+                grid.push(row);
+            }
+            return { grid, width: gridWidth, height: gridHeight };
+        }
+
+        /**
+         * Trova tutte le forme (componenti connesse) usando un algoritmo di Flood Fill (BFS).
+         * @returns {Promise<Array<{color: string, points: Set<string>}>>}
+         */
+        function findShapes({ grid, width, height }) {
+            return new Promise(resolve => {
+                const visited = new Set();
+                const shapes = [];
+                
+                for (let y = 0; y < height; y++) {
+                    for (let x = 0; x < width; x++) {
+                        const key = `${x},${y}`;
+                        if (visited.has(key)) continue;
+
+                        const color = grid[y][x];
+                        const points = new Set();
+                        const queue = [[x, y]];
+                        visited.add(key);
+                        
+                        // Flood fill (Breadth-First Search)
+                        while (queue.length > 0) {
+                            const [cx, cy] = queue.shift();
+                            points.add(`${cx},${cy}`);
+
+                            // Controlla i 4 vicini
+                            [[0, -1], [0, 1], [-1, 0], [1, 0]].forEach(([dx, dy]) => {
+                                const nx = cx + dx;
+                                const ny = cy + dy;
+                                const nKey = `${nx},${ny}`;
+
+                                if (nx >= 0 && nx < width && ny >= 0 && ny < height && !visited.has(nKey) && grid[ny][nx] === color) {
+                                    visited.add(nKey);
+                                    queue.push([nx, ny]);
+                                }
+                            });
+                        }
+                        shapes.push({ color, points });
+                    }
+                }
+                resolve(shapes);
+            });
+        }
+        
+        /**
+         * Per ogni forma, traccia il suo contorno e genera l'SVG finale.
+         */
+        function renderSvg(shapes, gridWidth, gridHeight, tileSize, finalWidth, finalHeight) {
+            let svgContent = `<svg width="${finalWidth}" height="${finalHeight}" xmlns="http://www.w3.org/2000/svg">`;
+
+            for (const shape of shapes) {
+                // Per ogni forma, trova tutti i suoi segmenti di bordo
+                const edges = new Map(); // "x,y -> x2,y2"
+                
+                for (const pointStr of shape.points) {
+                    const [x, y] = pointStr.split(',').map(Number);
+
+                    // Controlla i 4 vicini per trovare i bordi
+                    // Bordo SUPERIORE
+                    if (y === 0 || !shape.points.has(`${x},${y - 1}`)) {
+                        addEdge(edges, x * tileSize, y * tileSize, (x + 1) * tileSize, y * tileSize);
+                    }
+                    // Bordo INFERIORE
+                    if (y === gridHeight - 1 || !shape.points.has(`${x},${y + 1}`)) {
+                         addEdge(edges, x * tileSize, (y + 1) * tileSize, (x + 1) * tileSize, (y + 1) * tileSize);
+                    }
+                    // Bordo SINISTRO
+                    if (x === 0 || !shape.points.has(`${x - 1},${y}`)) {
+                        addEdge(edges, x * tileSize, y * tileSize, x * tileSize, (y + 1) * tileSize);
+                    }
+                    // Bordo DESTRO
+                    if (x === gridWidth - 1 || !shape.points.has(`${x + 1},${y}`)) {
+                        addEdge(edges, (x + 1) * tileSize, y * tileSize, (x + 1) * tileSize, (y + 1) * tileSize);
+                    }
+                }
+                
+                // Connetti i segmenti in un unico percorso
+                const pathData = buildPathFromEdges(edges);
+                svgContent += `<path d="${pathData}" fill="${shape.color}" stroke="${shape.color}" stroke-width="1" />`;
+            }
+
+            svgContent += `</svg>`;
+            svgContainer.innerHTML = svgContent;
+            shapeCount.textContent = shapes.length;
+        }
+
+        // --- UTILITY PER SVG ---
+        
+        // Aggiunge un segmento alla mappa di bordi. Se esiste un segmento inverso, lo cancella (per i bordi interni).
+        function addEdge(edges, x1, y1, x2, y2) {
+            const key1 = `${x1},${y1}`;
+            const key2 = `${x2},${y2}`;
+            // Se esiste il segmento inverso, rimuovilo e non aggiungere questo (si annullano a vicenda)
+            if (edges.get(key2) === key1) {
+                edges.delete(key2);
+            } else {
+                edges.set(key1, key2);
+            }
+        }
+        
+        // Costruisce la stringa del percorso SVG "d" partendo dai segmenti.
+        function buildPathFromEdges(edges) {
+            let path = '';
+            while (edges.size > 0) {
+                const [startKey, endKey] = edges.entries().next().value;
+                edges.delete(startKey);
+                
+                let [x, y] = startKey.split(',').map(Number);
+                path += ` M ${x} ${y}`;
+                
+                let currentKey = endKey;
+                while (currentKey) {
+                    [x, y] = currentKey.split(',').map(Number);
+                    path += ` L ${x} ${y}`;
+                    
+                    const nextKey = edges.get(currentKey);
+                    edges.delete(currentKey);
+                    currentKey = nextKey;
+                }
+                path += ' Z'; // Chiudi il percorso (forma)
+            }
+            return path;
+        }
+
+    </script>
+</body>
+</html>

@@ -1,0 +1,523 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Linify Completo</title>
+    <style>
+        :root {
+            --bg-color: #f8f9fa;
+            --container-bg: #ffffff;
+            --text-color: #343a40;
+            --primary-color: #007bff;
+            --border-color: #dee2e6;
+            --shadow-color: rgba(0,0,0,0.08);
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            justify-content: center;
+        }
+        #app {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px;
+            width: 100%;
+            max-width: 1200px;
+        }
+        .panel {
+            background: var(--container-bg);
+            padding: 25px;
+            border-radius: 12px;
+            box-shadow: 0 4px 20px var(--shadow-color);
+        }
+        #controls-panel {
+            flex: 1;
+            min-width: 300px;
+        }
+        #display-panel {
+            flex: 2;
+            min-width: 400px;
+            position: relative;
+        }
+        h1, h2 { color: #2c3e50; text-align: center; margin-top: 0; }
+        p.instructions { text-align: center; color: #7f8c8d; margin-bottom: 20px; }
+        
+        #drop-zone {
+            border: 3px dashed var(--border-color);
+            border-radius: 10px;
+            padding: 40px 20px;
+            text-align: center;
+            font-size: 1.2em;
+            color: #888;
+            cursor: pointer;
+            transition: background-color 0.3s, border-color 0.3s;
+        }
+        #drop-zone.dragover { background-color: #eaf2f8; border-color: var(--primary-color); }
+        
+        fieldset {
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 15px;
+            margin-top: 20px;
+        }
+        legend { font-weight: bold; color: var(--primary-color); padding: 0 10px; }
+        
+        .control-group {
+            display: grid;
+            grid-template-columns: 140px 1fr 50px;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+        .control-group label { font-size: 0.9em; }
+        .control-group input, .control-group select { width: 100%; }
+        .control-group .value-display { font-weight: bold; text-align: right; }
+        
+        #loader {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(255, 255, 255, 0.8);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.5em;
+            font-weight: bold;
+            color: #e67e22;
+            z-index: 10;
+        }
+        #svg-output { display: block; width: 100%; height: auto; }
+        
+        .button-group { display: grid; grid-template-columns: 1fr; gap: 10px; margin-top: 20px; }
+        .button-group.dual { grid-template-columns: 1fr 1fr; }
+        
+        button {
+            padding: 12px;
+            font-size: 1.1em;
+            font-weight: bold;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: background-color 0.3s, transform 0.1s;
+        }
+        button:active { transform: scale(0.98); }
+        
+        #redraw-btn { background-color: var(--primary-color); color: white; }
+        #redraw-btn:hover { background-color: #0069d9; }
+        #redraw-btn:disabled { background-color: #aaa; cursor: not-allowed; }
+        
+        .save-btn { background-color: #27ae60; color: white; }
+        .save-btn:hover { background-color: #229954; }
+        
+        #file-input { display: none; }
+    </style>
+</head>
+<body>
+
+    <div id="app">
+        <div id="controls-panel" class="panel">
+            <h1>Linify Completo</h1>
+            <div id="drop-zone"><span id="drop-zone-text">Trascina un'immagine qui</span></div>
+            <input type="file" id="file-input" accept="image/*">
+            
+            <div id="controls" style="display: none;">
+                <fieldset>
+                    <legend>Stile Linee</legend>
+                    <div class="control-group">
+                        <label for="lines">Numero Linee</label>
+                        <input type="range" id="lines" min="100" max="10000" value="1500" step="100">
+                        <span class="value-display" id="lines-value">1500</span>
+                    </div>
+                    <div class="control-group">
+                        <label for="strokeWidth">Spessore</label>
+                        <input type="range" id="strokeWidth" min="0.1" max="5" value="0.8" step="0.1">
+                        <span class="value-display" id="strokeWidth-value">0.8</span>
+                    </div>
+                    <div class="control-group">
+                        <label for="opacity">Opacità</label>
+                        <input type="range" id="opacity" min="0.1" max="1" value="1" step="0.05">
+                        <span class="value-display" id="opacity-value">1.0</span>
+                    </div>
+                    <div class="control-group">
+                        <label for="lineColor">Colore Linea</label>
+                        <input type="color" id="lineColor" value="#000000">
+                        <span></span>
+                    </div>
+                     <div class="control-group">
+                        <label for="bgColor">Colore Sfondo</label>
+                        <input type="color" id="bgColor" value="#ffffff">
+                        <span></span>
+                    </div>
+                </fieldset>
+
+                <fieldset>
+                    <legend>Avanzate</legend>
+                    <div class="control-group">
+                        <label for="pointPlacement">Inizio Linee</label>
+                        <select id="pointPlacement">
+                            <option value="dark" selected>Aree scure</option>
+                            <option value="light">Aree chiare</option>
+                            <option value="edge">Contrasto (bordi)</option>
+                            <option value="even">Uniforme</option>
+                        </select>
+                        <span></span>
+                    </div>
+                     <div class="control-group">
+                        <label for="direction">Direzione</label>
+                        <select id="direction">
+                            <option value="omni" selected>Omnidirezionale</option>
+                            <option value="vertical">Verticale</option>
+                            <option value="horizontal">Orizzontale</option>
+                        </select>
+                        <span></span>
+                    </div>
+                    <div class="control-group">
+                        <label for="resolution">Risoluzione</label>
+                        <input type="range" id="resolution" min="0.2" max="1" value="1" step="0.1">
+                        <span class="value-display" id="resolution-value">1.0</span>
+                    </div>
+                </fieldset>
+
+                <div class="button-group">
+                    <button id="redraw-btn">Ridisegna</button>
+                </div>
+                <div class="button-group dual">
+                    <button class="save-btn" id="save-svg-btn">Salva SVG</button>
+                    <button class="save-btn" id="save-png-btn">Salva PNG</button>
+                </div>
+            </div>
+        </div>
+        <div id="display-panel" class="panel">
+            <p class="instructions">L'immagine elaborata apparirà qui.</p>
+            <div id="loader">Elaborazione...</div>
+            <svg id="svg-output" xmlns="http://www.w3.org/2000/svg" version="1.1"></svg>
+        </div>
+    </div>
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    // --- Selezione Elementi DOM ---
+    const dropZone = document.getElementById('drop-zone');
+    const dropZoneText = document.getElementById('drop-zone-text');
+    const fileInput = document.getElementById('file-input');
+    const controls = document.getElementById('controls');
+    const loader = document.getElementById('loader');
+    const svgOutput = document.getElementById('svg-output');
+    const redrawBtn = document.getElementById('redraw-btn');
+    const saveSvgBtn = document.getElementById('save-svg-btn');
+    const savePngBtn = document.getElementById('save-png-btn');
+    const displayPanelInstructions = document.querySelector('#display-panel .instructions');
+
+    // --- Oggetto di Configurazione ---
+    let config = {};
+    const controlElements = {
+        lines: document.getElementById('lines'),
+        strokeWidth: document.getElementById('strokeWidth'),
+        opacity: document.getElementById('opacity'),
+        lineColor: document.getElementById('lineColor'),
+        bgColor: document.getElementById('bgColor'),
+        pointPlacement: document.getElementById('pointPlacement'),
+        direction: document.getElementById('direction'),
+        resolution: document.getElementById('resolution'),
+    };
+    
+    // --- Variabili di Stato ---
+    let imageDataSource = null; // Mappa di luminosità
+    let imageWidth = 0, imageHeight = 0;
+    let originalImage = null; // L'immagine originale caricata
+
+    // --- Inizializzazione e Gestione Eventi ---
+    function initialize() {
+        setupEventListeners();
+        updateConfigFromUI();
+    }
+
+    function setupEventListeners() {
+        dropZone.addEventListener('click', () => fileInput.click());
+        fileInput.addEventListener('change', e => handleFiles(e.target.files));
+        ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+            dropZone.addEventListener(eventName, preventDefaults);
+        });
+        dropZone.addEventListener('dragover', () => dropZone.classList.add('dragover'));
+        dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+        dropZone.addEventListener('drop', e => {
+            dropZone.classList.remove('dragover');
+            handleFiles(e.dataTransfer.files);
+        });
+
+        // Aggiorna la configurazione al cambio dei controlli
+        Object.values(controlElements).forEach(el => {
+            el.addEventListener('input', () => {
+                updateConfigFromUI();
+                updateValueDisplays();
+            });
+        });
+
+        redrawBtn.addEventListener('click', () => {
+             if (originalImage) processAndDraw();
+        });
+
+        saveSvgBtn.addEventListener('click', saveSVG);
+        savePngBtn.addEventListener('click', savePNG);
+    }
+    
+    function preventDefaults(e) {
+        e.preventDefault();
+        e.stopPropagation();
+    }
+
+    function updateConfigFromUI() {
+        for (const key in controlElements) {
+            config[key] = controlElements[key].type === 'color' || controlElements[key].tagName === 'SELECT'
+                ? controlElements[key].value
+                : parseFloat(controlElements[key].value);
+        }
+    }
+    
+    function updateValueDisplays() {
+        document.getElementById('lines-value').textContent = config.lines;
+        document.getElementById('strokeWidth-value').textContent = config.strokeWidth.toFixed(1);
+        document.getElementById('opacity-value').textContent = config.opacity.toFixed(2);
+        document.getElementById('resolution-value').textContent = config.resolution.toFixed(1);
+    }
+
+    // --- Logica di Elaborazione Immagine ---
+    function handleFiles(files) {
+        if (!files.length || !files[0].type.startsWith('image/')) return;
+        const reader = new FileReader();
+        reader.onload = e => {
+            originalImage = new Image();
+            originalImage.onload = () => {
+                controls.style.display = 'block';
+                dropZoneText.textContent = 'Trascina un\'altra immagine';
+                displayPanelInstructions.style.display = 'none';
+                processAndDraw();
+            };
+            originalImage.src = e.target.result;
+        };
+        reader.readAsDataURL(files[0]);
+    }
+    
+    function processAndDraw() {
+        if (!originalImage) return;
+        showLoader(true);
+        redrawBtn.disabled = true;
+
+        // Processa l'immagine e poi disegna, tutto in un unico flusso asincrono
+        requestAnimationFrame(() => {
+            processImage(originalImage);
+            drawLinifiedArt();
+            showLoader(false);
+            redrawBtn.disabled = false;
+        });
+    }
+
+    function processImage(img) {
+        imageWidth = Math.round(img.width * config.resolution);
+        imageHeight = Math.round(img.height * config.resolution);
+        
+        const canvas = document.createElement('canvas');
+        canvas.width = imageWidth;
+        canvas.height = imageHeight;
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        
+        ctx.drawImage(img, 0, 0, imageWidth, imageHeight);
+        const imageData = ctx.getImageData(0, 0, imageWidth, imageHeight).data;
+        
+        imageDataSource = new Float32Array(imageWidth * imageHeight);
+        const edgeData = (config.pointPlacement === 'edge') ? new Float32Array(imageWidth * imageHeight) : null;
+
+        for (let y = 0; y < imageHeight; y++) {
+            for (let x = 0; x < imageWidth; x++) {
+                const i = (y * imageWidth + x) * 4;
+                const r = imageData[i], g = imageData[i + 1], b = imageData[i + 2];
+                const brightness = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+                imageDataSource[y * imageWidth + x] = 1 - brightness; // 1 = scuro, 0 = chiaro
+
+                // Calcola il gradiente per il rilevamento dei bordi (Sobel-like)
+                if (edgeData) {
+                    const getBrightness = (x, y) => 1 - imageDataSource[y * imageWidth + x];
+                    const gx = (getBrightness(x+1, y) || 0) - (getBrightness(x-1, y) || 0);
+                    const gy = (getBrightness(x, y+1) || 0) - (getBrightness(x, y-1) || 0);
+                    edgeData[y * imageWidth + x] = Math.sqrt(gx*gx + gy*gy);
+                }
+            }
+        }
+        if (edgeData) imageDataSource = edgeData; // Sostituisci la mappa di luminosità con quella dei bordi
+    }
+
+    function drawLinifiedArt() {
+        svgOutput.innerHTML = '';
+        svgOutput.setAttribute('viewBox', `0 0 ${imageWidth} ${imageHeight}`);
+        svgOutput.style.backgroundColor = config.bgColor;
+        
+        const pointGrid = new Uint8Array(imageWidth * imageHeight);
+
+        for (let i = 0; i < config.lines; i++) {
+            const startPoint = findStartPoint(pointGrid);
+            if (!startPoint) continue;
+
+            let { x: currentX, y: currentY } = startPoint;
+            let pathData = `M ${currentX.toFixed(2)} ${currentY.toFixed(2)}`;
+            let lineLength = 0;
+            let lastAngle = Math.random() * 2 * Math.PI;
+
+            for (let j = 0; j < 250; j++) {
+                const ix = Math.round(currentX);
+                const iy = Math.round(currentY);
+                if (ix >= 0 && ix < imageWidth && iy >=0 && iy < imageHeight) {
+                    pointGrid[iy * imageWidth + ix] = 1;
+                }
+
+                const nextPoint = findNextPoint(currentX, currentY, lastAngle, pointGrid);
+                if (nextPoint) {
+                    currentX = nextPoint.x;
+                    currentY = nextPoint.y;
+                    pathData += ` L ${currentX.toFixed(2)} ${currentY.toFixed(2)}`;
+                    lastAngle = nextPoint.angle;
+                    lineLength++;
+                } else {
+                    break;
+                }
+            }
+
+            if (lineLength > 2) {
+                const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+                path.setAttribute('d', pathData);
+                path.setAttribute('stroke', config.lineColor);
+                path.setAttribute('stroke-width', config.strokeWidth);
+                path.setAttribute('stroke-opacity', config.opacity);
+                path.setAttribute('fill', 'none');
+                path.setAttribute('stroke-linecap', 'round');
+                svgOutput.appendChild(path);
+            }
+        }
+    }
+
+    function findStartPoint(grid) {
+        let attempts = 0;
+        while (attempts < 500) {
+            const x = Math.floor(Math.random() * imageWidth);
+            const y = Math.floor(Math.random() * imageHeight);
+            const index = y * imageWidth + x;
+
+            if (grid[index]) {
+                attempts++;
+                continue;
+            }
+            
+            const brightness = imageDataSource[index];
+            const placement = config.pointPlacement;
+
+            if ( (placement === 'dark' && brightness > 0.6) ||
+                 (placement === 'light' && brightness < 0.4) ||
+                 (placement === 'edge' && brightness > 0.2) ||
+                 (placement === 'even') ) {
+                return { x, y };
+            }
+            attempts++;
+        }
+        return null;
+    }
+
+    function findNextPoint(cx, cy, prevAngle, grid) {
+        const searchRadius = 15;
+        let angleRange, baseAngle;
+
+        switch (config.direction) {
+            case 'vertical':
+                baseAngle = Math.PI / 2; // 90 gradi
+                angleRange = Math.PI / 4; // Cerca in un cono di 45 gradi verso l'alto o il basso
+                prevAngle = (Math.random() > 0.5) ? baseAngle : -baseAngle;
+                break;
+            case 'horizontal':
+                baseAngle = 0; // 0 gradi
+                angleRange = Math.PI / 4; // Cerca in un cono di 45 gradi verso sx o dx
+                prevAngle = (Math.random() > 0.5) ? baseAngle : Math.PI;
+                break;
+            default: // omni
+                angleRange = Math.PI / 1.5; // Cerca in un cono di 120 gradi
+                break;
+        }
+
+        let bestPoint = null;
+        let maxBrightness = 0.05;
+
+        for (let angleOffset = -angleRange / 2; angleOffset <= angleRange / 2; angleOffset += Math.PI / 16) {
+            const currentAngle = prevAngle + angleOffset;
+            for (let r = 2; r < searchRadius; r++) {
+                const nx = cx + r * Math.cos(currentAngle);
+                const ny = cy + r * Math.sin(currentAngle);
+                const ix = Math.round(nx), iy = Math.round(ny);
+
+                if (ix < 0 || ix >= imageWidth || iy < 0 || iy >= imageHeight) continue;
+                
+                const index = iy * imageWidth + ix;
+                if (!grid[index]) {
+                    const brightness = imageDataSource[index];
+                    if (brightness > maxBrightness) {
+                        maxBrightness = brightness;
+                        bestPoint = { x: nx, y: ny, angle: currentAngle, brightness: brightness };
+                    }
+                }
+            }
+        }
+        
+        return bestPoint;
+    }
+
+    function showLoader(visible) {
+        loader.style.display = visible ? 'flex' : 'none';
+    }
+
+    // --- Funzioni di Salvataggio ---
+    function saveSVG() {
+        const svgData = new XMLSerializer().serializeToString(svgOutput);
+        const blob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
+        triggerDownload(blob, 'linify_art.svg');
+    }
+
+    function savePNG() {
+        const svgData = new XMLSerializer().serializeToString(svgOutput);
+        const img = new Image();
+        const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
+        const url = URL.createObjectURL(svgBlob);
+
+        img.onload = () => {
+            const canvas = document.createElement('canvas');
+            // Salva a risoluzione piena, non quella di elaborazione
+            canvas.width = originalImage.width;
+            canvas.height = originalImage.height;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+            URL.revokeObjectURL(url);
+            
+            canvas.toBlob((pngBlob) => {
+                triggerDownload(pngBlob, 'linify_art.png');
+            }, 'image/png');
+        };
+        img.src = url;
+    }
+
+    function triggerDownload(blob, filename) {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    }
+    
+    // Avvia l'applicazione
+    initialize();
+});
+</script>
+
+</body>
+</html>

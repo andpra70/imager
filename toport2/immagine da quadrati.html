@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Algoritmo Single-Line Painters</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+            background-color: #f0f2f5;
+            color: #333;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        h1 {
+            color: #1e3a8a;
+        }
+        .container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px;
+            width: 100%;
+            max-width: 1200px;
+        }
+        .panel {
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        #controls-panel {
+            flex: 1;
+            min-width: 280px;
+        }
+        #canvas-container {
+            flex: 3;
+            display: flex;
+            gap: 20px;
+            flex-wrap: wrap;
+        }
+        .canvas-wrapper {
+            flex: 1;
+            min-width: 300px;
+            text-align: center;
+        }
+        canvas {
+            border: 1px solid #ccc;
+            background-color: #fff;
+            max-width: 100%;
+            height: auto;
+            border-radius: 4px;
+        }
+        .control-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        input[type="file"], input[type="number"], input[type="color"], input[type="range"] {
+            width: 100%;
+            padding: 8px;
+            box-sizing: border-box;
+            border-radius: 4px;
+            border: 1px solid #ccc;
+        }
+        button {
+            width: 100%;
+            padding: 12px;
+            background-color: #2563eb;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        button:hover:not(:disabled) {
+            background-color: #1d4ed8;
+        }
+        button:disabled {
+            background-color: #9ca3af;
+            cursor: not-allowed;
+        }
+        #progress-container {
+            width: 100%;
+            background-color: #e5e7eb;
+            border-radius: 8px;
+            margin-top: 15px;
+            overflow: hidden;
+            display: none; /* Inizialmente nascosto */
+        }
+        #progress-bar {
+            width: 0%;
+            height: 20px;
+            background-color: #34d399;
+            text-align: center;
+            line-height: 20px;
+            color: white;
+            transition: width 0.2s;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>Algoritmo Single-Line Painters</h1>
+    <p>Copia un'immagine utilizzando una singola linea continua che si muove preferibilmente nelle aree scure.</p>
+
+    <div class="container">
+        <div id="controls-panel" class="panel">
+            <h2>Parametri</h2>
+            
+            <div class="control-group">
+                <label for="imageLoader">1. Carica Immagine</label>
+                <input type="file" id="imageLoader" accept="image/*">
+            </div>
+
+            <div class="control-group">
+                <label for="thresholdSlider">2. Soglia Luminosità (0-255)</label>
+                <input type="range" id="thresholdSlider" min="0" max="255" value="128">
+                <span id="thresholdValue">128</span>
+            </div>
+
+            <div class="control-group">
+                <label for="lineWidthInput">Spessore Linea (px)</label>
+                <input type="number" id="lineWidthInput" value="1" min="1" max="20">
+            </div>
+
+            <div class="control-group">
+                <label for="lineColorPicker">Colore Linea</label>
+                <input type="color" id="lineColorPicker" value="#000000">
+            </div>
+
+            <button id="startButton" disabled>Avvia Algoritmo</button>
+            <div id="progress-container">
+                <div id="progress-bar">0%</div>
+            </div>
+            <br>
+            <button id="saveButton" disabled>Salva Immagine Generata</button>
+        </div>
+
+        <div id="canvas-container" class="panel">
+            <div class="canvas-wrapper">
+                <h2>Originale</h2>
+                <canvas id="originalCanvas" width="400" height="300"></canvas>
+            </div>
+            <div class="canvas-wrapper">
+                <h2>Generata</h2>
+                <canvas id="generatedCanvas" width="400" height="300"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <script>
+    // === ELEMENTI DEL DOM ===
+    const imageLoader = document.getElementById('imageLoader');
+    const startButton = document.getElementById('startButton');
+    const saveButton = document.getElementById('saveButton');
+    const thresholdSlider = document.getElementById('thresholdSlider');
+    const thresholdValue = document.getElementById('thresholdValue');
+    const lineWidthInput = document.getElementById('lineWidthInput');
+    const lineColorPicker = document.getElementById('lineColorPicker');
+    const progressContainer = document.getElementById('progress-container');
+    const progressBar = document.getElementById('progress-bar');
+    
+    const originalCanvas = document.getElementById('originalCanvas');
+    const generatedCanvas = document.getElementById('generatedCanvas');
+    const originalCtx = originalCanvas.getContext('2d');
+    const generatedCtx = generatedCanvas.getContext('2d');
+
+    // === STATO DELL'APPLICAZIONE ===
+    let isAlgorithmRunning = false;
+    let originalImageData = null;
+
+    // === EVENT LISTENERS ===
+    thresholdSlider.addEventListener('input', (e) => {
+        thresholdValue.textContent = e.target.value;
+    });
+
+    imageLoader.addEventListener('change', handleImageUpload);
+    startButton.addEventListener('click', runAlgorithm);
+    saveButton.addEventListener('click', saveImage);
+    
+    // Scrive un testo di default sui canvas
+    function drawDefaultText(ctx, width, height) {
+        ctx.fillStyle = "#f0f2f5";
+        ctx.fillRect(0, 0, width, height);
+        ctx.fillStyle = "#666";
+        ctx.font = "16px sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText("Carica un'immagine per iniziare", width / 2, height / 2);
+    }
+    drawDefaultText(originalCtx, originalCanvas.width, originalCanvas.height);
+    drawDefaultText(generatedCtx, generatedCanvas.width, generatedCanvas.height);
+
+
+    // === FUNZIONI PRINCIPALI ===
+
+    function handleImageUpload(e) {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = function(event) {
+            const img = new Image();
+            img.onload = function() {
+                // Ridimensiona i canvas in base all'immagine, con un limite
+                const MAX_WIDTH = 500;
+                const scale = Math.min(1, MAX_WIDTH / img.width);
+                const width = img.width * scale;
+                const height = img.height * scale;
+
+                originalCanvas.width = generatedCanvas.width = width;
+                originalCanvas.height = generatedCanvas.height = height;
+                
+                // Disegna l'immagine originale
+                originalCtx.drawImage(img, 0, 0, width, height);
+                // Salva i dati dell'immagine
+                originalImageData = originalCtx.getImageData(0, 0, width, height);
+
+                // Pulisci il canvas generato
+                generatedCtx.fillStyle = "white";
+                generatedCtx.fillRect(0, 0, width, height);
+                
+                startButton.disabled = false;
+                saveButton.disabled = true;
+            }
+            img.src = event.target.result;
+        }
+        reader.readAsDataURL(file);
+    }
+
+    function runAlgorithm() {
+        if (isAlgorithmRunning || !originalImageData) return;
+
+        // Blocco UI
+        isAlgorithmRunning = true;
+        startButton.disabled = true;
+        saveButton.disabled = true;
+        imageLoader.disabled = true;
+        progressContainer.style.display = 'block';
+        progressBar.style.width = '0%';
+        progressBar.textContent = '0%';
+
+        // Pulisci il canvas di destinazione
+        generatedCtx.fillStyle = "white";
+        generatedCtx.fillRect(0, 0, generatedCanvas.width, generatedCanvas.height);
+        
+        // Parametri dall'UI
+        const soglia_luminosita = parseInt(thresholdSlider.value);
+        const larghezza = originalImageData.width;
+        const altezza = originalImageData.height;
+        const totalPixels = larghezza * altezza;
+
+        // INIZIALIZZA_STRUTTURE_DATI
+        let visitato = Array(larghezza).fill(null).map(() => Array(altezza).fill(false));
+        let percorso = [];
+        let x = 0, y = 0;
+        
+        // Definiamo le direzioni come costanti per chiarezza
+        const DIREZIONI = { DESTRA: 0, GIU: 1, SINISTRA: 2, SU: 3 };
+        let direzione = DIREZIONI.DESTRA;
+
+        let pixelVisitati = 0;
+
+        // Funzione per eseguire un passo dell'algoritmo
+        function step() {
+            if (pixelVisitati >= totalPixels) {
+                finalize();
+                return;
+            }
+
+            const BATCH_SIZE = Math.max(100, Math.floor(totalPixels / 1000)); // Esegue più passi per frame per velocità
+            
+            for(let i = 0; i < BATCH_SIZE && pixelVisitati < totalPixels; ++i) {
+                // Se la posizione corrente non è valida (es. dopo un salto), trova un nuovo punto di partenza
+                if (!isPosizioneValida(x, y, larghezza, altezza)) {
+                    ({x, y} = trovaPixelNonVisitatoPiuVicino(x, y, visitato, larghezza, altezza));
+                     if (x === -1) { // Nessun pixel rimasto
+                        pixelVisitati = totalPixels;
+                        break;
+                     }
+                    percorso.push({ x, y, disegna: false }); // Salto senza disegnare
+                }
+
+                if (!visitato[x][y]) {
+                    pixelVisitati++;
+                    visitato[x][y] = true;
+                }
+                
+                // a) CALCOLA_LUMINOSITA_CORRENTE
+                const luminosita = getLuminositaPixel(x, y, originalImageData);
+
+                // b) SE il pixel è scuro, aggiungi al percorso di disegno
+                if (luminosita < soglia_luminosita) {
+                    percorso.push({ x, y, disegna: true });
+                } else {
+                    // Anche se il pixel è chiaro, ci muoviamo comunque lì, ma senza disegnare
+                    // L'ultimo punto del percorso disegnato rimane fermo, e ci spostiamo da lì
+                    percorso.push({ x, y, disegna: false });
+                }
+
+                // c) TROVA_PROSSIMA_POSIZIONE
+                let prossimaPosTrovata = false;
+                let tentativiDirezione = 0;
+
+                while (tentativiDirezione < 4) {
+                    const { nextX, nextY } = calcolaPosizioneSuccessiva(x, y, direzione);
+
+                    if (isPosizioneValida(nextX, nextY, larghezza, altezza) && !visitato[nextX][nextY]) {
+                        x = nextX;
+                        y = nextY;
+                        prossimaPosTrovata = true;
+                        break;
+                    } else {
+                        direzione = ruotaDirezione(direzione);
+                        tentativiDirezione++;
+                    }
+                }
+                
+                // Se tutte le direzioni sono bloccate
+                if (!prossimaPosTrovata) {
+                    ({x, y} = trovaPixelNonVisitatoPiuVicino(x, y, visitato, larghezza, altezza));
+                    if (x === -1) { // Finito
+                        pixelVisitati = totalPixels;
+                        break;
+                    }
+                    // Aggiungiamo un comando di "salto" al percorso
+                    percorso.push({ x, y, disegna: false });
+                }
+            }
+
+            // Aggiorna la UI
+            updateProgress(pixelVisitati, totalPixels);
+            drawPath(percorso);
+            
+            // Pianifica il prossimo passo
+            setTimeout(step, 0); 
+        }
+
+        function finalize() {
+            console.log("Algoritmo completato.");
+            drawPath(percorso, true); // Disegno finale e completo
+            
+            // Riabilita UI
+            isAlgorithmRunning = false;
+            startButton.disabled = false;
+            saveButton.disabled = false;
+            imageLoader.disabled = false;
+            progressContainer.style.display = 'none';
+        }
+
+        // Avvia l'algoritmo
+        step();
+    }
+    
+    function saveImage() {
+        const link = document.createElement('a');
+        link.download = 'single-line-painting.png';
+        link.href = generatedCanvas.toDataURL('image/png');
+        link.click();
+    }
+
+
+    // === FUNZIONI AUSILIARIE DELL'ALGORITMO ===
+
+    function getLuminositaPixel(x, y, imageData) {
+        const i = (y * imageData.width + x) * 4;
+        const r = imageData.data[i];
+        const g = imageData.data[i + 1];
+        const b = imageData.data[i + 2];
+        return (r + g + b) / 3;
+    }
+    
+    function calcolaPosizioneSuccessiva(x, y, dir) {
+        if (dir === 0) return { nextX: x + 1, nextY: y }; // DESTRA
+        if (dir === 1) return { nextX: x, nextY: y + 1 }; // GIU
+        if (dir === 2) return { nextX: x - 1, nextY: y }; // SINISTRA
+        if (dir === 3) return { nextX: x, nextY: y - 1 }; // SU
+    }
+
+    function isPosizioneValida(x, y, larghezza, altezza) {
+        return x >= 0 && x < larghezza && y >= 0 && y < altezza;
+    }
+    
+    function ruotaDirezione(dir) {
+        // Rotazione oraria: 0->1, 1->2, 2->3, 3->0
+        return (dir + 1) % 4;
+    }
+
+    function trovaPixelNonVisitatoPiuVicino(currX, currY, visitato, larghezza, altezza) {
+        // NOTA: Questa funzione è molto lenta (O(N*M)) e rappresenta il collo di bottiglia
+        // quando l'algoritmo rimane "bloccato". Su immagini grandi può richiedere tempo.
+        console.warn("Ricerca del pixel più vicino avviata... Questo potrebbe essere lento.");
+        let distanzaMinimaSq = Infinity;
+        let miglioreX = -1, miglioreY = -1;
+
+        // Per ottimizzare, cerchiamo in un'area limitata prima di scansionare tutto
+        // (Omissione per semplicità, implementiamo la ricerca completa come da pseudocodice)
+
+        for (let j = 0; j < altezza; j++) {
+            for (let i = 0; i < larghezza; i++) {
+                if (!visitato[i][j]) {
+                    const dx = i - currX;
+                    const dy = j - currY;
+                    const distanzaSq = dx * dx + dy * dy;
+                    if (distanzaSq < distanzaMinimaSq) {
+                        distanzaMinimaSq = distanzaSq;
+                        miglioreX = i;
+                        miglioreY = j;
+                    }
+                }
+            }
+        }
+        return { x: miglioreX, y: miglioreY };
+    }
+
+    function updateProgress(current, total) {
+        const percentage = Math.round((current / total) * 100);
+        progressBar.style.width = percentage + '%';
+        progressBar.textContent = percentage + '%';
+    }
+
+    let lastDrawnIndex = 0;
+    function drawPath(percorso, final=false) {
+        // Ottieni i parametri di disegno attuali
+        generatedCtx.strokeStyle = lineColorPicker.value;
+        generatedCtx.lineWidth = lineWidthInput.value;
+        generatedCtx.lineCap = "round";
+        generatedCtx.lineJoin = "round";
+
+        // Per il disegno in tempo reale, disegna solo i nuovi segmenti
+        const startIndex = final ? 0 : lastDrawnIndex;
+        if (final) {
+             generatedCtx.fillStyle = "white";
+             generatedCtx.fillRect(0, 0, generatedCanvas.width, generatedCanvas.height);
+        }
+
+        generatedCtx.beginPath();
+        
+        let moved = false;
+        for (let i = startIndex; i < percorso.length; i++) {
+            const punto = percorso[i];
+            
+            if (punto.disegna) {
+                if (!moved) {
+                   generatedCtx.moveTo(punto.x, punto.y);
+                   moved = true; 
+                } else {
+                   generatedCtx.lineTo(punto.x, punto.y);
+                }
+            } else {
+                // Se non dobbiamo disegnare, significa che è un salto o un'area chiara.
+                // Chiudiamo il tratto corrente e ci prepariamo per il prossimo.
+                generatedCtx.stroke(); 
+                generatedCtx.beginPath();
+                moved = false;
+            }
+        }
+        generatedCtx.stroke(); // Disegna l'ultimo tratto rimasto
+
+        lastDrawnIndex = final ? 0 : percorso.length;
+        if(final) lastDrawnIndex = 0;
+    }
+
+    </script>
+</body>
+</html>

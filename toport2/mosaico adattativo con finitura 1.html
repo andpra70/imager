@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Generatore Mosaici Pittorico</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background-color: #f0f2f5; color: #333; margin: 0; padding: 2rem; display: flex; flex-direction: column; align-items: center; }
+        .container { background-color: white; padding: 2rem; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); width: 100%; max-width: 900px; }
+        h1 { text-align: center; color: #1a73e8; margin-top: 0; }
+        .controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1.5rem; margin-bottom: 2rem; padding: 1.5rem; border: 1px solid #ddd; border-radius: 8px; }
+        .control-group { display: flex; flex-direction: column; }
+        .control-group.full-width { grid-column: 1 / -1; }
+        .control-group.flag { flex-direction: row; align-items: center; gap: 10px; margin-top: 1rem; }
+        label { font-weight: bold; margin-bottom: 0.5rem; color: #555; }
+        label.inline { margin-bottom: 0; }
+        input[type="file"], input[type="number"], button, select { padding: 0.75rem; border-radius: 4px; border: 1px solid #ccc; font-size: 1rem; background-color: #fff; box-sizing: border-box; width: 100%; }
+        input[type="range"] { padding: 0; }
+        input[type="checkbox"] { width: auto; }
+        button { background-color: #1a73e8; color: white; border: none; cursor: pointer; font-weight: bold; transition: background-color: 0.2s; grid-column: 1 / -1; }
+        button:hover { background-color: #1558b3; }
+        button:disabled { background-color: #9e9e9e; cursor: not-allowed; }
+        .options-box { border-left: 3px solid #1a73e8; padding-left: 1rem; margin-top: 0.5rem; }
+        .progress-container { display: none; margin-top: 1.5rem; text-align: center; }
+        progress { width: 100%; height: 25px; border-radius: 4px; }
+        .outputs { display: grid; grid-template-columns: 1fr; gap: 2rem; margin-top: 2rem; }
+        .output-box { text-align: center; }
+        h2 { color: #333; border-bottom: 2px solid #eee; padding-bottom: 0.5rem; margin-top: 0; }
+        .result-info { font-size: 0.9em; color: #666; margin-top: 0.5rem; }
+        img, #svgResultContainer svg { max-width: 100%; height: auto; border: 1px solid #ddd; border-radius: 4px; }
+        .palette-container { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; margin-top: 1rem; padding: 1rem; border: 1px solid #eee; border-radius: 4px; }
+        .color-box { width: 50px; height: 50px; border-radius: 4px; box-shadow: 0 2px 4px rgba(0,0,0,0.2); }
+        #saveBtn { display: none; margin-top: 2rem; text-decoration: none; text-align: center; background-color: #28a745; color: white; padding: 0.75rem; border-radius: 4px; font-weight: bold; }
+        #saveBtn:hover { background-color: #218838; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Generatore Mosaici Pittorico</h1>
+        <div class="controls">
+            <div class="control-group"><label>1. Immagine</label><input type="file" id="imageInput" accept="image/*"></div>
+            <div class="control-group"><label>2. N Colori</label><input type="number" id="numColors" value="20" min="2" max="256"></div>
+            <div class="control-group"><label>3. Dim. Tassello</label><input type="number" id="tileSize" value="8" min="2" max="50"></div>
+            <div class="control-group"><label>4. Tolleranza Fusione: <span id="toleranceValue">25</span></label><input type="range" id="colorTolerance" min="0" max="100" value="25" oninput="document.getElementById('toleranceValue').textContent = this.value"></div>
+            
+            <div class="control-group full-width flag">
+                <input type="checkbox" id="addDetailsFlag" onchange="document.getElementById('detailsOptions').style.display = this.checked ? 'block' : 'none'">
+                <label for="addDetailsFlag" class="inline"><b>5. Aggiungi Pennellate di Dettaglio</b></label>
+            </div>
+            <div id="detailsOptions" class="control-group full-width options-box" style="display:none;">
+                <label>Soglia Dettaglio: <span id="detailThresholdValue">40</span></label><input type="range" id="detailThreshold" min="10" max="200" value="40" oninput="document.getElementById('detailThresholdValue').textContent = this.value">
+                <label>Dimensione Pennellata: <span id="strokeSizeValue">1.5</span></label><input type="range" id="strokeSize" min="0.5" max="5" value="1.5" step="0.1" oninput="document.getElementById('strokeSizeValue').textContent = this.value">
+            </div>
+
+            <div class="control-group full-width flag">
+                <input type="checkbox" id="addHighlightsFlag" onchange="document.getElementById('highlightsOptions').style.display = this.checked ? 'block' : 'none'">
+                <label for="addHighlightsFlag" class="inline"><b>6. Aggiungi Punti Luce</b></label>
+            </div>
+            <div id="highlightsOptions" class="control-group full-width options-box" style="display:none;">
+                <label>Soglia Luminosità: <span id="highlightThresholdValue">235</span></label><input type="range" id="highlightThreshold" min="200" max="254" value="235" oninput="document.getElementById('highlightThresholdValue').textContent = this.value">
+                <label>Dimensione Luce: <span id="highlightSizeValue">2.0</span></label><input type="range" id="highlightSize" min="0.5" max="8" value="2.0" step="0.1" oninput="document.getElementById('highlightSizeValue').textContent = this.value">
+            </div>
+
+            <button id="generateBtn">Genera Arte Finale</button>
+        </div>
+        <div id="progressContainer" class="progress-container"><p id="progressLabel">Elaborazione...</p><progress id="progressBar" value="0" max="100"></progress></div>
+        <div class="outputs">
+            <div class="output-box" id="originalBox" style="display:none;"><h2>Immagine Originale</h2><img id="originalImage" src="" alt="Immagine Originale"></div>
+            <div class="output-box" id="resultBox" style="display:none;"><h2>Risultato Finale</h2>
+                <div id="paletteContainer" class="palette-container"></div>
+                <div id="resultInfo" class="result-info"></div>
+                <div id="svgResultContainer"></div>
+                <a id="saveBtn" href="#" download="mosaico.svg">Salva Risultato</a>
+            </div>
+        </div>
+    </div>
+    <script>
+        // DOM Elements
+        const imageInput = document.getElementById('imageInput');
+        const numColorsInput = document.getElementById('numColors');
+        const tileSizeInput = document.getElementById('tileSize');
+        const colorToleranceInput = document.getElementById('colorTolerance');
+        const addDetailsFlag = document.getElementById('addDetailsFlag');
+        const detailThresholdInput = document.getElementById('detailThreshold');
+        const strokeSizeInput = document.getElementById('strokeSize');
+        const addHighlightsFlag = document.getElementById('addHighlightsFlag');
+        const highlightThresholdInput = document.getElementById('highlightThreshold');
+        const highlightSizeInput = document.getElementById('highlightSize');
+        const generateBtn = document.getElementById('generateBtn');
+        const progressContainer = document.getElementById('progressContainer');
+        const progressBar = document.getElementById('progressBar');
+        const progressLabel = document.getElementById('progressLabel');
+        const originalBox = document.getElementById('originalBox');
+        const originalImage = document.getElementById('originalImage');
+        const resultBox = document.getElementById('resultBox');
+        const paletteContainer = document.getElementById('paletteContainer');
+        const svgResultContainer = document.getElementById('svgResultContainer');
+        const saveBtn = document.getElementById('saveBtn');
+        const resultInfo = document.getElementById('resultInfo');
+        let sourceImage = new Image();
+        let currentSvgData = "";
+
+        // --- Event Listeners and Main Logic ---
+        imageInput.addEventListener('change', (e) => {
+            const file = e.target.files[0]; if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                sourceImage.src = event.target.result;
+                sourceImage.onload = () => { originalImage.src = sourceImage.src; originalBox.style.display = 'block'; resultBox.style.display = 'none'; };
+            };
+            reader.readAsDataURL(file);
+        });
+
+        generateBtn.addEventListener('click', async () => {
+            if (!sourceImage.src) { alert("Scegli un'immagine."); return; }
+            generateBtn.disabled = true;
+            progressContainer.style.display = 'block';
+            resultBox.style.display = 'none';
+            resultInfo.innerHTML = '';
+            
+            const params = {
+                numColors: parseInt(numColorsInput.value),
+                tileSize: parseInt(tileSizeInput.value),
+                colorTolerance: parseInt(colorToleranceInput.value),
+                addDetails: addDetailsFlag.checked,
+                detailThreshold: parseInt(detailThresholdInput.value),
+                strokeSize: parseFloat(strokeSizeInput.value),
+                addHighlights: addHighlightsFlag.checked,
+                highlightThreshold: parseInt(highlightThresholdInput.value),
+                highlightSize: parseFloat(highlightSizeInput.value),
+            };
+
+            try {
+                // Dynamic progress bar setup
+                let totalSteps = 2; // Palette, Base Mosaic
+                if (params.addDetails) totalSteps++;
+                if (params.addHighlights) totalSteps++;
+                let currentStep = 0;
+
+                const updatePipelineProgress = (step, message) => {
+                    currentStep = step;
+                    updateProgress((currentStep / totalSteps) * 100, `Fase ${currentStep}/${totalSteps}: ${message}`);
+                };
+
+                const tempCanvas = document.createElement('canvas');
+                tempCanvas.width = sourceImage.width;
+                tempCanvas.height = sourceImage.height;
+                const tempCtx = tempCanvas.getContext('2d');
+                tempCtx.drawImage(sourceImage, 0, 0);
+                const imageData = tempCtx.getImageData(0, 0, sourceImage.width, sourceImage.height);
+
+                // --- PIPELINE ---
+                updatePipelineProgress(1, "Estraggo la palette...");
+                const palette = await extractPalette(sourceImage, params.numColors);
+                displayPalette(palette);
+
+                updatePipelineProgress(2, "Creo il mosaico di base...");
+                const { mosaicRects, totalTiles } = await generateAdaptiveMosaicBase(imageData, palette, params.tileSize, params.colorTolerance);
+                
+                let detailStrokes = [];
+                if (params.addDetails) {
+                    updatePipelineProgress(currentStep + 1, "Aggiungo pennellate di dettaglio...");
+                    detailStrokes = await extractDetailStrokes(imageData, params.detailThreshold, params.strokeSize);
+                }
+
+                let highlightStrokes = [];
+                if (params.addHighlights) {
+                    updatePipelineProgress(currentStep + 1, "Aggiungo punti luce...");
+                    highlightStrokes = await extractHighlightStrokes(imageData, params.highlightThreshold, params.highlightSize);
+                }
+                
+                // Final Assembly
+                let infoText = `Mosaico: ${mosaicRects.length} forme (da ${totalTiles} tasselli).`;
+                if (params.addDetails) infoText += ` ${detailStrokes.length} pennellate di dettaglio.`;
+                if (params.addHighlights) infoText += ` ${highlightStrokes.length} punti luce.`;
+                resultInfo.textContent = infoText;
+
+                currentSvgData = `<svg width="${sourceImage.width}" height="${sourceImage.height}" xmlns="http://www.w3.org/2000/svg">`
+                               + `<g id="mosaic-base" shape-rendering="crispEdges">${mosaicRects.join('')}</g>`
+                               + (params.addDetails ? `<g id="detail-strokes">${detailStrokes.join('')}</g>` : '')
+                               + (params.addHighlights ? `<g id="highlight-strokes">${highlightStrokes.join('')}</g>` : '')
+                               + `</svg>`;
+                
+                svgResultContainer.innerHTML = currentSvgData;
+                setupSvgSave();
+                updateProgress(100, "Completato!");
+                resultBox.style.display = 'block';
+                saveBtn.style.display = 'inline-block';
+
+            } catch (error) {
+                console.error("Errore:", error);
+                alert("Si è verificato un errore.");
+            } finally {
+                setTimeout(() => {
+                    progressContainer.style.display = 'none';
+                    generateBtn.disabled = false;
+                }, 1500);
+            }
+        });
+        
+        // --- CORE FUNCTIONS ---
+
+        async function extractHighlightStrokes(imageData, threshold, strokeSize) {
+            const { data, width, height } = imageData;
+            const strokes = [];
+            // Sample pixels to avoid adding too many strokes
+            const step = Math.max(1, Math.floor(strokeSize));
+
+            for (let y = 0; y < height; y += step) {
+                for (let x = 0; x < width; x += step) {
+                    const i = (y * width + x) * 4;
+                    const r = data[i], g = data[i+1], b = data[i+2];
+                    const luminance = 0.299 * r + 0.587 * g + 0.114 * b;
+                    
+                    if (luminance > threshold) {
+                        strokes.push(`<circle cx="${x}" cy="${y}" r="${strokeSize}" fill="white" fill-opacity="0.75"/>`);
+                    }
+                }
+            }
+            return strokes;
+        }
+
+        async function generateAdaptiveMosaicBase(imageData, palette, tileSize, tolerance) { /* Unchanged */ }
+        async function extractDetailStrokes(imageData, threshold, strokeSize) { /* Unchanged */ }
+        function calculateTileDetail(imageData, tileX, tileY, tileSize) { /* Unchanged */ }
+        function updateProgress(value, label) { progressBar.value = value; progressLabel.textContent = label; }
+        function displayPalette(palette) { /* Unchanged */ }
+        function extractPalette(image, k) { /* Unchanged */ }
+        function setupSvgSave() { const blob = new Blob([currentSvgData], { type: 'image/svg+xml' }); saveBtn.href = URL.createObjectURL(blob); saveBtn.download = 'mosaico_pittorico.svg'; }
+        function colorDistance(c1, c2) { return (c1.r - c2.r)**2 + (c1.g - c2.g)**2 + (c1.b - c2.b)**2; }
+        function averageColor(pixels) { const total = pixels.reduce((acc, p) => { acc.r += p.r; acc.g += p.g; acc.b += p.b; return acc; }, { r: 0, g: 0, b: 0 }); const len = pixels.length || 1; return { r: total.r / len, g: total.g / len, b: total.b / len }; }
+        function findClosestColor(color, palette) { let closest = palette[0]; let minDistance = Infinity; for (const pColor of palette) { const distance = colorDistance(color, pColor); if (distance < minDistance) { minDistance = distance; closest = pColor; } } return closest; }
+        function getAverageColorForTile(imageData, tileX, tileY, tileSize) { /* Unchanged */ }
+
+        // Full implementations for helpers to make it runnable
+        generateAdaptiveMosaicBase = async (imageData, palette, tileSize, tolerance) => { const { width, height } = imageData; const toleranceSq = tolerance * tolerance; const numTilesX = Math.ceil(width / tileSize); const numTilesY = Math.ceil(height / tileSize); const tileColorsGrid = Array(numTilesY).fill(null).map(() => Array(numTilesX)); const detailGrid = Array(numTilesY).fill(null).map(() => Array(numTilesX)); let maxDetail = 0; for (let ty = 0; ty < numTilesY; ty++) { for (let tx = 0; tx < numTilesX; tx++) { tileColorsGrid[ty][tx] = findClosestColor(getAverageColorForTile(imageData, tx * tileSize, ty * tileSize, tileSize), palette); const detail = calculateTileDetail(imageData, tx * tileSize, ty * tileSize, tileSize); detailGrid[ty][tx] = detail; if (detail > maxDetail) maxDetail = detail; } } const processedGrid = Array(numTilesY).fill(null).map(() => Array(numTilesX).fill(false)); const mosaicRects = []; for (let ty = 0; ty < numTilesY; ty++) { for (let tx = 0; tx < numTilesX; tx++) { if (processedGrid[ty][tx]) continue; const startColor = tileColorsGrid[ty][tx]; let rectWidth = 1; while (tx + rectWidth < numTilesX) { if (processedGrid[ty][tx + rectWidth]) break; const localMaxDetail = Math.max(detailGrid[ty][tx + rectWidth - 1], detailGrid[ty][tx + rectWidth]); const localToleranceSq = toleranceSq * Math.pow(1 - (maxDetail > 0 ? localMaxDetail / maxDetail : 0), 2); if (colorDistance(startColor, tileColorsGrid[ty][tx + rectWidth]) > localToleranceSq) break; rectWidth++; } let rectHeight = 1; while (ty + rectHeight < numTilesY) { let canExpandRow = true; for (let i = 0; i < rectWidth; i++) { if (processedGrid[ty + rectHeight][tx + i]) { canExpandRow = false; break; } const localMaxDetail = Math.max(detailGrid[ty + rectHeight - 1][tx + i], detailGrid[ty + rectHeight][tx + i]); const localToleranceSq = toleranceSq * Math.pow(1 - (maxDetail > 0 ? localMaxDetail / maxDetail : 0), 2); if (colorDistance(startColor, tileColorsGrid[ty + rectHeight][tx + i]) > localToleranceSq) { canExpandRow = false; break; } } if (canExpandRow) rectHeight++; else break; } mosaicRects.push(`<rect x="${tx*tileSize}" y="${ty*tileSize}" width="${rectWidth*tileSize}" height="${rectHeight*tileSize}" fill="rgb(${startColor.r},${startColor.g},${startColor.b})" />`); for (let y = 0; y < rectHeight; y++) { for (let x = 0; x < rectWidth; x++) { processedGrid[ty + y][tx + x] = true; } } } } return { mosaicRects, totalTiles: numTilesX * numTilesY }; };
+        extractDetailStrokes = async (imageData, threshold, strokeSize) => { const { data, width, height } = imageData; const grayscale = new Uint8ClampedArray(width * height); for (let i = 0; i < data.length; i += 4) { grayscale[i / 4] = data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114; } const sobelX = [[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]]; const sobelY = [[-1, -2, -1], [0, 0, 0], [1, 2, 1]]; const strokes = []; for (let y = 1; y < height - 1; y++) { for (let x = 1; x < width - 1; x++) { let gx = 0, gy = 0; for (let ky = -1; ky <= 1; ky++) { for (let kx = -1; kx <= 1; kx++) { const val = grayscale[(y + ky) * width + (x + kx)]; gx += val * sobelX[ky + 1][kx + 1]; gy += val * sobelY[ky + 1][kx + 1]; } } const magnitude = Math.sqrt(gx * gx + gy * gy); if (magnitude > threshold) { const i = (y * width + x) * 4; const r = data[i], g = data[i+1], b = data[i+2]; strokes.push(`<circle cx="${x}" cy="${y}" r="${strokeSize}" fill="rgb(${r},${g},${b})" fill-opacity="0.8"/>`); } } } return strokes; };
+        calculateTileDetail = (imageData, tileX, tileY, tileSize) => { const pixels = []; const { data, width: iw, height: ih } = imageData; const endX = Math.min(tileX + tileSize, iw); const endY = Math.min(tileY + tileSize, ih); for (let y = tileY; y < endY; y++) { for (let x = tileX; x < endX; x++) { const i = (y * iw + x) * 4; pixels.push({ r: data[i], g: data[i+1], b: data[i+2] }); } } if (pixels.length < 2) return 0; const mean = averageColor(pixels); const sumOfSquares = pixels.reduce((acc, p) => { acc.r += (p.r - mean.r) ** 2; acc.g += (p.g - mean.g) ** 2; acc.b += (p.b - mean.b) ** 2; return acc; }, { r: 0, g: 0, b: 0 }); const stdDev = { r: Math.sqrt(sumOfSquares.r / pixels.length), g: Math.sqrt(sumOfSquares.g / pixels.length), b: Math.sqrt(sumOfSquares.b / pixels.length) }; return (stdDev.r + stdDev.g + stdDev.b) / 3; };
+        getAverageColorForTile = (imageData, tileX, tileY, tileSize) => { let r = 0, g = 0, b = 0, count = 0; const { data, width: iw, height: ih } = imageData; const endX = Math.min(tileX + tileSize, iw); const endY = Math.min(tileY + tileSize, ih); for (let y = tileY; y < endY; y++) { for (let x = tileX; x < endX; x++) { const i = (y * iw + x) * 4; r += data[i]; g += data[i+1]; b += data[i+2]; count++; } } return { r: r/count, g: g/count, b: b/count }; };
+        displayPalette = (palette) => { paletteContainer.innerHTML = ''; palette.forEach(color => { const colorBox = document.createElement('div'); colorBox.className = 'color-box'; const rgb = `rgb(${color.r},${color.g},${color.b})`; colorBox.style.backgroundColor = rgb; colorBox.title = rgb; paletteContainer.appendChild(colorBox); }); };
+        extractPalette = (image, k) => new Promise(resolve => { const tempCanvas = document.createElement('canvas'); const tempCtx = tempCanvas.getContext('2d'); const MAX_PIXELS = 40000; let w = image.width, h = image.height; if (w * h > MAX_PIXELS) { const r = Math.sqrt((w * h) / MAX_PIXELS); w = Math.floor(w / r); h = Math.floor(h / r); } tempCanvas.width = w; tempCanvas.height = h; tempCtx.drawImage(image, 0, 0, w, h); const data = tempCtx.getImageData(0, 0, w, h).data; const pixels = []; for (let i = 0; i < data.length; i += 4) pixels.push({ r: data[i], g: data[i + 1], b: data[i + 2] }); let centroids = pixels.slice(0, k).map(() => pixels[Math.floor(Math.random() * pixels.length)]); let iter = 0; const maxIter = 20; function run() { const clusters = Array.from({ length: k }, () => []); for (const p of pixels) { let minDist = Infinity, cI = 0; for (let i = 0; i < centroids.length; i++) { const d = colorDistance(p, centroids[i]); if (d < minDist) { minDist = d; cI = i; } } clusters[cI].push(p); } let moved = false; const newCentroids = []; for (let i = 0; i < k; i++) { if (clusters[i].length > 0) { const newC = averageColor(clusters[i]); if (colorDistance(newC, centroids[i]) > 0.1) moved = true; newCentroids[i] = newC; } else { newCentroids[i] = pixels[Math.floor(Math.random() * pixels.length)]; } } iter++; if (iter >= maxIter || !moved) { resolve(newCentroids.map(c => ({ r: Math.round(c.r), g: Math.round(c.g), b: Math.round(c.b) }))); return; } centroids = newCentroids; setTimeout(run, 0); } run(); });
+    </script>
+</body>
+</html>

@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Image Tracer JS Demo - URL Specifico</title>
+    <!-- *** URL DELLA LIBRERIA AGGIORNATO COME RICHIESTO *** -->
+    <script src="https://cdn.jsdelivr.net/npm/imagetracerjs@1.2.6/imagetracer_v1.2.6.min.js"></script>
+
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: #f4f4f9;
+            color: #333;
+            margin: 0;
+            padding: 20px;
+            line-height: 1.6;
+        }
+
+        h1 {
+            text-align: center;
+            color: #2c3e50;
+        }
+
+        .main-container {
+            display: grid;
+            grid-template-columns: 350px 1fr;
+            gap: 30px;
+            max-width: 1400px;
+            margin: 20px auto;
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
+        }
+
+        .controls {
+            padding-right: 20px;
+            border-right: 1px solid #ddd;
+        }
+
+        .images-display {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            align-items: start;
+        }
+
+        .image-box {
+            border: 1px dashed #ccc;
+            padding: 10px;
+            border-radius: 5px;
+            min-height: 200px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background-color: #fafafa;
+            flex-direction: column;
+            text-align: center;
+        }
+        
+        .image-box img, .image-box svg {
+            max-width: 100%;
+            height: auto;
+            display: block;
+        }
+
+        h2 {
+            margin-top: 0;
+            color: #34495e;
+            border-bottom: 2px solid #3498db;
+            padding-bottom: 5px;
+            width: 100%;
+        }
+
+        .option-group {
+            margin-bottom: 15px;
+        }
+
+        .option-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        
+        .option-group .value-display {
+            font-family: monospace;
+            background-color: #ecf0f1;
+            padding: 2px 6px;
+            border-radius: 3px;
+            color: #2c3e50;
+            font-weight: bold;
+        }
+
+        input[type="range"] {
+            width: 100%;
+            cursor: pointer;
+        }
+
+        button, input[type="file"]::file-selector-button, #downloadLink {
+            display: inline-block;
+            background-color: #3498db;
+            color: white;
+            padding: 10px 15px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            text-align: center;
+            text-decoration: none;
+            transition: background-color 0.3s;
+            margin-top: 10px;
+            width: 100%;
+            box-sizing: border-box;
+        }
+        
+        input[type="file"] {
+             width: 100%;
+        }
+
+        button:hover, input[type="file"]::file-selector-button:hover, #downloadLink:hover {
+            background-color: #2980b9;
+        }
+        
+        button:disabled {
+            background-color: #bdc3c7;
+            cursor: not-allowed;
+        }
+
+        #downloadLink {
+            display: none; /* Nascosto di default */
+            background-color: #2ecc71;
+            margin-top: 5px;
+        }
+
+        #downloadLink:hover {
+            background-color: #27ae60;
+        }
+
+        .info {
+            font-size: 0.85em;
+            color: #7f8c8d;
+            margin-top: 5px;
+        }
+
+        @media (max-width: 900px) {
+            .main-container, .images-display {
+                grid-template-columns: 1fr;
+            }
+            .controls {
+                border-right: none;
+                border-bottom: 1px solid #ddd;
+                padding-right: 0;
+                padding-bottom: 20px;
+            }
+        }
+
+    </style>
+</head>
+<body>
+
+    <h1>ImageTracerJS - Convertitore da Immagine a SVG</h1>
+
+    <div class="main-container">
+        <!-- Colonna dei Controlli -->
+        <div class="controls">
+            <h2>1. Carica Immagine</h2>
+            <input type="file" id="imageInput" accept="image/*">
+
+            <h2 style="margin-top: 30px;">2. Gioca con le Opzioni</h2>
+            <form id="optionsForm">
+                <div class="option-group">
+                    <label for="ltres">Error threshold (lines): <span class="value-display" id="ltresValue">1</span></label>
+                    <input type="range" id="ltres" min="0" max="10" step="0.1" value="1">
+                    <div class="info">Valori più bassi = più dettagli.</div>
+                </div>
+
+                <div class="option-group">
+                    <label for="qtres">Error threshold (curves): <span class="value-display" id="qtresValue">1</span></label>
+                    <input type="range" id="qtres" min="0" max="10" step="0.1" value="1">
+                    <div class="info">Valori più bassi = curve più precise.</div>
+                </div>
+                
+                <div class="option-group">
+                    <label for="numberofcolors">Number of colors: <span class="value-display" id="numberofcolorsValue">16</span></label>
+                    <input type="range" id="numberofcolors" min="2" max="64" step="1" value="16">
+                    <div class="info">Numero di colori da usare.</div>
+                </div>
+
+                <div class="option-group">
+                    <label for="mincolorratio">Min color ratio: <span class="value-display" id="mincolorratioValue">0.02</span></label>
+                    <input type="range" id="mincolorratio" min="0" max="0.2" step="0.001" value="0.02">
+                    <div class="info">Scarta i colori meno presenti.</div>
+                </div>
+
+                <div class="option-group">
+                    <label for="pathomit">Path omit: <span class="value-display" id="pathomitValue">8</span></label>
+                    <input type="range" id="pathomit" min="0" max="50" step="1" value="8">
+                    <div class="info">Filtra i tracciati più piccoli.</div>
+                </div>
+
+                <div class="option-group">
+                    <label for="blurradius">Blur radius: <span class="value-display" id="blurradiusValue">0</span></label>
+                    <input type="range" id="blurradius" min="0" max="5" step="1" value="0">
+                    <div class="info">Applica sfocatura prima di convertire.</div>
+                </div>
+            </form>
+
+            <h2 style="margin-top: 30px;">3. Converti e Scarica</h2>
+            <button id="convertBtn" disabled>Converti in SVG</button>
+            <a id="downloadLink" href="#" download="traced-image.svg">Scarica SVG</a>
+        </div>
+
+        <!-- Colonna delle Immagini -->
+        <div class="images-display">
+            <div class="image-box">
+                <h2>Originale</h2>
+                <img id="originalImage" src="" alt="Scegli un'immagine per iniziare">
+            </div>
+            <div class="image-box">
+                <h2>Risultato SVG</h2>
+                <div id="svgContainer">Attende la conversione...</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Usiamo l'evento 'load' sull'oggetto 'window'.
+        // Questo garantisce che TUTTE le risorse della pagina, inclusa la libreria esterna ImageTracerJS,
+        // siano state completamente caricate prima che il nostro codice venga eseguito.
+        window.addEventListener('load', () => {
+
+            // Riferimenti agli elementi del DOM
+            const imageInput = document.getElementById('imageInput');
+            const originalImage = document.getElementById('originalImage');
+            const convertBtn = document.getElementById('convertBtn');
+            const svgContainer = document.getElementById('svgContainer');
+            const downloadLink = document.getElementById('downloadLink');
+
+            // Riferimenti agli input delle opzioni
+            const optionsForm = document.getElementById('optionsForm');
+            const optionInputs = optionsForm.querySelectorAll('input[type="range"]');
+
+            let imageDataUrl = null;
+
+            // 1. Gestione del caricamento dell'immagine
+            imageInput.addEventListener('change', (event) => {
+                const file = event.target.files[0];
+                if (!file) { return; }
+
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    imageDataUrl = e.target.result;
+                    originalImage.src = imageDataUrl;
+                    originalImage.style.display = 'block';
+                    convertBtn.disabled = false;
+                    svgContainer.innerHTML = 'Pronto per la conversione.';
+                    downloadLink.style.display = 'none';
+                };
+                reader.readAsDataURL(file);
+            });
+            
+            // 2. Aggiornamento in tempo reale dei valori delle opzioni
+            optionInputs.forEach(input => {
+                const valueDisplay = document.getElementById(`${input.id}Value`);
+                valueDisplay.textContent = input.value;
+                input.addEventListener('input', () => {
+                    valueDisplay.textContent = input.value;
+                });
+            });
+
+            // 3. Gestione del click sul pulsante "Converti"
+            convertBtn.addEventListener('click', () => {
+                if (!imageDataUrl) {
+                    alert('Per favore, carica un\'immagine prima di convertire.');
+                    return;
+                }
+
+                svgContainer.innerHTML = 'Conversione in corso...';
+                convertBtn.disabled = true;
+                convertBtn.textContent = 'Attendere...';
+
+                const options = {};
+                optionInputs.forEach(input => {
+                    options[input.id] = parseFloat(input.value);
+                });
+                
+                // Usiamo un piccolo timeout per permettere al browser di aggiornare l'interfaccia
+                // e mostrare "Conversione in corso..." prima di iniziare il calcolo intensivo.
+                setTimeout(() => {
+                    // Poiché questo codice è all'interno di window.onload, siamo SICURI che ImageTracer esista.
+                    ImageTracer.imageToSVG(
+                        imageDataUrl,
+                        (svgString) => {
+                            svgContainer.innerHTML = svgString;
+                            prepareDownload(svgString);
+                            convertBtn.disabled = false;
+                            convertBtn.textContent = 'Converti in SVG';
+                        },
+                        options
+                    );
+                }, 10);
+            });
+
+            // 4. Funzione per preparare il link di download
+            function prepareDownload(svgContent) {
+                const blob = new Blob([svgContent], { type: 'image/svg+xml' });
+                const url = URL.createObjectURL(blob);
+                downloadLink.href = url;
+                downloadLink.style.display = 'block';
+            }
+
+        });
+    </script>
+
+</body>
+</html>

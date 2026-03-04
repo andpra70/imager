@@ -1,0 +1,591 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Simulatore Plotter PWM</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            display: flex;
+            gap: 20px;
+            padding: 20px;
+            background-color: #f0f2f5;
+        }
+        .controls, .outputs {
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        .controls {
+            width: 350px;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+        .outputs {
+            flex-grow: 1;
+        }
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+        label {
+            font-weight: bold;
+            color: #333;
+        }
+        input[type="number"], input[type="file"], select {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+        button {
+            padding: 12px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: bold;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        button:disabled {
+            background-color: #aaa;
+            cursor: not-allowed;
+        }
+        canvas {
+            border: 1px solid #ddd;
+            max-width: 100%;
+            height: auto;
+            background-color: #fff;
+        }
+        .canvas-container {
+            text-align: center;
+        }
+        .canvas-container h3 {
+            margin-top: 0;
+        }
+        .results-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+        pre, textarea {
+            background-color: #2d2d2d;
+            color: #f0f0f0;
+            padding: 10px;
+            border-radius: 4px;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            font-family: "Courier New", Courier, monospace;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        textarea {
+            width: 100%;
+            box-sizing: border-box;
+            height: 300px;
+            resize: vertical;
+        }
+        #gcode-container {
+            margin-top: 20px;
+        }
+         #downloadGCode {
+            margin-top: 5px;
+            padding: 8px;
+            font-size: 14px;
+            background-color: #28a745;
+        }
+        #downloadGCode:hover {
+            background-color: #218838;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="controls">
+        <h2>Parametri Plotter PWM</h2>
+
+        <div class="control-group">
+            <label for="fileInput">Immagine Sorgente</label>
+            <input type="file" id="fileInput" accept="image/*">
+        </div>
+
+        <div class="control-group">
+            <label for="frequenza_pwm">Frequenza PWM (Hz)</label>
+            <input type="number" id="frequenza_pwm" value="1000">
+        </div>
+
+        <div class="control-group">
+            <label for="risoluzione_pwm">Risoluzione PWM (bit)</label>
+            <input type="number" id="risoluzione_pwm" value="8" min="1" max="16">
+        </div>
+
+        <div class="control-group">
+            <label for="dimensione_cella">Dimensione Cella PWM (pixel)</label>
+            <input type="number" id="dimensione_cella" value="5" min="1">
+        </div>
+
+        <div class="control-group">
+            <label for="velocita_penna">Velocità Penna (mm/s)</label>
+            <input type="number" id="velocita_penna" value="100">
+        </div>
+
+        <div class="control-group">
+            <label for="direzione_scansione">Direzione Scansione</label>
+            <select id="direzione_scansione">
+                <option value="serpentina">Serpentina</option>
+                <option value="orizzontale">Orizzontale</option>
+                <option value="verticale">Verticale</option>
+            </select>
+        </div>
+
+        <div class="control-group">
+            <label for="modalita_dithering">Modalità Dithering</label>
+            <select id="modalita_dithering">
+                <option value="nessuno">Nessuno</option>
+                <option value="floyd_steinberg">Floyd-Steinberg</option>
+                <!-- Altre modalità non implementate dallo pseudocodice -->
+            </select>
+        </div>
+
+        <div class="control-group">
+            <label for="inversione">
+                <input type="checkbox" id="inversione"> Inverti Nero/Bianco
+            </label>
+        </div>
+
+        <button id="startButton">Genera Immagine e G-Code</button>
+    </div>
+
+    <div class="outputs">
+        <h2>Risultati</h2>
+        <div class="results-grid">
+            <div class="canvas-container">
+                <h3>Immagine Originale</h3>
+                <canvas id="canvasOriginale"></canvas>
+            </div>
+            <div class="canvas-container">
+                <h3>Immagine Simulata Plotter</h3>
+                <canvas id="canvasRisultato"></canvas>
+            </div>
+        </div>
+        
+        <div id="stats-container" style="margin-top: 20px;">
+            <h3>Log di Processo e Statistiche</h3>
+            <pre id="logOutput"></pre>
+        </div>
+
+        <div id="gcode-container">
+            <h3>G-Code Generato</h3>
+            <textarea id="gcodeOutput" readonly></textarea>
+            <button id="downloadGCode" style="display: none;">Scarica G-Code</button>
+        </div>
+    </div>
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+
+    // Riferimenti agli elementi del DOM
+    const fileInput = document.getElementById('fileInput');
+    const startButton = document.getElementById('startButton');
+    const logOutput = document.getElementById('logOutput');
+    const gcodeOutput = document.getElementById('gcodeOutput');
+    const downloadGCodeBtn = document.getElementById('downloadGCode');
+    
+    // Canvas
+    const canvasOriginale = document.getElementById('canvasOriginale');
+    const ctxOriginale = canvasOriginale.getContext('2d');
+    const canvasRisultato = document.getElementById('canvasRisultato');
+    const ctxRisultato = canvasRisultato.getContext('2d');
+
+    let immagineCaricata = null;
+
+    fileInput.addEventListener('change', (event) => {
+        const file = event.target.files[0];
+        if (file) {
+            caricaImmagine(file).then(img => {
+                immagineCaricata = img;
+                log(`Immagine "${file.name}" caricata.`);
+                // Mostra l'immagine originale sul canvas
+                canvasOriginale.width = img.width;
+                canvasOriginale.height = img.height;
+                ctxOriginale.drawImage(img, 0, 0);
+            }).catch(err => {
+                log(`Errore: ${err}`);
+                immagineCaricata = null;
+            });
+        }
+    });
+
+    startButton.addEventListener('click', () => principale());
+    downloadGCodeBtn.addEventListener('click', () => {
+        const gcode = gcodeOutput.value;
+        const blob = new Blob([gcode], { type: 'text/plain' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'output.gcode';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    });
+
+    // Funzione per scrivere nel log
+    function log(message) {
+        console.log(message);
+        logOutput.textContent += message + '\n';
+        logOutput.scrollTop = logOutput.scrollHeight;
+    }
+
+    // === IMPLEMENTAZIONE DELLO PSEUDOCODICE ===
+
+    // Penna: ALZATA = Bianco (0), ABBASSATA = Nero (1)
+    // Densità controllata tramite modulazione PWM
+
+    // STRUTTURA ParametriPWM: In JS, usiamo un oggetto.
+    function leggiParametri() {
+        return {
+            frequenza_pwm: parseFloat(document.getElementById('frequenza_pwm').value),
+            risoluzione_pwm: parseInt(document.getElementById('risoluzione_pwm').value),
+            direzione_scansione: document.getElementById('direzione_scansione').value,
+            dimensione_cella: parseInt(document.getElementById('dimensione_cella').value),
+            modalita_dithering: document.getElementById('modalita_dithering').value,
+            inversione: document.getElementById('inversione').checked,
+            velocita_penna: parseFloat(document.getElementById('velocita_penna').value)
+        };
+    }
+
+    // STRUTTURA StatoPenna: In JS, usiamo un oggetto.
+
+    // FUNZIONE caricaImmagine(file_object):
+    function caricaImmagine(file) {
+        return new Promise((resolve, reject) => {
+            if (!file.type.startsWith('image/')) {
+                reject("Il file non è un'immagine valida.");
+                return;
+            }
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const img = new Image();
+                img.onload = () => resolve(img);
+                img.onerror = () => reject("Impossibile caricare l'immagine.");
+                img.src = e.target.result;
+            };
+            reader.readAsDataURL(file);
+        });
+    }
+
+    // FUNZIONE convertiInGrigio(immagine_html_element):
+    function convertiInGrigio(img) {
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        canvas.width = img.width;
+        canvas.height = img.height;
+        ctx.drawImage(img, 0, 0);
+        
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const data = imageData.data;
+        
+        // Creiamo una nostra struttura dati per l'immagine in scala di grigi
+        const immagine_grigia = {
+            larghezza: canvas.width,
+            altezza: canvas.height,
+            dati: new Uint8ClampedArray(canvas.width * canvas.height)
+        };
+
+        for (let i = 0; i < data.length; i += 4) {
+            // Conversione RGB a scala di grigi
+            const grigio = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+            immagine_grigia.dati[i / 4] = grigio;
+        }
+        return immagine_grigia;
+    }
+
+    // FUNZIONE calcolaDutyCyclePWM(valore_grigio, parametri):
+    function calcolaDutyCyclePWM(valore_grigio, parametri) {
+        let duty_cycle;
+        // Converte valore grigio (0-255) in duty cycle PWM (0.0-1.0)
+        if (parametri.inversione) {
+            // Invertito: Nero (0) -> duty 0, Bianco (255) -> duty 1
+            duty_cycle = valore_grigio / 255.0; 
+        } else {
+            // Normale: Nero (0) -> duty 1, Bianco (255) -> duty 0
+            duty_cycle = (255 - valore_grigio) / 255.0;
+        }
+        
+        // Quantizza in base alla risoluzione PWM
+        const livelli_pwm = Math.pow(2, parametri.risoluzione_pwm);
+        const duty_quantizzato = Math.round(duty_cycle * (livelli_pwm - 1)) / (livelli_pwm - 1);
+        
+        return duty_quantizzato;
+    }
+
+    // FUNZIONE generaPatternPWM(duty_cycle, dimensione_cella, frequenza_pwm):
+    // Nota: la frequenza_pwm è più concettuale qui, dato che non simuliamo il tempo reale
+    function generaPatternPWM(duty_cycle, dimensione_cella) {
+        const pattern = [];
+        const pixel_totali = dimensione_cella * dimensione_cella;
+        const pixel_neri = Math.round(duty_cycle * pixel_totali);
+
+        let neri_disegnati = 0;
+        for (let y = 0; y < dimensione_cella; y++) {
+            pattern[y] = [];
+            for (let x = 0; x < dimensione_cella; x++) {
+                // Semplifichiamo: distribuiamo i pixel neri uniformemente
+                if (neri_disegnati < pixel_neri) {
+                    pattern[y][x] = 1; // Penna abbassata (nero)
+                    neri_disegnati++;
+                } else {
+                    pattern[y][x] = 0; // Penna alzata (bianco)
+                }
+            }
+        }
+        return pattern;
+    }
+
+    // FUNZIONE ditheringFloydSteinberg(immagine_grigia):
+    function ditheringFloydSteinberg(immagine) {
+        const larghezza = immagine.larghezza;
+        const altezza = immagine.altezza;
+        
+        // Usiamo un Float32Array per permettere valori intermedi non interi
+        const dati_dithered = new Float32Array(immagine.dati);
+
+        for (let y = 0; y < altezza; y++) {
+            for (let x = 0; x < larghezza; x++) {
+                const idx = y * larghezza + x;
+                const pixel_vecchio = dati_dithered[idx];
+                const pixel_nuovo = (pixel_vecchio > 127) ? 255 : 0;
+                dati_dithered[idx] = pixel_nuovo;
+                
+                const errore = pixel_vecchio - pixel_nuovo;
+                
+                // Distribuzione errore Floyd-Steinberg
+                if (x + 1 < larghezza)             dati_dithered[idx + 1]         += errore * 7 / 16;
+                if (y + 1 < altezza) {
+                    if (x > 0)                      dati_dithered[idx + larghezza - 1] += errore * 3 / 16;
+                                                    dati_dithered[idx + larghezza]     += errore * 5 / 16;
+                    if (x + 1 < larghezza)          dati_dithered[idx + larghezza + 1] += errore * 1 / 16;
+                }
+            }
+        }
+        
+        return { larghezza, altezza, dati: new Uint8ClampedArray(dati_dithered) };
+    }
+    
+    // FUNZIONE generaSequenzaMovimenti(immagine, parametri):
+    function generaSequenzaMovimenti(immagine, parametri) {
+        const larghezza = immagine.larghezza;
+        const altezza = immagine.altezza;
+        const sequenza_movimenti = [];
+        const dim_cella = parametri.dimensione_cella;
+        
+        let immagine_processata = immagine;
+        if (parametri.modalita_dithering === "floyd_steinberg") {
+            log("Applicazione dithering Floyd-Steinberg...");
+            immagine_processata = ditheringFloydSteinberg(immagine);
+        }
+        
+        // Genera sequenza movimenti basata su direzione scansione
+        switch (parametri.direzione_scansione) {
+            case "orizzontale":
+                for (let y = 0; y < altezza; y += dim_cella) {
+                    for (let x = 0; x < larghezza; x += dim_cella) {
+                        processaCella(immagine_processata, x, y, parametri, sequenza_movimenti);
+                    }
+                }
+                break;
+            
+            case "verticale":
+                for (let x = 0; x < larghezza; x += dim_cella) {
+                    for (let y = 0; y < altezza; y += dim_cella) {
+                        processaCella(immagine_processata, x, y, parametri, sequenza_movimenti);
+                    }
+                }
+                break;
+
+            case "serpentina":
+                for (let y = 0; y < altezza; y += dim_cella) {
+                    if ((y / dim_cella) % 2 === 0) { // Riga pari (0, 2, 4...) -> sinistra a destra
+                        for (let x = 0; x < larghezza; x += dim_cella) {
+                            processaCella(immagine_processata, x, y, parametri, sequenza_movimenti);
+                        }
+                    } else { // Riga dispari -> destra a sinistra
+                        for (let x = larghezza - (larghezza % dim_cella || dim_cella) ; x >= 0; x -= dim_cella) {
+                            processaCella(immagine_processata, x, y, parametri, sequenza_movimenti);
+                        }
+                    }
+                }
+                break;
+        }
+        return sequenza_movimenti;
+    }
+    
+    // FUNZIONE processaCella(immagine, start_x, start_y, parametri, sequenza_movimenti):
+    function processaCella(immagine, start_x, start_y, parametri, sequenza_movimenti) {
+        let somma = 0;
+        let conteggio = 0;
+        
+        for (let dy = 0; dy < parametri.dimensione_cella; dy++) {
+            for (let dx = 0; dx < parametri.dimensione_cella; dx++) {
+                const x = start_x + dx;
+                const y = start_y + dy;
+                if (x < immagine.larghezza && y < immagine.altezza) {
+                    somma += immagine.dati[y * immagine.larghezza + x];
+                    conteggio++;
+                }
+            }
+        }
+        
+        if (conteggio === 0) return;
+        const valore_medio = somma / conteggio;
+        
+        const duty_cycle = calcolaDutyCyclePWM(valore_medio, parametri);
+        const pattern_pwm = generaPatternPWM(duty_cycle, parametri.dimensione_cella);
+        
+        for (let dy = 0; dy < parametri.dimensione_cella; dy++) {
+            for (let dx = 0; dx < parametri.dimensione_cella; dx++) {
+                const x_assoluto = start_x + dx;
+                const y_assoluto = start_y + dy;
+                
+                if (x_assoluto >= immagine.larghezza || y_assoluto >= immagine.altezza) continue;
+
+                // STRUTTURA_COMANDO
+                const comando = {
+                    x: x_assoluto,
+                    y: y_assoluto,
+                    penna_abbassata: (pattern_pwm[dy][dx] === 1),
+                };
+                sequenza_movimenti.push(comando);
+            }
+        }
+    }
+
+    // FUNZIONE eseguiSequenzaPlotter(sequenza_movimenti):
+    // Questa funzione simula il plotter disegnando su un canvas
+    function eseguiSequenzaPlotter(sequenza_movimenti, larghezza, altezza) {
+        log("=== INIZIO SIMULAZIONE PLOTTER ===");
+        
+        canvasRisultato.width = larghezza;
+        canvasRisultato.height = altezza;
+        ctxRisultato.fillStyle = 'white';
+        ctxRisultato.fillRect(0, 0, larghezza, altezza);
+
+        ctxRisultato.fillStyle = 'black';
+        let penna_alzata = true;
+        
+        sequenza_movimenti.forEach(comando => {
+            // Logica semplificata per la visualizzazione. Il log dettagliato rallenterebbe troppo.
+            // Cambia stato penna
+            const dovrebbe_essere_abbassata = comando.penna_abbassata;
+            if (dovrebbe_essere_abbassata && penna_alzata) {
+                // log(`ABBASSA PENNA a (${comando.x}, ${comando.y})`);
+                penna_alzata = false;
+            } else if (!dovrebbe_essere_abbassata && !penna_alzata) {
+                // log(`ALZA PENNA a (${comando.x}, ${comando.y})`);
+                penna_alzata = true;
+            }
+            
+            // Disegna pixel se penna abbassata
+            if (!penna_alzata) {
+                ctxRisultato.fillRect(comando.x, comando.y, 1, 1);
+            }
+        });
+
+        log("=== FINE SIMULAZIONE PLOTTER ===");
+    }
+
+    // FUNZIONE salvaGCode(sequenza_movimenti, nome_file):
+    function salvaGCode(sequenza_movimenti) {
+        log("Generazione G-Code...");
+        let gcode = [];
+        gcode.push("G21 ; Unità in millimetri");
+        gcode.push("G90 ; Coordinate assolute");
+        gcode.push("M4 ; Abilita penna/laser (potenza variabile, se supportato)");
+        gcode.push("G0 Z1 ; Alza la penna per iniziare");
+        
+        let penna_abbassata_corrente = false;
+
+        sequenza_movimenti.forEach(comando => {
+            let movimento = `G1 X${comando.x.toFixed(3)} Y${(canvasOriginale.height - comando.y).toFixed(3)}`; // Inverti asse Y per coordinate standard
+            
+            if (comando.penna_abbassata && !penna_abbassata_corrente) {
+                // Penna era alzata, ora abbassata
+                gcode.push(`G1 Z0 ; Abbassa penna`);
+                penna_abbassata_corrente = true;
+            } else if (!comando.penna_abbassata && penna_abbassata_corrente) {
+                // Penna era abbassata, ora alzata
+                gcode.push(`G1 Z1 ; Alza penna`);
+                penna_abbassata_corrente = false;
+            }
+            gcode.push(movimento);
+        });
+        
+        gcode.push("M5 ; Disabilita penna/laser");
+        gcode.push("G0 X0 Y0 ; Torna a origine");
+        
+        log("File G-code generato.");
+        return gcode.join('\n');
+    }
+
+    // FUNZIONE principale():
+    async function principale() {
+        logOutput.textContent = ''; // Pulisci log
+        startButton.disabled = true;
+        startButton.textContent = 'Elaborazione...';
+
+        if (!immagineCaricata) {
+            log("Errore: Nessuna immagine caricata. Seleziona un file prima.");
+            startButton.disabled = false;
+            startButton.textContent = 'Genera Immagine e G-Code';
+            return;
+        }
+
+        try {
+            const parametri = leggiParametri();
+            
+            log("Caricamento immagine...");
+            const immagine_grigia = convertiInGrigio(immagineCaricata);
+            
+            log("Generazione sequenza movimenti PWM...");
+            const sequenza_movimenti = generaSequenzaMovimenti(immagine_grigia, parametri);
+            
+            log("Simulazione esecuzione plotter...");
+            eseguiSequenzaPlotter(sequenza_movimenti, immagineCaricata.width, immagineCaricata.height);
+            
+            const gcode = salvaGCode(sequenza_movimenti);
+            gcodeOutput.value = gcode;
+            downloadGCodeBtn.style.display = 'block';
+
+            log("Immagine generata e G-Code pronti.");
+            
+            // Statistiche finali
+            log("\n=== STATISTICHE ===");
+            log(`Movimenti totali: ${sequenza_movimenti.length}`);
+            log(`Dimensioni immagine: ${immagineCaricata.width} x ${immagineCaricata.height} px`);
+            log(`Frequenza PWM: ${parametri.frequenza_pwm} Hz`);
+            log(`Risoluzione PWM: ${parametri.risoluzione_pwm} bit`);
+            log(`Dimensione cella: ${parametri.dimensione_cella}x${parametri.dimensione_cella} px`);
+
+        } catch (e) {
+            log(`ERRORE CRITICO: ${e.message}`);
+            console.error(e);
+        } finally {
+            startButton.disabled = false;
+            startButton.textContent = 'Genera Immagine e G-Code';
+        }
+    }
+});
+</script>
+
+</body>
+</html>

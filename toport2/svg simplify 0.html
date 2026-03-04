@@ -1,0 +1,562 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SVG Simplifier</title>
+    <style>
+        body { font-family: sans-serif; margin: 20px; background-color: #f4f4f4; color: #333; }
+        .container { background-color: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
+        h1, h2 { color: #333; }
+        label { display: block; margin-top: 10px; margin-bottom: 5px; }
+        input[type="file"], input[type="number"], button {
+            padding: 10px;
+            margin-top: 5px;
+            margin-bottom: 15px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            cursor: pointer;
+            transition: background-color 0.3s ease;
+        }
+        button:hover { background-color: #0056b3; }
+        button:disabled { background-color: #ccc; cursor: not-allowed; }
+        .svg-display {
+            border: 1px solid #ccc;
+            padding: 10px;
+            margin-top: 10px;
+            background-color: #e9e9e9;
+            max-width: 100%;
+            overflow: auto;
+        }
+        .svg-display svg {
+            max-width: 100%;
+            height: auto;
+            display: block; /* Rimuove spazio extra sotto l'SVG inline */
+        }
+        #sizeInfo { font-weight: bold; margin-top: 15px; }
+        .columns { display: flex; gap: 20px; flex-wrap: wrap;} /* Aggiunto flex-wrap per responsive */
+        .column { flex: 1; min-width: 300px;} /* Aggiunto min-width per responsive */
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>SVG Simplifier</h1>
+
+        <label for="svgFileInput">Scegli un file SVG:</label>
+        <input type="file" id="svgFileInput" accept=".svg,image/svg+xml">
+
+        <label for="deltaInput">Delta per accorpare polilinee (pixel):</label>
+        <input type="number" id="deltaInput" value="5" min="0" step="0.1">
+
+        <label for="precisionInput">Precisione decimali (per arrotondamento):</label>
+        <input type="number" id="precisionInput" value="2" min="0" max="10" step="1">
+
+
+        <button id="simplifyButton" disabled>Semplifica SVG</button>
+        <button id="downloadButton" disabled>Salva SVG Semplificato</button>
+
+        <div id="sizeInfo"></div>
+
+        <div class="columns">
+            <div class="column">
+                <h2>Originale:</h2>
+                <div id="originalSvgContainer" class="svg-display">Nessun SVG caricato.</div>
+            </div>
+            <div class="column">
+                <h2>Semplificato:</h2>
+                <div id="simplifiedSvgContainer" class="svg-display">Nessun SVG semplificato.</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const svgFileInput = document.getElementById('svgFileInput');
+            const simplifyButton = document.getElementById('simplifyButton');
+            const downloadButton = document.getElementById('downloadButton');
+            const originalSvgContainer = document.getElementById('originalSvgContainer');
+            const simplifiedSvgContainer = document.getElementById('simplifiedSvgContainer');
+            const sizeInfo = document.getElementById('sizeInfo');
+            const deltaInput = document.getElementById('deltaInput');
+            const precisionInput = document.getElementById('precisionInput');
+
+            let originalSvgString = '';
+            let simplifiedSvgString = '';
+            let originalFileName = 'original.svg';
+
+            svgFileInput.addEventListener('change', (event) => {
+                const file = event.target.files[0];
+                if (file && (file.type === 'image/svg+xml' || file.name.toLowerCase().endsWith('.svg'))) {
+                    originalFileName = file.name.replace(/\.svg$/i, '_simplified.svg');
+                    if (!originalFileName.toLowerCase().endsWith('.svg')) {
+                        originalFileName += '_simplified.svg';
+                    }
+                    const reader = new FileReader();
+                    reader.onload = (e) => {
+                        originalSvgString = e.target.result;
+                        originalSvgContainer.innerHTML = ''; // Pulisci prima
+                        try {
+                            // Test se è un XML valido e se la root è <svg>
+                            const parser = new DOMParser();
+                            const tempDoc = parser.parseFromString(originalSvgString, "image/svg+xml");
+                            if (tempDoc.documentElement.nodeName === 'parsererror' || tempDoc.documentElement.tagName.toLowerCase() !== 'svg') {
+                                throw new Error("Il file non è un SVG valido o la root non è <svg>.");
+                            }
+                            originalSvgContainer.innerHTML = originalSvgString; // Mostra solo se valido
+                            displaySizeInfo(originalSvgString.length);
+                            simplifyButton.disabled = false;
+                            downloadButton.disabled = true;
+                            simplifiedSvgContainer.innerHTML = 'SVG non ancora semplificato.';
+                        } catch (error) {
+                            console.error("Errore nel parsing dell'SVG:", error);
+                            alert('Errore: Il file selezionato non sembra essere un SVG valido.\n' + error.message);
+                            resetUI();
+                        }
+                    };
+                    reader.onerror = () => {
+                        alert('Errore durante la lettura del file.');
+                        resetUI();
+                    };
+                    reader.readAsText(file);
+                } else {
+                    alert('Per favore, seleziona un file SVG valido.');
+                    resetUI();
+                }
+            });
+
+            function resetUI() {
+                originalSvgContainer.innerHTML = 'Nessun SVG caricato.';
+                simplifiedSvgContainer.innerHTML = 'Nessun SVG semplificato.';
+                sizeInfo.textContent = '';
+                simplifyButton.disabled = true;
+                downloadButton.disabled = true;
+                originalSvgString = '';
+                svgFileInput.value = ''; // Resetta l'input file
+            }
+
+
+            simplifyButton.addEventListener('click', () => {
+                if (!originalSvgString) return;
+
+                const delta = parseFloat(deltaInput.value) || 0;
+                const precision = parseInt(precisionInput.value, 10);
+                if (isNaN(precision) || precision < 0) {
+                    alert("La precisione deve essere un numero intero non negativo.");
+                    return;
+                }
+
+
+                const parser = new DOMParser();
+                const svgDoc = parser.parseFromString(originalSvgString, "image/svg+xml");
+                const svgElement = svgDoc.documentElement;
+
+                if (svgElement.nodeName === 'parsererror') {
+                    console.error("Errore di parsing dell'SVG originale per la semplificazione.");
+                    simplifiedSvgContainer.innerHTML = '<p style="color:red;">Errore: Impossibile parsare l\'SVG originale per la semplificazione.</p>';
+                    return;
+                }
+
+
+                // 1. Rimuovi commenti
+                removeCommentsRecursive(svgElement);
+
+                // 2. Arrotonda valori numerici e alcuni attributi
+                processElementsRecursive(svgElement, precision);
+
+                // 3. Accorpa polilinee
+                if (delta > 0) {
+                    mergePolylines(svgElement, delta, precision);
+                }
+
+                // 4. Rimuovi attributi di default (euristica)
+                cleanupAttributesRecursive(svgElement);
+
+                // 5. Rimuovi gruppi <g> vuoti (iterativamente)
+                removeEmptyGroupsIterative(svgElement);
+
+                const serializer = new XMLSerializer();
+                let tempSimplifiedSvgString = serializer.serializeToString(svgElement);
+                
+                // Re-parsing e re-serializing può aiutare a normalizzare ulteriormente (es. namespace)
+                // e a validare che l'output sia ancora XML ben formato
+                try {
+                    const finalDoc = parser.parseFromString(tempSimplifiedSvgString, "image/svg+xml");
+                    if (finalDoc.documentElement.nodeName === 'parsererror') {
+                        console.warn("SVG semplificato ha prodotto un errore di parsing. Tentativo di usare la stringa precedente.");
+                        // Potrebbe esserci un problema nella serializzazione o nelle modifiche
+                        // Usiamo la stringa prima del re-parse per sicurezza se il re-parse fallisce
+                        simplifiedSvgString = tempSimplifiedSvgString;
+                    } else {
+                        simplifiedSvgString = serializer.serializeToString(finalDoc.documentElement);
+                    }
+                } catch (e) {
+                    console.warn("Eccezione durante il re-parsing dell'SVG semplificato:", e);
+                    simplifiedSvgString = tempSimplifiedSvgString; // Fallback
+                }
+
+
+                simplifiedSvgContainer.innerHTML = simplifiedSvgString;
+                displaySizeInfo(originalSvgString.length, simplifiedSvgString.length);
+                downloadButton.disabled = false;
+            });
+
+            downloadButton.addEventListener('click', () => {
+                if (!simplifiedSvgString) return;
+                const blob = new Blob([simplifiedSvgString], { type: 'image/svg+xml;charset=utf-8' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = originalFileName;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+            });
+
+            function displaySizeInfo(originalSize, simplifiedSize) {
+                let info = `Dimensione Originale: ${formatBytes(originalSize)}.`;
+                if (simplifiedSize !== undefined) {
+                    const reduction = originalSize > 0 ? ((originalSize - simplifiedSize) / originalSize * 100) : 0;
+                    info += ` Dimensione Semplificata: ${formatBytes(simplifiedSize)} (Riduzione: ${reduction.toFixed(2)}%).`;
+                }
+                sizeInfo.textContent = info;
+            }
+
+            function formatBytes(bytes, decimals = 2) {
+                if (bytes === 0) return '0 Bytes';
+                const k = 1024;
+                const dm = decimals < 0 ? 0 : decimals;
+                const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+                const i = Math.floor(Math.log(bytes) / Math.log(k));
+                return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
+            }
+
+            function removeCommentsRecursive(node) {
+                if (node.nodeType === Node.COMMENT_NODE) {
+                    node.remove();
+                    return;
+                }
+                if (node.nodeType === Node.ELEMENT_NODE || node.nodeType === Node.DOCUMENT_NODE) {
+                    for (let i = node.childNodes.length - 1; i >= 0; i--) {
+                        removeCommentsRecursive(node.childNodes[i]);
+                    }
+                }
+            }
+
+            function processElementsRecursive(element, precision) {
+                if (element.nodeType === Node.ELEMENT_NODE) {
+                    roundNumericAttributes(element, precision);
+
+                    if (element.hasAttribute('d')) {
+                        element.setAttribute('d', roundPathData(element.getAttribute('d'), precision));
+                    }
+                    if (element.tagName.toLowerCase() === 'polyline' || element.tagName.toLowerCase() === 'polygon') {
+                        if (element.hasAttribute('points')) {
+                            element.setAttribute('points', roundPointsData(element.getAttribute('points'), precision));
+                        }
+                    }
+                    if (element.hasAttribute('transform')) {
+                         element.setAttribute('transform', roundTransformData(element.getAttribute('transform'), precision));
+                    }
+
+                    Array.from(element.children).forEach(child => processElementsRecursive(child, precision));
+                }
+            }
+            
+            function roundNumericAttributes(element, precision) {
+                const numericAttrs = [
+                    'x', 'y', 'cx', 'cy', 'r', 'rx', 'ry', 'width', 'height',
+                    'x1', 'y1', 'x2', 'y2', 'font-size', 'stroke-width', 'opacity',
+                    'stop-opacity', 'fill-opacity', 'stroke-miterlimit', 'stroke-dashoffset',
+                    // Non 'd', 'points', 'transform' perché gestiti a parte
+                ];
+                for (const attr of Array.from(element.attributes)) {
+                    if (numericAttrs.includes(attr.name) && !isNaN(parseFloat(attr.value))) {
+                        // Evita di convertire '0' in '0.00' se la precisione è > 0
+                        const num = parseFloat(attr.value);
+                        element.setAttribute(attr.name, Number(num.toFixed(precision)).toString());
+                    }
+                    if (attr.name === "style") {
+                        let styleValue = attr.value;
+                        styleValue = styleValue.replace(/([-+]?\d*\.?\d+)([a-zA-Z%]*)/g, (match, numStr, unit) => {
+                            const num = parseFloat(numStr);
+                            if (!isNaN(num)) {
+                                return Number(num.toFixed(precision)).toString() + unit;
+                            }
+                            return match;
+                        });
+                        element.setAttribute("style", styleValue);
+                    }
+                }
+            }
+
+            function roundPathData(d, precision) {
+                if (!d) return "";
+                return d.replace(/([-+]?\d*\.?\d+([eE][-+]?\d+)?)/g, (match) => {
+                    const num = parseFloat(match);
+                    if (isNaN(num)) return match;
+                    return Number(num.toFixed(precision)).toString();
+                });
+            }
+
+            function roundPointsData(pointsStr, precision) {
+                if (!pointsStr) return "";
+                return pointsStr.trim().split(/\s*,\s*|\s+/)
+                    .map(s => {
+                        const num = parseFloat(s);
+                        if (isNaN(num)) return s;
+                        return Number(num.toFixed(precision)).toString();
+                    })
+                    .join(' ');
+            }
+            
+            function roundTransformData(transformStr, precision) {
+                if (!transformStr) return "";
+                return transformStr.replace(/\(\s*([^)]+?)\s*\)/g, (match, argsStr) => {
+                    const roundedArgs = argsStr.trim().split(/\s*,\s*|\s+/)
+                        .map(s => {
+                            const num = parseFloat(s);
+                            if (isNaN(num)) return s;
+                            return Number(num.toFixed(precision)).toString();
+                        })
+                        .join(' ');
+                    return `(${roundedArgs})`;
+                });
+            }
+
+            function mergePolylines(svgElement, delta, precision) {
+                let polylines = Array.from(svgElement.querySelectorAll('polyline'));
+                let mergedSomethingInIteration = true;
+
+                while (mergedSomethingInIteration) {
+                    mergedSomethingInIteration = false;
+                    const currentPolylines = Array.from(svgElement.querySelectorAll('polyline')); // Ottieni sempre la lista aggiornata
+                    const numPolylines = currentPolylines.length;
+
+                    for (let i = 0; i < numPolylines; i++) {
+                        const poly1 = currentPolylines[i];
+                        if (!poly1 || !poly1.parentElement) continue; // Già rimossa o non valida
+
+                        const points1Str = poly1.getAttribute('points');
+                        if (!points1Str) continue;
+                        const points1 = parsePoints(points1Str);
+                        if (points1.length < 2) continue; // Ha bisogno di almeno due punti per avere un inizio e una fine
+                        const lastP1 = points1[points1.length - 1];
+
+                        for (let j = 0; j < numPolylines; j++) { // Riconsidera tutti i candidati, anche quelli già processati come poly1
+                            if (i === j) continue;
+                            const poly2 = currentPolylines[j];
+                            if (!poly2 || !poly2.parentElement) continue;
+
+                            if (!areAttributesCompatible(poly1, poly2, ['points', 'id'])) continue;
+
+                            const points2Str = poly2.getAttribute('points');
+                            if (!points2Str) continue;
+                            const points2 = parsePoints(points2Str);
+                            if (points2.length === 0) continue;
+                            const firstP2 = points2[0];
+
+                            if (calculateDistance(lastP1, firstP2) < delta) {
+                                const mergedPointsArray = points1.concat(points2.slice(1)); // Non includere il primo punto di poly2 se unito
+                                poly1.setAttribute('points', formatPoints(mergedPointsArray, precision));
+                                poly2.remove();
+                                
+                                mergedSomethingInIteration = true;
+                                break; // Esce dal ciclo interno (j) e ricomincia l'analisi con la lista aggiornata
+                            }
+                        }
+                        if (mergedSomethingInIteration) break; // Esce dal ciclo esterno (i) per ricominciare
+                    }
+                }
+            }
+            
+            function areAttributesCompatible(el1, el2, ignoreAttrs = []) {
+                const getRelevantAttributes = (el) => {
+                    const attrs = {};
+                    for (const attr of Array.from(el.attributes)) {
+                        if (!ignoreAttrs.includes(attr.name) && attr.name !== 'style') {
+                            attrs[attr.name] = attr.value;
+                        }
+                    }
+                    // Normalizza gli stili inline per confronto
+                    const style = el.getAttribute('style');
+                    if (style) {
+                        style.split(';').forEach(s => {
+                            const parts = s.split(':');
+                            if (parts.length === 2) {
+                                const prop = parts[0].trim();
+                                const val = parts[1].trim();
+                                if (prop && val && !ignoreAttrs.includes(prop)) {
+                                    attrs[`style-${prop}`] = val; // Prefissa per evitare collisioni
+                                }
+                            }
+                        });
+                    }
+                    return attrs;
+                };
+
+                const attrs1 = getRelevantAttributes(el1);
+                const attrs2 = getRelevantAttributes(el2);
+
+                const keys1 = Object.keys(attrs1);
+                const keys2 = Object.keys(attrs2);
+
+                if (keys1.length !== keys2.length) return false;
+
+                for (const key of keys1) {
+                    if (!attrs2.hasOwnProperty(key) || attrs1[key] !== attrs2[key]) {
+                        // Gestione speciale per fill e stroke 'none' vs assenza
+                        if ((key === 'fill' || key === 'stroke' || key === 'style-fill' || key === 'style-stroke')) {
+                            const v1 = attrs1[key] ? attrs1[key].toLowerCase() : 'none'; // Considera assente come 'none'
+                            const v2 = attrs2[key] ? attrs2[key].toLowerCase() : 'none';
+                            if (v1 === 'none' && (v2 === 'none' || v2 === null)) continue;
+                            if (v2 === 'none' && (v1 === 'none' || v1 === null)) continue;
+                        }
+                        return false;
+                    }
+                }
+                return true;
+            }
+
+            function parsePoints(pointsStr) {
+                if (!pointsStr) return [];
+                const coords = pointsStr.trim().split(/[,\s]+/); // Splitta per virgola o spazio
+                const points = [];
+                for (let i = 0; i < coords.length -1; i += 2) { // -1 per assicurare coppie
+                    const x = parseFloat(coords[i]);
+                    const y = parseFloat(coords[i + 1]);
+                    if (!isNaN(x) && !isNaN(y)) {
+                        points.push([x,y]);
+                    }
+                }
+                return points;
+            }
+
+            function formatPoints(pointsArray, precision) {
+                return pointsArray.map(p => 
+                    `${Number(p[0].toFixed(precision))} ${Number(p[1].toFixed(precision))}`
+                ).join(' ');
+            }
+
+            function calculateDistance(p1, p2) {
+                if (!p1 || !p2 || p1.length < 2 || p2.length < 2) return Infinity;
+                return Math.sqrt(Math.pow(p1[0] - p2[0], 2) + Math.pow(p1[1] - p2[1], 2));
+            }
+
+            function cleanupAttributesRecursive(element) {
+                if (element.nodeType !== Node.ELEMENT_NODE) return;
+
+                const defaultAttrsToRemove = { // Questi sono attributi che se hanno il valore specificato, possono essere rimossi
+                    'fill-opacity': '1',
+                    'stroke-opacity': '1',
+                    'opacity': '1', // Solo se non è un <g> con figli che potrebbero ereditarlo diversamente
+                    'stroke-width': '1', // Rimuovere con cautela
+                    'shape-rendering': 'auto',
+                    'image-rendering': 'auto',
+                    'text-rendering': 'auto',
+                    'color-interpolation': 'sRGB',
+                    'color-interpolation-filters': 'linearRGB',
+                    // 'xml:space': 'preserve', // Rimosso globalmente se non ci sono text/tspan
+                    'vector-effect': 'none',
+                    'clip-rule': 'nonzero', // Default
+                    'fill-rule': 'nonzero', // Default per la maggior parte, ma 'evenodd' è possibile
+                    'display': 'inline', // Default per molti elementi, ma non per <svg> o elementi nascosti
+                };
+                // Attributi specifici dell'elemento <svg>
+                if (element.tagName.toLowerCase() === 'svg') {
+                    if (element.getAttribute('version') === '1.1' || element.getAttribute('version') === '1.0') {
+                        element.removeAttribute('version');
+                    }
+                    if (element.hasAttribute('xmlns:xlink') && !originalSvgString.includes('xlink:href')) {
+                        element.removeAttribute('xmlns:xlink');
+                    }
+                     if (element.getAttribute('xml:space') === 'preserve' && !element.querySelector('text, tspan')) {
+                         element.removeAttribute('xml:space');
+                    }
+                    if (element.getAttribute('xmlns') === 'http://www.w3.org/2000/svg') {
+                        // Non rimuovere il namespace principale su <svg> a meno che non si sia sicuri che non sia necessario per il rendering (di solito lo è)
+                    }
+                }
+
+                for (const attrName in defaultAttrsToRemove) {
+                    if (element.getAttribute(attrName) === defaultAttrsToRemove[attrName]) {
+                        // Alcune cautele
+                        if (attrName === 'opacity' && element.getAttribute(attrName) === '1' && element.tagName.toLowerCase() === 'g') {
+                            // Non rimuovere opacity="1" da un gruppo, potrebbe sovrascrivere un'opacità <1 del genitore per i suoi figli
+                            continue;
+                        }
+                        if (attrName === 'display' && element.getAttribute(attrName) === 'inline' && element.tagName.toLowerCase() === 'svg') {
+                             continue; // display="inline" su svg root ha un significato
+                        }
+                        element.removeAttribute(attrName);
+                    }
+                }
+                
+                // Rimuove attributi di stile se sono vuoti
+                if (element.hasAttribute('style') && element.getAttribute('style').trim() === '') {
+                    element.removeAttribute('style');
+                }
+                // Rimuovi attributi con valori vuoti (es. class="")
+                for (const attr of Array.from(element.attributes)) {
+                    if (attr.value.trim() === '' && attr.name !== 'd' && attr.name !== 'points') { // d e points possono essere vuoti validamente
+                        element.removeAttribute(attr.name);
+                    }
+                }
+
+                // Rimuovi fill="none" o stroke="none" se è il default implicito e non c'è un altro valore ereditato
+                // Questa è un'euristica MOLTO semplificata. SVGO è molto più accurato.
+                // Se un elemento non ha fill esplicito e il suo parent non ha un fill che lo influenzerebbe, fill="black" è il default per shapes.
+                // Se non ha stroke esplicito, stroke="none" è il default.
+                if (element.getAttribute('stroke') === 'none') {
+                    // Potrebbe essere rimosso se 'none' è il valore di default calcolato
+                    // Ma è difficile determinarlo senza un motore di rendering CSS completo. Per sicurezza, lo si lascia.
+                }
+                // fill="black" può essere rimosso solo se l'elemento è un <path>, <rect>, <circle>, etc.
+                // e non c'è un fill diverso ereditato. Complesso.
+
+                Array.from(element.children).forEach(child => cleanupAttributesRecursive(child));
+            }
+
+            function removeEmptyGroupsIterative(svgElement) {
+                let changed;
+                do {
+                    changed = false;
+                    const groups = svgElement.querySelectorAll('g');
+                    for (let i = groups.length - 1; i >= 0; i--) {
+                        const g = groups[i];
+                        let hasSignificantAttributes = false;
+                        const significantAttrNames = ['transform', 'clip-path', 'mask', 'opacity', 'filter', 'fill', 'stroke', 'stroke-width', 'font-family', 'font-size', 'display', 'visibility'];
+                        
+                        for (const attr of Array.from(g.attributes)) {
+                            if (attr.name.toLowerCase() === 'id' || attr.name.toLowerCase() === 'class') continue; // ID e Class potrebbero essere usati da CSS o JS esterno
+
+                            if (significantAttrNames.includes(attr.name.toLowerCase())) {
+                                // Alcuni valori sono "default" e non rendono il gruppo significativo da solo
+                                if (attr.name.toLowerCase() === 'opacity' && attr.value === '1') continue;
+                                if (attr.name.toLowerCase() === 'display' && attr.value === 'inline') continue;
+                                if (attr.name.toLowerCase() === 'visibility' && attr.value === 'visible') continue;
+                                
+                                hasSignificantAttributes = true;
+                                break;
+                            } else { 
+                                // Qualsiasi altro attributo (es. data-*) lo rende significativo
+                                hasSignificantAttributes = true;
+                                break;
+                            }
+                        }
+
+                        if (g.children.length === 0 && g.textContent.trim() === '' && !hasSignificantAttributes) {
+                            g.remove();
+                            changed = true;
+                        }
+                    }
+                } while (changed);
+            }
+        });
+    </script>
+</body>
+</html>

@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Editor Immagine con Bordo e Filtri</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: #f0f2f5;
+            color: #333;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: flex-start;
+            min-height: 100vh;
+            margin: 0;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+
+        .container {
+            max-width: 800px;
+            width: 100%;
+            background-color: #ffffff;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+            text-align: center;
+        }
+        
+        h1 { color: #1a73e8; margin-top: 0; }
+        p { margin-bottom: 25px; color: #5f6368; }
+
+        #drop-zone {
+            border: 3px dashed #cccccc;
+            border-radius: 10px;
+            padding: 50px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            margin-bottom: 20px;
+        }
+
+        #drop-zone p { margin: 0; font-size: 1.2em; color: #999; pointer-events: none; }
+        #drop-zone.drag-over { border-color: #1a73e8; background-color: #e8f0fe; }
+        
+        #controls {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+        
+        .control-group label { display: block; margin-bottom: 8px; font-weight: 600; text-align: left; }
+        .control-group input[type="range"] { width: 100%; cursor: pointer; }
+        .control-group span { font-weight: bold; color: #1a73e8; }
+        
+        #actions { margin-bottom: 30px; }
+
+        #save-button {
+            background-color: #1a73e8;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            font-size: 1em;
+            font-weight: 600;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: background-color 0.3s, transform 0.2s;
+        }
+        
+        #save-button:hover:not(:disabled) { background-color: #1558b8; transform: translateY(-1px); }
+        #save-button:disabled { background-color: #cccccc; cursor: not-allowed; }
+
+        #output-container {
+            display: none;
+            width: 100%;
+            max-width: 600px;
+            margin: 0 auto;
+            background-color: white;
+            padding: 5%;
+            box-sizing: border-box;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+        }
+
+        #image-element {
+            width: 100%;
+            height: 100%;
+            background-size: cover;
+            background-position: center;
+            background-repeat: no-repeat;
+            transition: filter 0.1s ease-out; /* Transizione fluida per i filtri */
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h1>Editor di Immagini Semplice</h1>
+        <p>Carica un'immagine, applica filtri e un bordo, poi salvala.</p>
+
+        <div id="drop-zone">
+            <label for="file-input" style="cursor: pointer; display: block; width: 100%; height: 100%;">
+                <p>Trascina qui o <strong>clicca per selezionare</strong></p>
+            </label>
+            <input type="file" id="file-input" hidden accept="image/*">
+        </div>
+
+        <div id="controls">
+             <div class="control-group">
+                <label for="border-slider">Spessore Bordo: <span id="border-value">5</span>%</label>
+                <input type="range" id="border-slider" min="0" max="25" value="5">
+            </div>
+            <div class="control-group">
+                <label for="radius-slider">Stondatura Interna: <span id="radius-value">20</span>%</label>
+                <input type="range" id="radius-slider" min="0" max="50" value="20">
+            </div>
+            <div class="control-group">
+                <label for="brightness-slider">Luminosità: <span id="brightness-value">100</span>%</label>
+                <input type="range" id="brightness-slider" min="0" max="200" value="100">
+            </div>
+            <div class="control-group">
+                <label for="contrast-slider">Contrasto: <span id="contrast-value">100</span>%</label>
+                <input type="range" id="contrast-slider" min="0" max="200" value="100">
+            </div>
+            <div class="control-group">
+                <label for="saturate-slider">Saturazione: <span id="saturate-value">100</span>%</label>
+                <input type="range" id="saturate-slider" min="0" max="200" value="100">
+            </div>
+        </div>
+        
+        <div id="actions">
+            <button id="save-button" disabled>Salva Immagine</button>
+        </div>
+
+        <div id="output-container">
+            <div id="image-element"></div>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            
+            const dropZone = document.getElementById('drop-zone');
+            const fileInput = document.getElementById('file-input');
+            const outputContainer = document.getElementById('output-container');
+            const imageElement = document.getElementById('image-element');
+            const saveButton = document.getElementById('save-button');
+
+            // Riferimenti agli slider
+            const sliders = {
+                border: document.getElementById('border-slider'),
+                radius: document.getElementById('radius-slider'),
+                brightness: document.getElementById('brightness-slider'),
+                contrast: document.getElementById('contrast-slider'),
+                saturate: document.getElementById('saturate-slider'),
+            };
+
+            // Riferimenti ai valori testuali
+            const values = {
+                border: document.getElementById('border-value'),
+                radius: document.getElementById('radius-value'),
+                brightness: document.getElementById('brightness-value'),
+                contrast: document.getElementById('contrast-value'),
+                saturate: document.getElementById('saturate-value'),
+            };
+
+            let currentImageObject = null;
+
+            function updateImageStyle() {
+                if (!currentImageObject) return;
+
+                // Aggiorna i testi dei valori
+                values.border.textContent = sliders.border.value;
+                values.radius.textContent = sliders.radius.value;
+                values.brightness.textContent = sliders.brightness.value;
+                values.contrast.textContent = sliders.contrast.value;
+                values.saturate.textContent = sliders.saturate.value;
+
+                // Applica padding per il bordo
+                outputContainer.style.padding = `${sliders.border.value}%`;
+                
+                // Calcola e applica il raggio in pixel per angoli circolari
+                const radiusPercentage = sliders.radius.value / 100;
+                const shorterSide = Math.min(imageElement.offsetWidth, imageElement.offsetHeight);
+                const radiusInPixels = shorterSide * radiusPercentage;
+                imageElement.style.borderRadius = `${radiusInPixels}px`;
+
+                // Costruisce la stringa del filtro CSS
+                const filterString = `brightness(${sliders.brightness.value}%) contrast(${sliders.contrast.value}%) saturate(${sliders.saturate.value}%)`;
+                imageElement.style.filter = filterString;
+
+                outputContainer.style.display = 'block';
+            }
+            
+            function processFile(file) {
+                if (file && file.type.startsWith('image/')) {
+                    const reader = new FileReader();
+                    reader.onload = (event) => {
+                        const img = new Image();
+                        img.onload = () => {
+                            currentImageObject = img;
+                            outputContainer.style.aspectRatio = `${img.naturalWidth} / ${img.naturalHeight}`;
+                            imageElement.style.backgroundImage = `url('${event.target.result}')`;
+                            
+                            // Resetta i filtri a default quando si carica una nuova immagine
+                            sliders.brightness.value = 100;
+                            sliders.contrast.value = 100;
+                            sliders.saturate.value = 100;
+
+                            saveButton.disabled = false;
+                            setTimeout(updateImageStyle, 0);
+                        };
+                        img.src = event.target.result;
+                    };
+                    reader.readAsDataURL(file);
+                } else {
+                    alert("Per favore, seleziona un file immagine valido.");
+                }
+            }
+
+            function saveImage() {
+                if (!currentImageObject) return;
+                
+                const originalText = saveButton.textContent;
+                saveButton.textContent = 'Salvataggio...';
+                saveButton.disabled = true;
+
+                const img = currentImageObject;
+                const canvas = document.createElement('canvas');
+                const ctx = canvas.getContext('2d');
+
+                const borderPercent = sliders.border.value / 100;
+                const radiusPercent = sliders.radius.value / 100;
+                
+                const maxWidth = 1920; 
+                const aspectRatio = img.naturalHeight / img.naturalWidth;
+                canvas.width = Math.min(maxWidth, img.naturalWidth);
+                canvas.height = canvas.width * aspectRatio;
+
+                const borderWidth = canvas.width * borderPercent;
+                const imageAreaWidth = canvas.width - (2 * borderWidth);
+                const imageAreaHeight = canvas.height - (2 * borderWidth);
+                const shorterSide = Math.min(imageAreaWidth, imageAreaHeight);
+                const cornerRadius = shorterSide * radiusPercent;
+
+                ctx.fillStyle = 'white';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                ctx.save();
+                ctx.beginPath();
+                ctx.moveTo(borderWidth + cornerRadius, borderWidth);
+                ctx.arcTo(borderWidth + imageAreaWidth, borderWidth, borderWidth + imageAreaWidth, borderWidth + imageAreaHeight, cornerRadius);
+                ctx.arcTo(borderWidth + imageAreaWidth, borderWidth + imageAreaHeight, borderWidth, borderWidth + imageAreaHeight, cornerRadius);
+                ctx.arcTo(borderWidth, borderWidth + imageAreaHeight, borderWidth, borderWidth, cornerRadius);
+                ctx.arcTo(borderWidth, borderWidth, borderWidth + imageAreaWidth, borderWidth, cornerRadius);
+                ctx.closePath();
+                ctx.clip();
+
+                // **NUOVO**: Applica gli stessi filtri al contesto del canvas
+                const filterString = `brightness(${sliders.brightness.value}%) contrast(${sliders.contrast.value}%) saturate(${sliders.saturate.value}%)`;
+                ctx.filter = filterString;
+
+                ctx.drawImage(img, borderWidth, borderWidth, imageAreaWidth, imageAreaHeight);
+                
+                ctx.restore();
+
+                const link = document.createElement('a');
+                link.download = 'immagine-modificata.png';
+                link.href = canvas.toDataURL('image/png', 0.98);
+                link.click();
+
+                saveButton.textContent = originalText;
+                saveButton.disabled = false;
+            }
+
+            function preventDefaults(e) { e.preventDefault(); e.stopPropagation(); }
+            ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(e => dropZone.addEventListener(e, preventDefaults));
+            ['dragenter', 'dragover'].forEach(e => dropZone.addEventListener(e, () => dropZone.classList.add('drag-over')));
+            ['dragleave', 'drop'].forEach(e => dropZone.addEventListener(e, () => dropZone.classList.remove('drag-over')));
+            dropZone.addEventListener('drop', (e) => processFile(e.dataTransfer.files[0]));
+            fileInput.addEventListener('change', (e) => processFile(e.target.files[0]));
+            
+            // Aggiunge un listener a tutti gli slider per aggiornare l'anteprima
+            Object.values(sliders).forEach(slider => slider.addEventListener('input', updateImageStyle));
+
+            saveButton.addEventListener('click', saveImage);
+            window.addEventListener('resize', updateImageStyle);
+        });
+    </script>
+
+</body>
+</html>

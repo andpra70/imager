@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Generatore Mosaici con Analisi Dettagli</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background-color: #f0f2f5; color: #333; margin: 0; padding: 2rem; display: flex; flex-direction: column; align-items: center; }
+        .container { background-color: white; padding: 2rem; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); width: 100%; max-width: 900px; }
+        h1 { text-align: center; color: #1a73e8; margin-top: 0; }
+        .controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1.5rem; margin-bottom: 2rem; padding: 1.5rem; border: 1px solid #ddd; border-radius: 8px; }
+        .control-group { display: flex; flex-direction: column; }
+        .control-group.full-width { grid-column: 1 / -1; }
+        label { font-weight: bold; margin-bottom: 0.5rem; color: #555; }
+        label i { font-weight: normal; font-size: 0.8em; color: #777; }
+        input[type="file"], input[type="number"], button, select { padding: 0.75rem; border-radius: 4px; border: 1px solid #ccc; font-size: 1rem; background-color: #fff; box-sizing: border-box; width: 100%; }
+        input[type="range"] { padding: 0; }
+        button { background-color: #1a73e8; color: white; border: none; cursor: pointer; font-weight: bold; transition: background-color: 0.2s; grid-column: 1 / -1; }
+        button:hover { background-color: #1558b3; }
+        button:disabled { background-color: #9e9e9e; cursor: not-allowed; }
+        .progress-container { display: none; margin-top: 1.5rem; text-align: center; }
+        progress { width: 100%; height: 25px; border-radius: 4px; }
+        .outputs { display: grid; grid-template-columns: 1fr; gap: 2rem; margin-top: 2rem; }
+        .output-box { text-align: center; }
+        h2 { color: #333; border-bottom: 2px solid #eee; padding-bottom: 0.5rem; margin-top: 0; }
+        .result-info { font-size: 0.9em; color: #666; margin-top: 0.5rem; }
+        img, canvas, #svgResultContainer svg { max-width: 100%; height: auto; border: 1px solid #ddd; border-radius: 4px; }
+        .palette-container { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; margin-top: 1rem; padding: 1rem; border: 1px solid #eee; border-radius: 4px; }
+        .color-box { width: 50px; height: 50px; border-radius: 4px; box-shadow: 0 2px 4px rgba(0,0,0,0.2); }
+        #saveBtn { display: none; margin-top: 2rem; text-decoration: none; text-align: center; background-color: #28a745; color: white; padding: 0.75rem; border-radius: 4px; font-weight: bold; }
+        #saveBtn:hover { background-color: #218838; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Generatore Mosaici con Analisi Dettagli</h1>
+        <div class="controls">
+            <div class="control-group"><label for="imageInput">1. Immagine</label><input type="file" id="imageInput" accept="image/*"></div>
+            <div class="control-group"><label for="numColors">2. N Colori</label><input type="number" id="numColors" value="16" min="2" max="256"></div>
+            <div class="control-group"><label for="tileSize">3. Dim. Tassello (px)</label><input type="number" id="tileSize" value="10" min="2" max="50"></div>
+            <div class="control-group"><label for="outputFormat">4. Formato Output</label>
+                <select id="outputFormat">
+                    <option value="svg_adaptive">SVG (Dettaglio Adattivo)</option>
+                    <option value="svg_optimized">SVG (Ottimizzato)</option>
+                    <option value="svg">SVG (Standard)</option>
+                    <option value="canvas">Canvas (PNG)</option>
+                </select>
+            </div>
+             <div class="control-group full-width">
+                <label for="colorTolerance" title="Max distanza colore per unire tasselli in aree a basso dettaglio. 0 = solo colori identici.">5. Tolleranza Colore: <span id="toleranceValue">20</span></label>
+                <input type="range" id="colorTolerance" min="0" max="100" value="20" oninput="document.getElementById('toleranceValue').textContent = this.value">
+            </div>
+            <button id="generateBtn">Genera Mosaico</button>
+        </div>
+        <div id="progressContainer" class="progress-container"><p id="progressLabel">Elaborazione...</p><progress id="progressBar" value="0" max="100"></progress></div>
+        <div class="outputs">
+            <div class="output-box" id="originalBox" style="display:none;"><h2>Immagine Originale</h2><img id="originalImage" src="" alt="Immagine Originale"></div>
+            <div class="output-box" id="resultBox" style="display:none;"><h2>Palette e Mosaico</h2>
+                <div id="paletteContainer" class="palette-container"></div>
+                <div id="resultInfo" class="result-info"></div>
+                <canvas id="resultCanvas" style="display: none;"></canvas>
+                <div id="svgResultContainer"></div>
+                <a id="saveBtn" href="#" download="mosaico.svg">Salva Mosaico</a>
+            </div>
+        </div>
+    </div>
+    <script>
+        // DOM Elements
+        const imageInput = document.getElementById('imageInput');
+        const numColorsInput = document.getElementById('numColors');
+        const tileSizeInput = document.getElementById('tileSize');
+        const outputFormatSelect = document.getElementById('outputFormat');
+        const colorToleranceInput = document.getElementById('colorTolerance');
+        const generateBtn = document.getElementById('generateBtn');
+        const progressContainer = document.getElementById('progressContainer');
+        const progressBar = document.getElementById('progressBar');
+        const progressLabel = document.getElementById('progressLabel');
+        const originalBox = document.getElementById('originalBox');
+        const originalImage = document.getElementById('originalImage');
+        const resultBox = document.getElementById('resultBox');
+        const paletteContainer = document.getElementById('paletteContainer');
+        const resultCanvas = document.getElementById('resultCanvas');
+        const svgResultContainer = document.getElementById('svgResultContainer');
+        const saveBtn = document.getElementById('saveBtn');
+        const resultInfo = document.getElementById('resultInfo');
+        let sourceImage = new Image();
+        let currentSvgData = "";
+
+        // --- Event Listeners and Main Logic ---
+        imageInput.addEventListener('change', (e) => {
+            const file = e.target.files[0]; if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                sourceImage.src = event.target.result;
+                sourceImage.onload = () => { originalImage.src = sourceImage.src; originalBox.style.display = 'block'; resultBox.style.display = 'none'; };
+            };
+            reader.readAsDataURL(file);
+        });
+
+        generateBtn.addEventListener('click', async () => {
+            if (!sourceImage.src) { alert("Per favore, scegli prima un'immagine."); return; }
+            generateBtn.disabled = true;
+            progressContainer.style.display = 'block';
+            resultBox.style.display = 'none';
+            resultInfo.innerHTML = '';
+            
+            const numColors = parseInt(numColorsInput.value);
+            const tileSize = parseInt(tileSizeInput.value);
+            const outputFormat = outputFormatSelect.value;
+            const colorTolerance = parseInt(colorToleranceInput.value);
+            
+            // **FIX**: Declare a flag here
+            let wasError = false;
+
+            try {
+                // PHASE 1: Palette Extraction
+                updateProgress(0, "Fase 1/2: Estraggo la palette...");
+                const palette = await extractPalette(sourceImage, numColors);
+                displayPalette(palette);
+                
+                // Reset UI for results
+                resultCanvas.style.display = 'none';
+                svgResultContainer.innerHTML = '';
+
+                if (outputFormat === 'svg_adaptive') {
+                    await drawMosaicWithDetailAnalysis(sourceImage, svgResultContainer, palette, tileSize, colorTolerance);
+                    setupSvgSave();
+                } else if (outputFormat === 'svg_optimized') {
+                    await drawMosaicAsOptimizedSVG(sourceImage, svgResultContainer, palette, tileSize);
+                    setupSvgSave();
+                } else if (outputFormat === 'svg') {
+                     await drawMosaicAsSVG(sourceImage, svgResultContainer, palette, tileSize);
+                     setupSvgSave();
+                } else { // canvas
+                    resultCanvas.style.display = 'block';
+                    await drawMosaicOnCanvas(sourceImage, resultCanvas, palette, tileSize);
+                    setupCanvasSave();
+                }
+                
+                updateProgress(100, "Completato!");
+                resultBox.style.display = 'block';
+                saveBtn.style.display = 'inline-block';
+
+            } catch (error) {
+                console.error("Errore:", error);
+                alert("Si è verificato un errore. Controlla la console per i dettagli.");
+                wasError = true; // Set flag on error
+            } finally {
+                 // **FIX**: Check the flag, not the `error` object which is out of scope.
+                setTimeout(() => {
+                    if (!wasError) {
+                        progressContainer.style.display = 'none';
+                    }
+                    generateBtn.disabled = false;
+                }, 1500);
+            }
+        });
+
+        // --- All drawing functions ---
+
+        async function drawMosaicWithDetailAnalysis(image, container, palette, tileSize, tolerance) {
+            const toleranceSq = tolerance * tolerance;
+            const numTilesX = Math.ceil(image.width / tileSize);
+            const numTilesY = Math.ceil(image.height / tileSize);
+            
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = image.width; tempCanvas.height = image.height;
+            const tempCtx = tempCanvas.getContext('2d');
+            tempCtx.drawImage(image, 0, 0);
+            const imageData = tempCtx.getImageData(0, 0, image.width, image.height);
+
+            updateProgress(33, `Fase 2/3: Analizzo i colori dei tasselli...`);
+            const tileColorsGrid = Array.from({ length: numTilesY }, () => Array(numTilesX));
+            for (let ty = 0; ty < numTilesY; ty++) {
+                for (let tx = 0; tx < numTilesX; tx++) {
+                    tileColorsGrid[ty][tx] = findClosestColor(getAverageColorForTile(imageData, tx * tileSize, ty * tileSize, tileSize), palette);
+                }
+            }
+
+            updateProgress(50, `Fase 2/3: Calcolo mappa dei dettagli...`);
+            const detailGrid = Array.from({ length: numTilesY }, () => Array(numTilesX));
+            let maxDetail = 0;
+            for (let ty = 0; ty < numTilesY; ty++) {
+                for (let tx = 0; tx < numTilesX; tx++) {
+                    const detail = calculateTileDetail(imageData, tx * tileSize, ty * tileSize, tileSize);
+                    detailGrid[ty][tx] = detail;
+                    if (detail > maxDetail) maxDetail = detail;
+                }
+            }
+            
+            updateProgress(66, `Fase 3/3: Unisco le forme in base ai dettagli...`);
+            const processedGrid = Array.from({ length: numTilesY }, () => Array(numTilesX).fill(false));
+            const svgElements = [];
+            for (let ty = 0; ty < numTilesY; ty++) {
+                for (let tx = 0; tx < numTilesX; tx++) {
+                    if (processedGrid[ty][tx]) continue;
+                    const startColor = tileColorsGrid[ty][tx];
+                    let rectWidth = 1;
+                    while (tx + rectWidth < numTilesX) {
+                        if (processedGrid[ty][tx + rectWidth]) break;
+                        const localMaxDetail = Math.max(detailGrid[ty][tx + rectWidth - 1], detailGrid[ty][tx + rectWidth]);
+                        const localToleranceSq = toleranceSq * Math.pow(1 - (maxDetail > 0 ? localMaxDetail / maxDetail : 0), 2);
+                        if (colorDistance(startColor, tileColorsGrid[ty][tx + rectWidth]) > localToleranceSq) break;
+                        rectWidth++;
+                    }
+                    let rectHeight = 1;
+                    while (ty + rectHeight < numTilesY) {
+                        let canExpandRow = true;
+                        for (let i = 0; i < rectWidth; i++) {
+                            if (processedGrid[ty + rectHeight][tx + i]) { canExpandRow = false; break; }
+                            const localMaxDetail = Math.max(detailGrid[ty + rectHeight - 1][tx + i], detailGrid[ty + rectHeight][tx + i]);
+                            const localToleranceSq = toleranceSq * Math.pow(1 - (maxDetail > 0 ? localMaxDetail / maxDetail : 0), 2);
+                            if (colorDistance(startColor, tileColorsGrid[ty + rectHeight][tx + i]) > localToleranceSq) { canExpandRow = false; break; }
+                        }
+                        if (canExpandRow) rectHeight++; else break;
+                    }
+                    svgElements.push(`<rect x="${tx*tileSize}" y="${ty*tileSize}" width="${rectWidth*tileSize}" height="${rectHeight*tileSize}" fill="rgb(${startColor.r},${startColor.g},${startColor.b})" />`);
+                    for (let y = 0; y < rectHeight; y++) { for (let x = 0; x < rectWidth; x++) { processedGrid[ty + y][tx + x] = true; } }
+                }
+                const progress = 66 + ((ty + 1) / numTilesY) * 34;
+                updateProgress(progress, `Fase 3/3: Unisco le forme... (${Math.round((progress-66)/34*100)}%)`);
+            }
+            resultInfo.textContent = `Mosaico Adattivo: ${svgElements.length} forme generate (su ${numTilesX * numTilesY} tasselli).`;
+            currentSvgData = `<svg width="${image.width}" height="${image.height}" xmlns="http://www.w3.org/2000/svg" shape-rendering="crispEdges">${svgElements.join('')}</svg>`;
+            container.innerHTML = currentSvgData;
+        }
+
+        async function drawMosaicAsOptimizedSVG(image, container, palette, tileSize) {
+            updateProgress(50, `Fase 2/2: Analizzo e unisco...`);
+            const numTilesX = Math.ceil(image.width / tileSize);
+            const numTilesY = Math.ceil(image.height / tileSize);
+            const tileColorsGrid = Array.from({ length: numTilesY }, () => Array(numTilesX));
+            const processedGrid = Array.from({ length: numTilesY }, () => Array(numTilesX).fill(false));
+            
+            const tempCanvas = document.createElement('canvas'); tempCanvas.width = image.width; tempCanvas.height = image.height;
+            const tempCtx = tempCanvas.getContext('2d'); tempCtx.drawImage(image, 0, 0);
+            const imageData = tempCtx.getImageData(0, 0, image.width, image.height);
+
+            for (let ty = 0; ty < numTilesY; ty++) {
+                for (let tx = 0; tx < numTilesX; tx++) {
+                    tileColorsGrid[ty][tx] = findClosestColor(getAverageColorForTile(imageData, tx * tileSize, ty * tileSize, tileSize), palette);
+                }
+            }
+            
+            const svgElements = [];
+            for (let ty = 0; ty < numTilesY; ty++) {
+                for (let tx = 0; tx < numTilesX; tx++) {
+                    if (processedGrid[ty][tx]) continue;
+                    const targetColor = tileColorsGrid[ty][tx];
+                    let rectWidth = 1;
+                    while (tx + rectWidth < numTilesX && !processedGrid[ty][tx + rectWidth] && areColorsEqual(tileColorsGrid[ty][tx + rectWidth], targetColor)) rectWidth++;
+                    let rectHeight = 1;
+                    while (ty + rectHeight < numTilesY) {
+                        let canExpandRow = true;
+                        for (let i = 0; i < rectWidth; i++) {
+                            if (processedGrid[ty + rectHeight][tx + i] || !areColorsEqual(tileColorsGrid[ty + rectHeight][tx + i], targetColor)) { canExpandRow = false; break; }
+                        }
+                        if (canExpandRow) rectHeight++; else break;
+                    }
+                    svgElements.push(`<rect x="${tx*tileSize}" y="${ty*tileSize}" width="${rectWidth*tileSize}" height="${rectHeight*tileSize}" fill="rgb(${targetColor.r},${targetColor.g},${targetColor.b})" />`);
+                    for (let y = 0; y < rectHeight; y++) { for (let x = 0; x < rectWidth; x++) { processedGrid[ty + y][tx + x] = true; } }
+                }
+                const progress = 50 + ((ty + 1) / numTilesY) * 50;
+                updateProgress(progress, `Fase 2/2: Unisco forme... (${Math.round((progress-50)*2)}%)`);
+            }
+            resultInfo.textContent = `Mosaico Ottimizzato: ${svgElements.length} forme generate (su ${numTilesX * numTilesY} tasselli).`;
+            currentSvgData = `<svg width="${image.width}" height="${image.height}" xmlns="http://www.w3.org/2000/svg" shape-rendering="crispEdges">${svgElements.join('')}</svg>`;
+            container.innerHTML = currentSvgData;
+        }
+
+        async function drawMosaicAsSVG(image, container, palette, tileSize) {
+            updateProgress(50, `Fase 2/2: Genero SVG...`);
+            const svgElements = [];
+            const tempCanvas = document.createElement('canvas'); tempCanvas.width = image.width; tempCanvas.height = image.height;
+            const tempCtx = tempCanvas.getContext('2d'); tempCtx.drawImage(image, 0, 0);
+            const imageData = tempCtx.getImageData(0, 0, image.width, image.height);
+            for (let y = 0; y < image.height; y += tileSize) {
+                for (let x = 0; x < image.width; x += tileSize) {
+                    const color = findClosestColor(getAverageColorForTile(imageData, x, y, tileSize), palette);
+                    svgElements.push(`<rect x="${x}" y="${y}" width="${tileSize}" height="${tileSize}" fill="rgb(${color.r},${color.g},${color.b})" />`);
+                }
+                const progress = 50 + ((y + tileSize) / image.height) * 50;
+                updateProgress(progress, `Fase 2/2: Genero SVG... (${Math.round((progress-50)*2)}%)`);
+            }
+            resultInfo.textContent = `Mosaico Standard: ${svgElements.length} forme generate.`;
+            currentSvgData = `<svg width="${image.width}" height="${image.height}" xmlns="http://www.w3.org/2000/svg" shape-rendering="crispEdges">${svgElements.join('')}</svg>`;
+            container.innerHTML = currentSvgData;
+        }
+
+        async function drawMosaicOnCanvas(image, canvas, palette, tileSize) {
+            updateProgress(50, `Fase 2/2: Disegno su Canvas...`);
+            canvas.width = image.width; canvas.height = image.height;
+            const ctx = canvas.getContext('2d'); ctx.imageSmoothingEnabled = false;
+            const tempCanvas = document.createElement('canvas'); tempCanvas.width = image.width; tempCanvas.height = image.height;
+            const tempCtx = tempCanvas.getContext('2d'); tempCtx.drawImage(image, 0, 0);
+            const imageData = tempCtx.getImageData(0, 0, image.width, image.height);
+            for (let y = 0; y < image.height; y += tileSize) {
+                for (let x = 0; x < image.width; x += tileSize) {
+                    const color = findClosestColor(getAverageColorForTile(imageData, x, y, tileSize), palette);
+                    ctx.fillStyle = `rgb(${color.r},${color.g},${color.b})`;
+                    ctx.fillRect(x, y, tileSize, tileSize);
+                }
+                const progress = 50 + ((y + tileSize) / image.height) * 50;
+                updateProgress(progress, `Fase 2/2: Disegno... (${Math.round((progress-50)*2)}%)`);
+            }
+            resultInfo.textContent = `Mosaico Raster (${image.width}x${image.height}px).`;
+        }
+
+        // --- UTILITY AND HELPER FUNCTIONS ---
+        function calculateTileDetail(imageData, tileX, tileY, tileSize) {
+            const pixels = [];
+            const { data, width: imageWidth, height: imageHeight } = imageData;
+            const endX = Math.min(tileX + tileSize, imageWidth);
+            const endY = Math.min(tileY + tileSize, imageHeight);
+            for (let y = tileY; y < endY; y++) { for (let x = tileX; x < endX; x++) { const i = (y * imageWidth + x) * 4; pixels.push({ r: data[i], g: data[i+1], b: data[i+2] }); } }
+            if (pixels.length < 2) return 0;
+            const mean = averageColor(pixels);
+            const sumOfSquares = pixels.reduce((acc, p) => { acc.r += (p.r - mean.r) ** 2; acc.g += (p.g - mean.g) ** 2; acc.b += (p.b - mean.b) ** 2; return acc; }, { r: 0, g: 0, b: 0 });
+            const stdDev = { r: Math.sqrt(sumOfSquares.r / pixels.length), g: Math.sqrt(sumOfSquares.g / pixels.length), b: Math.sqrt(sumOfSquares.b / pixels.length) };
+            return (stdDev.r + stdDev.g + stdDev.b) / 3;
+        }
+        function updateProgress(value, label) { progressBar.value = value; progressLabel.textContent = label; }
+        function displayPalette(palette) { paletteContainer.innerHTML = ''; palette.forEach(color => { const colorBox = document.createElement('div'); colorBox.className = 'color-box'; const rgb = `rgb(${color.r},${color.g},${color.b})`; colorBox.style.backgroundColor = rgb; colorBox.title = rgb; paletteContainer.appendChild(colorBox); }); };
+        function setupSvgSave() { const blob = new Blob([currentSvgData], { type: 'image/svg+xml' }); saveBtn.href = URL.createObjectURL(blob); saveBtn.download = 'mosaico.svg'; }
+        function setupCanvasSave() { saveBtn.href = resultCanvas.toDataURL('image/png'); saveBtn.download = 'mosaico.png'; }
+        function colorDistance(c1, c2) { return (c1.r - c2.r)**2 + (c1.g - c2.g)**2 + (c1.b - c2.b)**2; }
+        function areColorsEqual(c1, c2) { return c1.r === c2.r && c1.g === c2.g && c1.b === c2.b; }
+        function averageColor(pixels) { const total = pixels.reduce((acc, p) => { acc.r += p.r; acc.g += p.g; acc.b += p.b; return acc; }, { r: 0, g: 0, b: 0 }); const len = pixels.length || 1; return { r: total.r / len, g: total.g / len, b: total.b / len }; }
+        function findClosestColor(color, palette) { let closest = palette[0]; let minDistance = Infinity; for (const pColor of palette) { const distance = colorDistance(color, pColor); if (distance < minDistance) { minDistance = distance; closest = pColor; } } return closest; }
+        function getAverageColorForTile(imageData, tileX, tileY, tileSize) {
+            let r = 0, g = 0, b = 0, count = 0; const { data, width: imageWidth, height: imageHeight } = imageData;
+            const endX = Math.min(tileX + tileSize, imageWidth); const endY = Math.min(tileY + tileSize, imageHeight);
+            for (let y = tileY; y < endY; y++) { for (let x = tileX; x < endX; x++) { const i = (y * imageWidth + x) * 4; r += data[i]; g += data[i+1]; b += data[i+2]; count++; } }
+            return { r: r/count, g: g/count, b: b/count };
+        }
+        function extractPalette(image, k) { return new Promise(resolve => { const tempCanvas = document.createElement('canvas'); const tempCtx = tempCanvas.getContext('2d'); const MAX_PIXELS = 40000; let w = image.width, h = image.height; if (w*h > MAX_PIXELS) { const r = Math.sqrt((w*h)/MAX_PIXELS); w = Math.floor(w/r); h = Math.floor(h/r); } tempCanvas.width = w; tempCanvas.height = h; tempCtx.drawImage(image, 0, 0, w, h); const data = tempCtx.getImageData(0,0,w,h).data; const pixels = []; for (let i = 0; i < data.length; i+=4) pixels.push({r:data[i],g:data[i+1],b:data[i+2]}); let centroids = pixels.slice(0, k).map(() => pixels[Math.floor(Math.random()*pixels.length)]); let iter = 0; const maxIter=20; function run(){ const clusters = Array.from({length:k},()=>[]); for(const p of pixels){let minDist=Infinity, cI=0; for(let i=0;i<centroids.length;i++){const d=colorDistance(p,centroids[i]);if(d<minDist){minDist=d;cI=i;}}clusters[cI].push(p);} let moved=false; const newCentroids=[]; for(let i=0;i<k;i++){if(clusters[i].length>0){const newC=averageColor(clusters[i]);if(colorDistance(newC,centroids[i])>0.1) moved=true; newCentroids[i]=newC;}else{newCentroids[i]=pixels[Math.floor(Math.random()*pixels.length)];}} iter++; const progress=(iter/maxIter)*33; updateProgress(progress, `Fase 1/2: Ottimizzo palette (iter. ${iter}/${maxIter})`); if(iter>=maxIter||!moved){resolve(newCentroids.map(c=>({r:Math.round(c.r),g:Math.round(c.g),b:Math.round(c.b)}))); return;} centroids=newCentroids; setTimeout(run,0);} run(); }); };
+    </script>
+</body>
+</html>

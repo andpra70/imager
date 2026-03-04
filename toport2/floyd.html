@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Image Processor</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            margin: 20px;
+            background-color: #f0f0f0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .controls {
+            margin-bottom: 20px;
+            padding: 15px;
+            background-color: #fff;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .controls label, .controls input, .controls button {
+            margin-right: 10px;
+            padding: 8px;
+        }
+        .canvases {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 20px;
+        }
+        .canvas-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 10px;
+            background-color: #fff;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        canvas {
+            border: 1px solid #ccc;
+            max-width: 300px; /* Limita la larghezza massima per il layout */
+            max-height: 300px;
+            object-fit: contain; /* Mantiene le proporzioni se scalato */
+        }
+        h3 {
+            margin-top: 0;
+            color: #333;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="controls">
+        <label for="imageLoader">Scegli Immagine:</label>
+        <input type="file" id="imageLoader" name="imageLoader" accept="image/*"/>
+        <br><br>
+        <label for="grayLevels">Livelli di Grigio (N):</label>
+        <input type="number" id="grayLevels" name="grayLevels" value="4" min="2" max="256">
+        <button id="processButton" disabled>Processa Immagine</button>
+    </div>
+
+    <div class="canvases">
+        <div class="canvas-container">
+            <h3>Originale (Scalata)</h3>
+            <canvas id="originalCanvas"></canvas>
+        </div>
+        <div class="canvas-container">
+            <h3>Quantizzata a N Livelli</h3>
+            <canvas id="quantizedCanvas"></canvas>
+        </div>
+        <div class="canvas-container">
+            <h3>Diffusione Errore (2 Colori)</h3>
+            <canvas id="ditheredCanvas"></canvas>
+        </div>
+        <div class="canvas-container">
+            <h3>Tracciato Punti (Penna Unica)</h3>
+            <canvas id="pathCanvas"></canvas>
+        </div>
+    </div>
+
+    <script>
+        const imageLoader = document.getElementById('imageLoader');
+        const grayLevelsInput = document.getElementById('grayLevels');
+        const processButton = document.getElementById('processButton');
+
+        const originalCanvas = document.getElementById('originalCanvas');
+        const quantizedCanvas = document.getElementById('quantizedCanvas');
+        const ditheredCanvas = document.getElementById('ditheredCanvas');
+        const pathCanvas = document.getElementById('pathCanvas');
+
+        const originalCtx = originalCanvas.getContext('2d');
+        const quantizedCtx = quantizedCanvas.getContext('2d');
+        const ditheredCtx = ditheredCanvas.getContext('2d');
+        const pathCtx = pathCanvas.getContext('2d');
+
+        let currentImage = null;
+        const MAX_DIMENSION = 300; // Dimensione massima per le canvas
+
+        imageLoader.addEventListener('change', (event) => {
+            const file = event.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    currentImage = new Image();
+                    currentImage.onload = () => {
+                        // Scala l'immagine per l'originalCanvas e imposta dimensioni per gli altri
+                        const scale = Math.min(MAX_DIMENSION / currentImage.width, MAX_DIMENSION / currentImage.height, 1);
+                        const sw = currentImage.width * scale;
+                        const sh = currentImage.height * scale;
+
+                        [originalCanvas, quantizedCanvas, ditheredCanvas, pathCanvas].forEach(canvas => {
+                            canvas.width = sw;
+                            canvas.height = sh;
+                        });
+
+                        originalCtx.drawImage(currentImage, 0, 0, sw, sh);
+                        processButton.disabled = false;
+                        // Pulisci le altre canvas in caso di ricaricamento
+                        quantizedCtx.clearRect(0, 0, sw, sh);
+                        ditheredCtx.clearRect(0, 0, sw, sh);
+                        pathCtx.clearRect(0, 0, sw, sh);
+                    }
+                    currentImage.src = e.target.result;
+                }
+                reader.readAsDataURL(file);
+            } else {
+                processButton.disabled = true;
+                currentImage = null;
+            }
+        });
+
+        processButton.addEventListener('click', () => {
+            if (!currentImage) {
+                alert("Per favore, carica prima un'immagine.");
+                return;
+            }
+
+            const nLevels = parseInt(grayLevelsInput.value);
+            if (isNaN(nLevels) || nLevels < 2 || nLevels > 256) {
+                alert("Il numero di livelli di grigio deve essere tra 2 e 256.");
+                return;
+            }
+
+            const { width, height } = originalCanvas; // Usiamo le dimensioni scalate
+
+            // 0. Disegna l'immagine originale scalata su una canvas temporanea per ottenere i dati pixel
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = width;
+            tempCanvas.height = height;
+            const tempCtx = tempCanvas.getContext('2d');
+            tempCtx.drawImage(currentImage, 0, 0, width, height);
+            const imageData = tempCtx.getImageData(0, 0, width, height);
+            const data = imageData.data;
+
+            // 1. Immagine Quantizzata a N-Livelli di Grigio
+            const quantizedData = new Uint8ClampedArray(data.length);
+            const step = 255 / (nLevels - 1);
+            for (let i = 0; i < data.length; i += 4) {
+                const r = data[i];
+                const g = data[i + 1];
+                const b = data[i + 2];
+                const gray = Math.round(0.299 * r + 0.587 * g + 0.114 * b); // Luminosity method
+                
+                const quantizedGray = Math.round(gray / step) * step;
+                
+                quantizedData[i] = quantizedGray;
+                quantizedData[i + 1] = quantizedGray;
+                quantizedData[i + 2] = quantizedGray;
+                quantizedData[i + 3] = data[i + 3]; // Alpha
+            }
+            const quantizedImageData = new ImageData(quantizedData, width, height);
+            quantizedCtx.putImageData(quantizedImageData, 0, 0);
+
+            // 2. Copia con Error Diffusion (Floyd-Steinberg) a 2 colori (bianco e nero)
+            // Lavoriamo su una copia dei dati in scala di grigi (dall'originale, non quantizzata, per risultati migliori)
+            const grayForDither = new Array(width * height);
+            for (let y = 0; y < height; y++) {
+                for (let x = 0; x < width; x++) {
+                    const i = (y * width + x) * 4;
+                    const r = data[i];
+                    const g = data[i + 1];
+                    const b = data[i + 2];
+                    grayForDither[y * width + x] = Math.round(0.299 * r + 0.587 * g + 0.114 * b);
+                }
+            }
+
+            const ditheredDataArray = new Uint8ClampedArray(data.length);
+            const blackPoints = []; // Per il tracciato
+
+            for (let y = 0; y < height; y++) {
+                for (let x = 0; x < width; x++) {
+                    const index1D = y * width + x;
+                    const oldPixel = grayForDither[index1D];
+                    const newPixel = (oldPixel < 128) ? 0 : 255; // Threshold
+                    const quantError = oldPixel - newPixel;
+
+                    const baseIdx = index1D * 4;
+                    ditheredDataArray[baseIdx] = newPixel;
+                    ditheredDataArray[baseIdx + 1] = newPixel;
+                    ditheredDataArray[baseIdx + 2] = newPixel;
+                    ditheredDataArray[baseIdx + 3] = 255; // Alpha
+
+                    if (newPixel === 0) { // È un punto nero
+                        blackPoints.push({x, y});
+                    }
+
+                    // Distribuisci errore (Floyd-Steinberg)
+                    if (x + 1 < width) {
+                        grayForDither[index1D + 1] += quantError * 7 / 16;
+                    }
+                    if (y + 1 < height) {
+                        if (x - 1 >= 0) {
+                            grayForDither[(y + 1) * width + (x - 1)] += quantError * 3 / 16;
+                        }
+                        grayForDither[(y + 1) * width + x] += quantError * 5 / 16;
+                        if (x + 1 < width) {
+                            grayForDither[(y + 1) * width + (x + 1)] += quantError * 1 / 16;
+                        }
+                    }
+                }
+            }
+            const ditheredImageData = new ImageData(ditheredDataArray, width, height);
+            ditheredCtx.putImageData(ditheredImageData, 0, 0);
+
+            // 3. Tracciato per i punti generati (TSP approssimato - Nearest Neighbor)
+            pathCtx.clearRect(0, 0, width, height);
+            if (blackPoints.length > 0) {
+                const path = [];
+                let currentPoint = blackPoints.shift(); // Prendi il primo punto
+                path.push(currentPoint);
+                
+                const visited = new Array(blackPoints.length).fill(false);
+
+                while (path.length < blackPoints.length + 1 && blackPoints.some((p, i) => !visited[i])) {
+                    let nearestDistSq = Infinity;
+                    let nearestIdx = -1;
+
+                    for (let i = 0; i < blackPoints.length; i++) {
+                        if (visited[i]) continue;
+                        const p = blackPoints[i];
+                        const dx = p.x - currentPoint.x;
+                        const dy = p.y - currentPoint.y;
+                        const distSq = dx * dx + dy * dy;
+                        if (distSq < nearestDistSq) {
+                            nearestDistSq = distSq;
+                            nearestIdx = i;
+                        }
+                    }
+                    
+                    if (nearestIdx !== -1) {
+                        currentPoint = blackPoints[nearestIdx];
+                        path.push(currentPoint);
+                        visited[nearestIdx] = true;
+                    } else {
+                        break; // Non ci sono più punti non visitati raggiungibili (non dovrebbe succedere se blackPoints non è vuoto)
+                    }
+                }
+
+
+                pathCtx.strokeStyle = 'blue'; // Colore del tracciato
+                pathCtx.lineWidth = 1;
+                pathCtx.beginPath();
+                pathCtx.moveTo(path[0].x, path[0].y);
+                for (let i = 1; i < path.length; i++) {
+                    pathCtx.lineTo(path[i].x, path[i].y);
+                }
+                pathCtx.stroke();
+            }
+        });
+
+    </script>
+</body>
+</html>
