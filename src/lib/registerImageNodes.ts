@@ -1,9 +1,9 @@
 import "../vendor/bluenoise.js";
-import "../vendor/imagetracer.1.2.6.js";
 import "../vendor/pnnquant.js";
 import "../vendor/simplify.js";
 import type { ImageTracerOptions } from "../vendor/imagetracer.1.2.6.js";
 import type { PnnQuantOptions, PnnQuantResult } from "../vendor/pnnquant.js";
+import imagetracerRuntime, { type ImageTracerApi } from "../vendor/imagetracer-runtime";
 import roughRuntime, { type RoughPathOptions, type RoughApi } from "../vendor/rough-runtime";
 import marchingSquaresRuntime, { type MarchingSquaresFn } from "../vendor/p5-marching-runtime";
 import { LiteGraph } from "litegraph.js";
@@ -67,11 +67,6 @@ interface PreviewAwareNode extends LiteNode {
 }
 
 let registered = false;
-interface ImageTracerApi {
-  optionpresets: Record<string, ImageTracerOptions>;
-  imagedataToSVG: (imageData: ImageData, options?: string | ImageTracerOptions) => string;
-  checkoptions: (options?: string | ImageTracerOptions) => ImageTracerOptions;
-}
 
 interface PnnQuantInstance {
   getResult(): Promise<PnnQuantResult>;
@@ -124,12 +119,11 @@ interface MarchingResult {
 }
 
 function getImageTracer() {
-  const imageTracer = (globalThis as { ImageTracer?: ImageTracerApi }).ImageTracer;
-  if (!imageTracer) {
-    throw new Error("ImageTracer global is not available.");
+  if (!imagetracerRuntime || typeof imagetracerRuntime.imagedataToSVG !== "function") {
+    throw new Error("ImageTracer runtime is not available.");
   }
 
-  return imageTracer;
+  return imagetracerRuntime as ImageTracerApi;
 }
 
 function getPnnQuant() {

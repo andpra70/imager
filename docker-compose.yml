@@ -1,5 +1,6 @@
 services:
   plotterfun-node-editor:
+    image: ${IMAGE_REF:-docker.io/andpra70/plotterfun-node-editor:latest}
     build:
       context: .
       dockerfile: Dockerfile
