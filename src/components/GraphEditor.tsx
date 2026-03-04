@@ -13,8 +13,6 @@ import sampleGraph from "../data/sample.json";
 
 const GRAPH_STORAGE_KEY = "plotterfun.graph";
 const AUTO_SAVE_INTERVAL_MS = 60_000;
-const THEME_STORAGE_KEY = "plotterfun.theme";
-type ThemeMode = "light" | "mid" | "dark";
 const GRAPH_TICK_FAST_MS = 33;
 const GRAPH_TICK_MEDIUM_MS = 50;
 const GRAPH_TICK_SLOW_MS = 80;
@@ -91,55 +89,6 @@ function getAdaptiveGraphTickMs(nodeCount: number) {
   return GRAPH_TICK_FAST_MS;
 }
 
-function applyBlueprintTheme(themeMode: ThemeMode, graphCanvas: GraphCanvasRuntime | null) {
-  const theme = {
-    dark: {
-      nodeColor: "#3a3a3a",
-      nodeBgColor: "#262626",
-      nodeBoxColor: "#6d6d6d",
-      linkColor: "#88b58e",
-      eventLinkColor: "#cf9a69",
-      connectingLinkColor: "#8ed4a3",
-      clearBackground: "#1e1e1f",
-    },
-    mid: {
-      nodeColor: "#5a5f65",
-      nodeBgColor: "#40444b",
-      nodeBoxColor: "#9aa0a8",
-      linkColor: "#8ec6d8",
-      eventLinkColor: "#d3a970",
-      connectingLinkColor: "#98d9b2",
-      clearBackground: "#32363b",
-    },
-    light: {
-      nodeColor: "#d3dbe4",
-      nodeBgColor: "#f4f7fb",
-      nodeBoxColor: "#7b8b9c",
-      linkColor: "#3a6f8e",
-      eventLinkColor: "#915d2f",
-      connectingLinkColor: "#2f8e5f",
-      clearBackground: "#e8edf3",
-    },
-  }[themeMode];
-
-  LiteGraph.NODE_DEFAULT_COLOR = theme.nodeColor;
-  LiteGraph.NODE_DEFAULT_BGCOLOR = theme.nodeBgColor;
-  LiteGraph.NODE_DEFAULT_BOXCOLOR = theme.nodeBoxColor;
-  LiteGraph.LINK_COLOR = theme.linkColor;
-  LiteGraph.EVENT_LINK_COLOR = theme.eventLinkColor;
-  LiteGraph.CONNECTING_LINK_COLOR = theme.connectingLinkColor;
-
-  if (graphCanvas) {
-    graphCanvas.default_link_color = theme.linkColor;
-    graphCanvas.clear_background_color = theme.clearBackground;
-    graphCanvas.background_image = "";
-    graphCanvas.render_shadows = false;
-    graphCanvas.highquality_render = false;
-    graphCanvas.use_gradients = false;
-    graphCanvas.setDirty(true, true);
-  }
-}
-
 function GraphEditor() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const graphRef = useRef<GraphRuntime | null>(null);
@@ -149,10 +98,6 @@ function GraphEditor() {
   const previewWidthBounds = getPreviewWidthBounds();
   const [previewWidthValue, setPreviewWidthValue] = useState(getPreviewWidth());
   const [isToolbarCollapsed, setIsToolbarCollapsed] = useState(false);
-  const [themeMode, setThemeMode] = useState<ThemeMode>(() => {
-    const raw = localStorage.getItem(THEME_STORAGE_KEY);
-    return raw === "light" || raw === "mid" || raw === "dark" ? raw : "dark";
-  });
   const [statusMessage, setStatusMessage] = useState(
     "Create nodes from the toolbar or from the LiteGraph context menu.",
   );
@@ -367,12 +312,6 @@ function GraphEditor() {
   };
 
   useEffect(() => {
-    document.documentElement.setAttribute("data-theme", themeMode);
-    localStorage.setItem(THEME_STORAGE_KEY, themeMode);
-    applyBlueprintTheme(themeMode, graphCanvasRef.current);
-  }, [themeMode]);
-
-  useEffect(() => {
     const canvasElement = canvasRef.current;
     if (!canvasElement) {
       return;
@@ -388,7 +327,6 @@ function GraphEditor() {
     graphCanvasRef.current = runtimeCanvas;
     graphCanvas.ds.scale = 0.9;
     graphCanvas.allow_dragcanvas = true;
-    applyBlueprintTheme(themeMode, runtimeCanvas);
     runtimeGraph.onGraphStateChange = undefined;
     runtimeGraph.onNodeAdded = undefined;
     runtimeGraph.onNodeRemoved = undefined;
@@ -468,8 +406,6 @@ function GraphEditor() {
         previewWidthMin={previewWidthBounds.min}
         statusMessage={statusMessage}
         onCollapseChange={setIsToolbarCollapsed}
-        themeMode={themeMode}
-        onThemeModeChange={setThemeMode}
       />
       <canvas className="editor-stage" ref={canvasRef} />
       <input
