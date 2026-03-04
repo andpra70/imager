@@ -228,7 +228,14 @@ function GraphEditor() {
       return;
     }
 
-    const node = LiteGraph.createNode(type) as GraphNodeInstance | null;
+    let node: GraphNodeInstance | null = null;
+    try {
+      node = LiteGraph.createNode(type) as GraphNodeInstance | null;
+    } catch (error) {
+      const details = error instanceof Error ? error.message : "unknown error";
+      setStatusMessage(`Cannot create node ${type}: ${details}`);
+      return;
+    }
     if (!node) {
       setStatusMessage(`Cannot create node ${type}.`);
       return;
