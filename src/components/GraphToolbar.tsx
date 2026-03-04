@@ -7,6 +7,7 @@ interface GraphToolbarProps {
   onLoadGraph: () => void;
   onExportGraph: () => void;
   onImportGraph: () => void;
+  onFitView: () => void;
   onPreviewWidthChange: (width: number) => void;
   previewWidth: number;
   previewWidthMax: number;
@@ -21,6 +22,7 @@ function GraphToolbar({
   onLoadGraph,
   onExportGraph,
   onImportGraph,
+  onFitView,
   onPreviewWidthChange,
   previewWidth,
   previewWidthMax,
@@ -51,6 +53,12 @@ function GraphToolbar({
       shortLabel: "Import",
       tooltip: "Importa un grafo da file JSON.",
       onClick: onImportGraph,
+    },
+    {
+      glyph: "FT",
+      shortLabel: "Fit",
+      tooltip: "Centra e adatta la vista per mostrare tutto il blueprint.",
+      onClick: onFitView,
     },
     {
       glyph: "RS",

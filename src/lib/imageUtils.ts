@@ -191,6 +191,100 @@ const blendModeToCompositeOperation: Record<BlendMode, GlobalCompositeOperation>
   difference: "difference",
 };
 
+export interface RgbSplitResult {
+  r: GraphImage;
+  g: GraphImage;
+  b: GraphImage;
+}
+
+export interface CmykSplitResult {
+  c: GraphImage;
+  m: GraphImage;
+  y: GraphImage;
+  k: GraphImage;
+}
+
+export function combineRgbChannels(
+  rImage: GraphImage,
+  gImage: GraphImage,
+  bImage: GraphImage,
+): GraphImage {
+  const width = Math.max(rImage.width, gImage.width, bImage.width);
+  const height = Math.max(rImage.height, gImage.height, bImage.height);
+  const rCanvas = createImageCanvas({ width, height }, (context) => {
+    context.drawImage(rImage, 0, 0, width, height);
+  });
+  const gCanvas = createImageCanvas({ width, height }, (context) => {
+    context.drawImage(gImage, 0, 0, width, height);
+  });
+  const bCanvas = createImageCanvas({ width, height }, (context) => {
+    context.drawImage(bImage, 0, 0, width, height);
+  });
+
+  return createImageCanvas({ width, height }, (context) => {
+    const rData = rCanvas.getContext("2d", { willReadFrequently: true })?.getImageData(0, 0, width, height);
+    const gData = gCanvas.getContext("2d", { willReadFrequently: true })?.getImageData(0, 0, width, height);
+    const bData = bCanvas.getContext("2d", { willReadFrequently: true })?.getImageData(0, 0, width, height);
+    if (!rData || !gData || !bData) {
+      return;
+    }
+
+    const out = context.createImageData(width, height);
+    for (let index = 0; index < out.data.length; index += 4) {
+      out.data[index] = rData.data[index];
+      out.data[index + 1] = gData.data[index];
+      out.data[index + 2] = bData.data[index];
+      out.data[index + 3] = 255;
+    }
+    context.putImageData(out, 0, 0);
+  });
+}
+
+export function combineCmykChannels(
+  cImage: GraphImage,
+  mImage: GraphImage,
+  yImage: GraphImage,
+  kImage: GraphImage,
+): GraphImage {
+  const width = Math.max(cImage.width, mImage.width, yImage.width, kImage.width);
+  const height = Math.max(cImage.height, mImage.height, yImage.height, kImage.height);
+  const cCanvas = createImageCanvas({ width, height }, (context) => {
+    context.drawImage(cImage, 0, 0, width, height);
+  });
+  const mCanvas = createImageCanvas({ width, height }, (context) => {
+    context.drawImage(mImage, 0, 0, width, height);
+  });
+  const yCanvas = createImageCanvas({ width, height }, (context) => {
+    context.drawImage(yImage, 0, 0, width, height);
+  });
+  const kCanvas = createImageCanvas({ width, height }, (context) => {
+    context.drawImage(kImage, 0, 0, width, height);
+  });
+
+  return createImageCanvas({ width, height }, (context) => {
+    const cData = cCanvas.getContext("2d", { willReadFrequently: true })?.getImageData(0, 0, width, height);
+    const mData = mCanvas.getContext("2d", { willReadFrequently: true })?.getImageData(0, 0, width, height);
+    const yData = yCanvas.getContext("2d", { willReadFrequently: true })?.getImageData(0, 0, width, height);
+    const kData = kCanvas.getContext("2d", { willReadFrequently: true })?.getImageData(0, 0, width, height);
+    if (!cData || !mData || !yData || !kData) {
+      return;
+    }
+
+    const out = context.createImageData(width, height);
+    for (let index = 0; index < out.data.length; index += 4) {
+      const c = 1 - cData.data[index] / 255;
+      const m = 1 - mData.data[index] / 255;
+      const y = 1 - yData.data[index] / 255;
+      const k = 1 - kData.data[index] / 255;
+      out.data[index] = clampByte((1 - c) * (1 - k) * 255);
+      out.data[index + 1] = clampByte((1 - m) * (1 - k) * 255);
+      out.data[index + 2] = clampByte((1 - y) * (1 - k) * 255);
+      out.data[index + 3] = 255;
+    }
+    context.putImageData(out, 0, 0);
+  });
+}
+
 function clampByte(value: number) {
   return Math.max(0, Math.min(255, value));
 }
@@ -225,22 +319,135 @@ export function brightnessContrastGraphImage(
   source: GraphImage,
   brightness: number,
   contrast: number,
+  saturation: number,
 ): GraphImage {
   const brightnessOffset = (brightness / 100) * 255;
   const contrastValue = (contrast / 100) * 255;
   const contrastFactor = (259 * (contrastValue + 255)) / (255 * (259 - contrastValue));
+  const saturationFactor = Math.max(0, 1 + saturation / 100);
 
   return applyPixelTransform(source, (data) => {
     for (let index = 0; index < data.length; index += 4) {
-      data[index] = clampByte(contrastFactor * (data[index] - 128) + 128 + brightnessOffset);
-      data[index + 1] = clampByte(
-        contrastFactor * (data[index + 1] - 128) + 128 + brightnessOffset,
-      );
-      data[index + 2] = clampByte(
-        contrastFactor * (data[index + 2] - 128) + 128 + brightnessOffset,
-      );
+      const r = clampByte(contrastFactor * (data[index] - 128) + 128 + brightnessOffset);
+      const g = clampByte(contrastFactor * (data[index + 1] - 128) + 128 + brightnessOffset);
+      const b = clampByte(contrastFactor * (data[index + 2] - 128) + 128 + brightnessOffset);
+      const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+
+      data[index] = clampByte(luminance + (r - luminance) * saturationFactor);
+      data[index + 1] = clampByte(luminance + (g - luminance) * saturationFactor);
+      data[index + 2] = clampByte(luminance + (b - luminance) * saturationFactor);
     }
   });
+}
+
+export function splitRgbChannels(source: GraphImage): RgbSplitResult {
+  const r = createImageCanvas({ width: source.width, height: source.height }, (context) => {
+    context.drawImage(source, 0, 0);
+    const imageData = context.getImageData(0, 0, source.width, source.height);
+    const data = imageData.data;
+    for (let index = 0; index < data.length; index += 4) {
+      const channel = data[index];
+      data[index] = channel;
+      data[index + 1] = channel;
+      data[index + 2] = channel;
+    }
+    context.putImageData(imageData, 0, 0);
+  });
+
+  const g = createImageCanvas({ width: source.width, height: source.height }, (context) => {
+    context.drawImage(source, 0, 0);
+    const imageData = context.getImageData(0, 0, source.width, source.height);
+    const data = imageData.data;
+    for (let index = 0; index < data.length; index += 4) {
+      const channel = data[index + 1];
+      data[index] = channel;
+      data[index + 1] = channel;
+      data[index + 2] = channel;
+    }
+    context.putImageData(imageData, 0, 0);
+  });
+
+  const b = createImageCanvas({ width: source.width, height: source.height }, (context) => {
+    context.drawImage(source, 0, 0);
+    const imageData = context.getImageData(0, 0, source.width, source.height);
+    const data = imageData.data;
+    for (let index = 0; index < data.length; index += 4) {
+      const channel = data[index + 2];
+      data[index] = channel;
+      data[index + 1] = channel;
+      data[index + 2] = channel;
+    }
+    context.putImageData(imageData, 0, 0);
+  });
+
+  return { r, g, b };
+}
+
+export function splitCmykChannels(source: GraphImage): CmykSplitResult {
+  const c = createImageCanvas({ width: source.width, height: source.height }, () => undefined);
+  const m = createImageCanvas({ width: source.width, height: source.height }, () => undefined);
+  const y = createImageCanvas({ width: source.width, height: source.height }, () => undefined);
+  const k = createImageCanvas({ width: source.width, height: source.height }, () => undefined);
+
+  const sourceContext = source.getContext("2d", { willReadFrequently: true });
+  const cContext = c.getContext("2d", { willReadFrequently: true });
+  const mContext = m.getContext("2d", { willReadFrequently: true });
+  const yContext = y.getContext("2d", { willReadFrequently: true });
+  const kContext = k.getContext("2d", { willReadFrequently: true });
+  if (!sourceContext || !cContext || !mContext || !yContext || !kContext) {
+    return { c, m, y, k };
+  }
+
+  const sourceData = sourceContext.getImageData(0, 0, source.width, source.height);
+  const cData = new ImageData(source.width, source.height);
+  const mData = new ImageData(source.width, source.height);
+  const yData = new ImageData(source.width, source.height);
+  const kData = new ImageData(source.width, source.height);
+
+  for (let index = 0; index < sourceData.data.length; index += 4) {
+    const r = sourceData.data[index] / 255;
+    const g = sourceData.data[index + 1] / 255;
+    const b = sourceData.data[index + 2] / 255;
+    const alpha = sourceData.data[index + 3];
+
+    const black = 1 - Math.max(r, g, b);
+    const denom = Math.max(1e-6, 1 - black);
+    const cyan = (1 - r - black) / denom;
+    const magenta = (1 - g - black) / denom;
+    const yellow = (1 - b - black) / denom;
+
+    const cValue = clampByte((1 - Math.max(0, cyan)) * 255);
+    const mValue = clampByte((1 - Math.max(0, magenta)) * 255);
+    const yValue = clampByte((1 - Math.max(0, yellow)) * 255);
+    const kValue = clampByte((1 - Math.max(0, black)) * 255);
+
+    cData.data[index] = cValue;
+    cData.data[index + 1] = cValue;
+    cData.data[index + 2] = cValue;
+    cData.data[index + 3] = alpha;
+
+    mData.data[index] = mValue;
+    mData.data[index + 1] = mValue;
+    mData.data[index + 2] = mValue;
+    mData.data[index + 3] = alpha;
+
+    yData.data[index] = yValue;
+    yData.data[index + 1] = yValue;
+    yData.data[index + 2] = yValue;
+    yData.data[index + 3] = alpha;
+
+    kData.data[index] = kValue;
+    kData.data[index + 1] = kValue;
+    kData.data[index + 2] = kValue;
+    kData.data[index + 3] = alpha;
+  }
+
+  cContext.putImageData(cData, 0, 0);
+  mContext.putImageData(mData, 0, 0);
+  yContext.putImageData(yData, 0, 0);
+  kContext.putImageData(kData, 0, 0);
+
+  return { c, m, y, k };
 }
 
 export function blendGraphImages(

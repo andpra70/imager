@@ -11,9 +11,11 @@ import {
 } from "../lib/nodePreviewSettings";
 
 const GRAPH_STORAGE_KEY = "plotterfun.graph";
+const AUTO_SAVE_INTERVAL_MS = 60_000;
 
 interface GraphNodeInstance {
   pos: [number, number];
+  size?: [number, number];
   connect: (slot: number, targetNode: GraphNodeInstance, targetSlot: number) => void;
   refreshPreviewLayout?: () => void;
 }
@@ -28,6 +30,12 @@ interface GraphRuntime extends InstanceType<typeof LGraph> {
 
 interface GraphCanvasRuntime extends InstanceType<typeof LGraphCanvas> {
   onNodeMoved?: () => void;
+  ds: {
+    scale: number;
+    offset: [number, number];
+  };
+  setZoom: (value: number, zoomingCenter?: [number, number]) => void;
+  setDirty: (foreground?: boolean, background?: boolean) => void;
 }
 
 interface SerializedGraph {
@@ -66,7 +74,7 @@ function GraphEditor() {
   const graphRef = useRef<GraphRuntime | null>(null);
   const graphCanvasRef = useRef<GraphCanvasRuntime | null>(null);
   const importInputRef = useRef<HTMLInputElement | null>(null);
-  const autoSaveTimeoutRef = useRef<number | null>(null);
+  const autoSaveIntervalRef = useRef<number | null>(null);
   const previewWidthBounds = getPreviewWidthBounds();
   const [previewWidthValue, setPreviewWidthValue] = useState(getPreviewWidth());
   const [statusMessage, setStatusMessage] = useState(
@@ -107,17 +115,6 @@ function GraphEditor() {
     }
   };
 
-  const scheduleAutoSave = () => {
-    if (autoSaveTimeoutRef.current !== null) {
-      window.clearTimeout(autoSaveTimeoutRef.current);
-    }
-
-    autoSaveTimeoutRef.current = window.setTimeout(() => {
-      persistGraph();
-      autoSaveTimeoutRef.current = null;
-    }, 200);
-  };
-
   const resetGraph = (message = "Default graph restored.") => {
     const graph = graphRef.current;
     if (!graph) {
@@ -134,6 +131,7 @@ function GraphEditor() {
 
   const addNode = (type: string) => {
     const graph = graphRef.current;
+    const graphCanvas = graphCanvasRef.current;
     if (!graph) {
       return;
     }
@@ -144,12 +142,62 @@ function GraphEditor() {
       return;
     }
 
-    const nodeCount = graph._nodes?.length ?? 0;
-    node.pos = [120 + (nodeCount % 4) * 70, 120 + nodeCount * 56];
+    node.refreshPreviewLayout?.();
+    const nodeWidth = node.size?.[0] ?? 160;
+    const nodeHeight = node.size?.[1] ?? 120;
+    if (graphCanvas?.ds && graphCanvas.canvas) {
+      const centerX = graphCanvas.canvas.width * 0.5 / graphCanvas.ds.scale - graphCanvas.ds.offset[0];
+      const centerY = graphCanvas.canvas.height * 0.5 / graphCanvas.ds.scale - graphCanvas.ds.offset[1];
+      node.pos = [centerX - nodeWidth * 0.5, centerY - nodeHeight * 0.5];
+    } else {
+      node.pos = [120, 120];
+    }
     graph.add(node);
     node.refreshPreviewLayout?.();
     refreshCanvas();
     persistGraph(`${type} added.`);
+  };
+
+  const fitView = () => {
+    const graph = graphRef.current;
+    const graphCanvas = graphCanvasRef.current;
+    if (!graph?._nodes?.length || !graphCanvas?.canvas || !graphCanvas.ds) {
+      return;
+    }
+
+    let minX = Number.POSITIVE_INFINITY;
+    let minY = Number.POSITIVE_INFINITY;
+    let maxX = Number.NEGATIVE_INFINITY;
+    let maxY = Number.NEGATIVE_INFINITY;
+    graph._nodes.forEach((node) => {
+      const width = node.size?.[0] ?? 160;
+      const height = node.size?.[1] ?? 120;
+      const x = node.pos?.[0] ?? 0;
+      const y = node.pos?.[1] ?? 0;
+      minX = Math.min(minX, x);
+      minY = Math.min(minY, y);
+      maxX = Math.max(maxX, x + width);
+      maxY = Math.max(maxY, y + height);
+    });
+
+    if (!Number.isFinite(minX) || !Number.isFinite(minY) || !Number.isFinite(maxX) || !Number.isFinite(maxY)) {
+      return;
+    }
+
+    const padding = 90;
+    const boundsWidth = Math.max(1, maxX - minX);
+    const boundsHeight = Math.max(1, maxY - minY);
+    const targetScaleX = Math.max(0.05, (graphCanvas.canvas.width - padding * 2) / boundsWidth);
+    const targetScaleY = Math.max(0.05, (graphCanvas.canvas.height - padding * 2) / boundsHeight);
+    const targetScale = Math.min(1.5, Math.max(0.1, Math.min(targetScaleX, targetScaleY)));
+    graphCanvas.setZoom(targetScale, [graphCanvas.canvas.width * 0.5, graphCanvas.canvas.height * 0.5]);
+
+    const centerX = (minX + maxX) * 0.5;
+    const centerY = (minY + maxY) * 0.5;
+    graphCanvas.ds.offset[0] = -centerX + (graphCanvas.canvas.width * 0.5) / graphCanvas.ds.scale;
+    graphCanvas.ds.offset[1] = -centerY + (graphCanvas.canvas.height * 0.5) / graphCanvas.ds.scale;
+    graphCanvas.setDirty(true, true);
+    setStatusMessage("Blueprint fitted in view.");
   };
 
   const updatePreviewWidth = (width: number) => {
@@ -246,11 +294,11 @@ function GraphEditor() {
     graphCanvasRef.current = runtimeCanvas;
     graphCanvas.ds.scale = 0.9;
     graphCanvas.allow_dragcanvas = true;
-    runtimeGraph.onGraphStateChange = scheduleAutoSave;
-    runtimeGraph.onNodeAdded = scheduleAutoSave;
-    runtimeGraph.onNodeRemoved = scheduleAutoSave;
-    runtimeGraph.onConnectionChange = scheduleAutoSave;
-    runtimeCanvas.onNodeMoved = scheduleAutoSave;
+    runtimeGraph.onGraphStateChange = undefined;
+    runtimeGraph.onNodeAdded = undefined;
+    runtimeGraph.onNodeRemoved = undefined;
+    runtimeGraph.onConnectionChange = undefined;
+    runtimeCanvas.onNodeMoved = undefined;
 
     const savedGraph = localStorage.getItem(GRAPH_STORAGE_KEY);
     if (savedGraph) {
@@ -279,11 +327,14 @@ function GraphEditor() {
     resizeCanvas();
     window.addEventListener("resize", resizeCanvas);
     graph.start();
+    autoSaveIntervalRef.current = window.setInterval(() => {
+      persistGraph();
+    }, AUTO_SAVE_INTERVAL_MS);
 
     return () => {
-      if (autoSaveTimeoutRef.current !== null) {
-        window.clearTimeout(autoSaveTimeoutRef.current);
-        autoSaveTimeoutRef.current = null;
+      if (autoSaveIntervalRef.current !== null) {
+        window.clearInterval(autoSaveIntervalRef.current);
+        autoSaveIntervalRef.current = null;
       }
       window.removeEventListener("resize", resizeCanvas);
       graph.stop();
@@ -299,6 +350,7 @@ function GraphEditor() {
       <GraphToolbar
         onAddNode={addNode}
         onExportGraph={exportGraph}
+        onFitView={fitView}
         onImportGraph={importGraph}
         onLoadGraph={loadGraph}
         onPreviewWidthChange={updatePreviewWidth}

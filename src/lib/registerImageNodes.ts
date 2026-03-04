@@ -13,6 +13,8 @@ import type { GraphSvg } from "../models/graphSvg";
 import {
   blendGraphImages,
   brightnessContrastGraphImage,
+  combineCmykChannels,
+  combineRgbChannels,
   type BlendMode,
   blurGraphImage,
   deserializeGraphImage,
@@ -27,6 +29,8 @@ import {
   rotateGraphImage,
   resizeNodeForPreview,
   scaleGraphImage,
+  splitCmykChannels,
+  splitRgbChannels,
   serializeCompressedGraphImage,
   thresholdGraphImage,
   uint32ArrayToGraphImage,
@@ -1066,12 +1070,14 @@ class WebcamImageNode {
   constructor() {
     const node = this as unknown as PreviewAwareNode & WebcamImageNode;
     node.title = "WEBCAM";
-    node.properties = { status: "requesting camera" };
+    node.properties = {
+      status: "requesting camera",
+    };
     node.addOutput("image", "image");
     node.addWidget("button", "Grab", null, () => {
       if (node.video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
         node.image = drawSourceToCanvas(node.video);
-        node.serializedImage = serializeCompressedGraphImage(node.image);
+        node.serializedImage = null;
         node.properties.status = "frame captured";
         node.refreshPreviewLayout();
         notifyGraphStateChange(node);
@@ -1459,7 +1465,7 @@ class BrightnessContrastToolNode {
   constructor() {
     const node = this as unknown as PreviewAwareNode & BrightnessContrastToolNode;
     node.title = createToolTitle("Brightness/Contrast");
-    node.properties = { brightness: 0, contrast: 0 };
+    node.properties = { brightness: 0, contrast: 0, saturation: 0 };
     node.addInput("image", "image");
     node.addOutput("image", "image");
     node.addWidget(
@@ -1484,6 +1490,17 @@ class BrightnessContrastToolNode {
       },
       { min: -100, max: 100, step: 1 },
     );
+    node.addWidget(
+      "slider",
+      "Saturation",
+      0,
+      (value) => {
+        node.properties.saturation = Number(value);
+        node.setDirtyCanvas(true, true);
+        notifyGraphStateChange(node);
+      },
+      { min: -100, max: 100, step: 1 },
+    );
     node.refreshPreviewLayout = () => {
       refreshNode(node, node.preview, 1);
     };
@@ -1495,7 +1512,10 @@ class BrightnessContrastToolNode {
     const input = this.getInputData(0);
     const brightness = Number(this.properties.brightness ?? 0);
     const contrast = Number(this.properties.contrast ?? 0);
-    this.preview = input ? brightnessContrastGraphImage(input, brightness, contrast) : null;
+    const saturation = Number(this.properties.saturation ?? 0);
+    this.preview = input
+      ? brightnessContrastGraphImage(input, brightness, contrast, saturation)
+      : null;
     this.executionMs = performance.now() - start;
     this.setOutputData(0, this.preview);
     this.refreshPreviewLayout();
@@ -1507,10 +1527,238 @@ class BrightnessContrastToolNode {
     context.fillStyle = "rgba(255,255,255,0.65)";
     context.font = "12px sans-serif";
     context.fillText(
-      `B ${Number(this.properties.brightness ?? 0)} | C ${Number(this.properties.contrast ?? 0)}`,
+      `B ${Number(this.properties.brightness ?? 0)} | C ${Number(this.properties.contrast ?? 0)} | S ${Number(this.properties.saturation ?? 0)}`,
       10,
       layout.footerTop + 12,
     );
+    context.fillText(formatExecutionInfo(this.executionMs), 10, layout.footerTop + 30);
+    context.restore();
+  }
+}
+
+class RgbSplitToolNode {
+  size: [number, number] = [280, 340];
+  preview: GraphImage | null = null;
+  r: GraphImage | null = null;
+  g: GraphImage | null = null;
+  b: GraphImage | null = null;
+  executionMs: number | null = null;
+
+  constructor() {
+    const node = this as unknown as PreviewAwareNode & RgbSplitToolNode;
+    node.title = createToolTitle("RGB Split");
+    node.properties = {};
+    node.addInput("image", "image");
+    node.addOutput("R", "image");
+    node.addOutput("G", "image");
+    node.addOutput("B", "image");
+    node.refreshPreviewLayout = () => {
+      refreshNode(node, node.preview, 2);
+    };
+    node.refreshPreviewLayout();
+  }
+
+  onExecute(this: PreviewAwareNode & RgbSplitToolNode) {
+    const start = performance.now();
+    const input = this.getInputData(0);
+    if (!input) {
+      this.preview = null;
+      this.r = null;
+      this.g = null;
+      this.b = null;
+      this.executionMs = performance.now() - start;
+      this.setOutputData(0, null);
+      this.setOutputData(1, null);
+      this.setOutputData(2, null);
+      this.refreshPreviewLayout();
+      return;
+    }
+
+    const result = splitRgbChannels(input);
+    this.r = result.r;
+    this.g = result.g;
+    this.b = result.b;
+    this.preview = result.r;
+    this.executionMs = performance.now() - start;
+    this.setOutputData(0, this.r);
+    this.setOutputData(1, this.g);
+    this.setOutputData(2, this.b);
+    this.refreshPreviewLayout();
+  }
+
+  onDrawBackground(this: PreviewAwareNode & RgbSplitToolNode, context: CanvasRenderingContext2D) {
+    const layout = drawImagePreview(context, this, this.preview, { footerLines: 2 });
+    context.save();
+    context.fillStyle = "rgba(255,255,255,0.65)";
+    context.font = "12px sans-serif";
+    context.fillText("outputs: R, G, B", 10, layout.footerTop + 12);
+    context.fillText(formatExecutionInfo(this.executionMs), 10, layout.footerTop + 30);
+    context.restore();
+  }
+}
+
+class CmykSplitToolNode {
+  size: [number, number] = [280, 340];
+  preview: GraphImage | null = null;
+  c: GraphImage | null = null;
+  m: GraphImage | null = null;
+  y: GraphImage | null = null;
+  k: GraphImage | null = null;
+  executionMs: number | null = null;
+
+  constructor() {
+    const node = this as unknown as PreviewAwareNode & CmykSplitToolNode;
+    node.title = createToolTitle("CMYK Split");
+    node.properties = {};
+    node.addInput("image", "image");
+    node.addOutput("C", "image");
+    node.addOutput("M", "image");
+    node.addOutput("Y", "image");
+    node.addOutput("K", "image");
+    node.refreshPreviewLayout = () => {
+      refreshNode(node, node.preview, 2);
+    };
+    node.refreshPreviewLayout();
+  }
+
+  onExecute(this: PreviewAwareNode & CmykSplitToolNode) {
+    const start = performance.now();
+    const input = this.getInputData(0);
+    if (!input) {
+      this.preview = null;
+      this.c = null;
+      this.m = null;
+      this.y = null;
+      this.k = null;
+      this.executionMs = performance.now() - start;
+      this.setOutputData(0, null);
+      this.setOutputData(1, null);
+      this.setOutputData(2, null);
+      this.setOutputData(3, null);
+      this.refreshPreviewLayout();
+      return;
+    }
+
+    const result = splitCmykChannels(input);
+    this.c = result.c;
+    this.m = result.m;
+    this.y = result.y;
+    this.k = result.k;
+    this.preview = result.k;
+    this.executionMs = performance.now() - start;
+    this.setOutputData(0, this.c);
+    this.setOutputData(1, this.m);
+    this.setOutputData(2, this.y);
+    this.setOutputData(3, this.k);
+    this.refreshPreviewLayout();
+  }
+
+  onDrawBackground(this: PreviewAwareNode & CmykSplitToolNode, context: CanvasRenderingContext2D) {
+    const layout = drawImagePreview(context, this, this.preview, { footerLines: 2 });
+    context.save();
+    context.fillStyle = "rgba(255,255,255,0.65)";
+    context.font = "12px sans-serif";
+    context.fillText("outputs: C, M, Y, K", 10, layout.footerTop + 12);
+    context.fillText(formatExecutionInfo(this.executionMs), 10, layout.footerTop + 30);
+    context.restore();
+  }
+}
+
+class RgbCombineToolNode {
+  size: [number, number] = [280, 340];
+  preview: GraphImage | null = null;
+  executionMs: number | null = null;
+
+  constructor() {
+    const node = this as unknown as PreviewAwareNode & RgbCombineToolNode;
+    node.title = createToolTitle("RGB Combine");
+    node.properties = {};
+    node.addInput("R", "image");
+    node.addInput("G", "image");
+    node.addInput("B", "image");
+    node.addOutput("image", "image");
+    node.refreshPreviewLayout = () => {
+      refreshNode(node, node.preview, 2);
+    };
+    node.refreshPreviewLayout();
+  }
+
+  onExecute(this: PreviewAwareNode & RgbCombineToolNode) {
+    const start = performance.now();
+    const r = this.getInputData(0);
+    const g = this.getInputData(1);
+    const b = this.getInputData(2);
+    if (!r || !g || !b) {
+      this.preview = null;
+      this.executionMs = performance.now() - start;
+      this.setOutputData(0, null);
+      this.refreshPreviewLayout();
+      return;
+    }
+
+    this.preview = combineRgbChannels(r, g, b);
+    this.executionMs = performance.now() - start;
+    this.setOutputData(0, this.preview);
+    this.refreshPreviewLayout();
+  }
+
+  onDrawBackground(this: PreviewAwareNode & RgbCombineToolNode, context: CanvasRenderingContext2D) {
+    const layout = drawImagePreview(context, this, this.preview, { footerLines: 2 });
+    context.save();
+    context.fillStyle = "rgba(255,255,255,0.65)";
+    context.font = "12px sans-serif";
+    context.fillText("inputs: R, G, B", 10, layout.footerTop + 12);
+    context.fillText(formatExecutionInfo(this.executionMs), 10, layout.footerTop + 30);
+    context.restore();
+  }
+}
+
+class CmykCombineToolNode {
+  size: [number, number] = [280, 340];
+  preview: GraphImage | null = null;
+  executionMs: number | null = null;
+
+  constructor() {
+    const node = this as unknown as PreviewAwareNode & CmykCombineToolNode;
+    node.title = createToolTitle("CMYK Combine");
+    node.properties = {};
+    node.addInput("C", "image");
+    node.addInput("M", "image");
+    node.addInput("Y", "image");
+    node.addInput("K", "image");
+    node.addOutput("image", "image");
+    node.refreshPreviewLayout = () => {
+      refreshNode(node, node.preview, 2);
+    };
+    node.refreshPreviewLayout();
+  }
+
+  onExecute(this: PreviewAwareNode & CmykCombineToolNode) {
+    const start = performance.now();
+    const c = this.getInputData(0);
+    const m = this.getInputData(1);
+    const y = this.getInputData(2);
+    const k = this.getInputData(3);
+    if (!c || !m || !y || !k) {
+      this.preview = null;
+      this.executionMs = performance.now() - start;
+      this.setOutputData(0, null);
+      this.refreshPreviewLayout();
+      return;
+    }
+
+    this.preview = combineCmykChannels(c, m, y, k);
+    this.executionMs = performance.now() - start;
+    this.setOutputData(0, this.preview);
+    this.refreshPreviewLayout();
+  }
+
+  onDrawBackground(this: PreviewAwareNode & CmykCombineToolNode, context: CanvasRenderingContext2D) {
+    const layout = drawImagePreview(context, this, this.preview, { footerLines: 2 });
+    context.save();
+    context.fillStyle = "rgba(255,255,255,0.65)";
+    context.font = "12px sans-serif";
+    context.fillText("inputs: C, M, Y, K", 10, layout.footerTop + 12);
     context.fillText(formatExecutionInfo(this.executionMs), 10, layout.footerTop + 30);
     context.restore();
   }
@@ -2774,6 +3022,12 @@ export function registerImageNodes() {
   LiteGraph.registerNodeType("tools/scale", ScaleToolNode as unknown as NodeCtor);
   LiteGraph.registerNodeType("tools/rotate", RotateToolNode as unknown as NodeCtor);
   LiteGraph.registerNodeType("tools/brightness-contrast", BrightnessContrastToolNode as unknown as NodeCtor);
+  LiteGraph.registerNodeType("tools/rgb-split", RgbSplitToolNode as unknown as NodeCtor);
+  LiteGraph.registerNodeType("tools/cmyk-split", CmykSplitToolNode as unknown as NodeCtor);
+  LiteGraph.registerNodeType("tools/cymk-split", CmykSplitToolNode as unknown as NodeCtor);
+  LiteGraph.registerNodeType("tools/rgb-combine", RgbCombineToolNode as unknown as NodeCtor);
+  LiteGraph.registerNodeType("tools/cmyk-combine", CmykCombineToolNode as unknown as NodeCtor);
+  LiteGraph.registerNodeType("tools/cymk-combine", CmykCombineToolNode as unknown as NodeCtor);
   LiteGraph.registerNodeType("tools/quantize", QuantizeToolNode as unknown as NodeCtor);
   LiteGraph.registerNodeType("tools/blend", BlendToolNode as unknown as NodeCtor);
   LiteGraph.registerNodeType("tools/vectorize", VectorizeToolNode as unknown as NodeCtor);
