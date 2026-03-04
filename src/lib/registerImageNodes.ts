@@ -2029,6 +2029,111 @@ function drawBoldiniCurvedStroke(
   context.stroke();
 }
 
+function drawSargentStroke(
+  context: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  size: number,
+  angle: number,
+  color: string,
+) {
+  const width = size;
+  const height = size / (Math.random() * 2 + 1.5);
+  context.translate(x, y);
+  context.rotate(angle);
+  context.fillStyle = color;
+  context.beginPath();
+  context.rect(-width * 0.5, -height * 0.5, width, height);
+  context.fill();
+}
+
+async function renderSargentLayer(options: {
+  context: CanvasRenderingContext2D;
+  numStrokes: number;
+  minSize: number;
+  maxSize: number;
+  colorSource: ImageData;
+  gradientMap: BoldiniGradientMap;
+  opacity: number;
+  sharpen?: boolean;
+  colorJitter?: number;
+  brightnessBoost?: number;
+  shouldCancel?: () => boolean;
+  onProgress?: (progress: number) => void;
+}) {
+  const {
+    context,
+    numStrokes,
+    minSize,
+    maxSize,
+    colorSource,
+    gradientMap,
+    opacity,
+    sharpen = false,
+    colorJitter = 0,
+    brightnessBoost = 0,
+    shouldCancel,
+    onProgress,
+  } = options;
+  const width = context.canvas.width;
+  const height = context.canvas.height;
+  const data = colorSource.data;
+
+  for (let strokeIndex = 0; strokeIndex < numStrokes; strokeIndex += 1) {
+    if (shouldCancel?.()) {
+      return false;
+    }
+
+    let x = 0;
+    let y = 0;
+    if (sharpen) {
+      do {
+        x = Math.floor(Math.random() * width);
+        y = Math.floor(Math.random() * height);
+      } while (Math.random() > gradientMap.magnitudes[y * width + x]);
+    } else {
+      x = Math.floor(Math.random() * width);
+      y = Math.floor(Math.random() * height);
+    }
+
+    const pixelIndex = (y * width + x) * 4;
+    let r = data[pixelIndex];
+    let g = data[pixelIndex + 1];
+    let b = data[pixelIndex + 2];
+
+    if (colorJitter > 0) {
+      r += (Math.random() - 0.5) * colorJitter;
+      g += (Math.random() - 0.5) * colorJitter;
+      b += (Math.random() - 0.5) * colorJitter;
+    }
+    if (brightnessBoost > 0) {
+      r += brightnessBoost;
+      g += brightnessBoost;
+      b += brightnessBoost;
+    }
+
+    r = clamp(r, 0, 255);
+    g = clamp(g, 0, 255);
+    b = clamp(b, 0, 255);
+
+    const color = `rgb(${Math.round(r)},${Math.round(g)},${Math.round(b)})`;
+    const size = Math.random() * (maxSize - minSize) + minSize;
+    const angle = gradientMap.directions[y * width + x];
+    context.save();
+    context.globalAlpha = opacity * (Math.random() * 0.4 + 0.6);
+    drawSargentStroke(context, x, y, size, angle, color);
+    context.restore();
+
+    if (strokeIndex % 100 === 0) {
+      onProgress?.(strokeIndex / numStrokes);
+      await yieldToUi();
+    }
+  }
+
+  onProgress?.(1);
+  return true;
+}
+
 async function renderBoldiniLayer(options: {
   context: CanvasRenderingContext2D;
   numStrokes: number;
@@ -2303,6 +2408,202 @@ async function renderCarbonLayer(options: {
   const progress = progressState.total > 0 ? progressState.drawn / progressState.total : 1;
   onProgress?.(progress, `passata: ${passName}`);
   return true;
+}
+
+interface CrosshatchBnResult {
+  svg: GraphSvg;
+  lineCount: number;
+  sourceWidth: number;
+  sourceHeight: number;
+  outputWidth: number;
+  outputHeight: number;
+}
+
+function appendSvgCrosshatchLine(
+  lines: string[],
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  color: string,
+  thickness: number,
+  alpha: number,
+) {
+  if (x1 === x2 && y1 === y2) {
+    return;
+  }
+  lines.push(
+    `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${color}" stroke-width="${thickness}" stroke-opacity="${alpha}" stroke-linecap="round"/>`,
+  );
+}
+
+async function generateCrosshatchBnSvg(
+  input: GraphImage,
+  options: {
+    maxWidth: number;
+    levels: number;
+    upscale: number;
+    whiteThreshold: number;
+    lineSpacing: number;
+    lineThickness: number;
+    lineColor: string;
+    lineAlpha: number;
+  },
+  shouldCancel?: () => boolean,
+  onProgress?: (progress: number, status: string) => void,
+): Promise<CrosshatchBnResult | null> {
+  const source = fitSourceToMaxWidthCanvas(input, options.maxWidth);
+  const sourceWidth = source.width;
+  const sourceHeight = source.height;
+  const sourceContext = source.getContext("2d", { willReadFrequently: true });
+  if (!sourceContext) {
+    throw new Error("2D context not available.");
+  }
+
+  const imageData = sourceContext.getImageData(0, 0, sourceWidth, sourceHeight);
+  const data = imageData.data;
+  const levels = clamp(Math.round(options.levels), 2, 128);
+  const quantizedLevelsData = new Uint8Array(sourceWidth * sourceHeight);
+  const step = 256 / levels;
+  for (let index = 0; index < data.length; index += 4) {
+    const grayscale = Math.round(0.299 * data[index] + 0.587 * data[index + 1] + 0.114 * data[index + 2]);
+    const levelIndex = Math.min(Math.floor(grayscale / step), levels - 1);
+    quantizedLevelsData[index / 4] = levelIndex;
+  }
+
+  const upscale = clamp(Math.round(options.upscale), 1, 10);
+  const outputWidth = sourceWidth * upscale;
+  const outputHeight = sourceHeight * upscale;
+  const lineSpacing = Math.max(1, Math.round(options.lineSpacing));
+  const lineThickness = Math.max(0.1, options.lineThickness);
+  const lineColor = normalizeHexColor(options.lineColor);
+  const lineAlpha = clamp(options.lineAlpha, 0, 1);
+  const whiteThreshold = clamp(Math.round(options.whiteThreshold), 0, 255);
+  const totalAngleVariations = levels;
+  const maxPerpendicularDist = Math.max(outputWidth, outputHeight) * 1.5;
+  const totalLength = 2 * maxPerpendicularDist;
+  const numStepsOnLine = Math.max(1, Math.floor(totalLength / Math.max(1, upscale / 2)));
+  const lines: string[] = [];
+  let lineCount = 0;
+  let lastYieldTime = performance.now();
+
+  for (let angleVariationIndex = 0; angleVariationIndex < totalAngleVariations; angleVariationIndex += 1) {
+    if (shouldCancel?.()) {
+      return null;
+    }
+
+    const angleRad =
+      totalAngleVariations <= 1
+        ? 0
+        : (angleVariationIndex / (totalAngleVariations - 1)) * (Math.PI / 2);
+    const cosA = Math.cos(angleRad);
+    const sinA = Math.sin(angleRad);
+
+    for (let p = -maxPerpendicularDist; p < maxPerpendicularDist; p += lineSpacing) {
+      const centerX = outputWidth * 0.5;
+      const centerY = outputHeight * 0.5;
+      const lineStartX = centerX + p * sinA - maxPerpendicularDist * cosA;
+      const lineStartY = centerY - p * cosA - maxPerpendicularDist * sinA;
+      const lineEndX = centerX + p * sinA + maxPerpendicularDist * cosA;
+      const lineEndY = centerY - p * cosA + maxPerpendicularDist * sinA;
+      let activeSegment: { x1: number; y1: number; lastX: number; lastY: number } | null = null;
+
+      for (let stepIndex = 0; stepIndex <= numStepsOnLine; stepIndex += 1) {
+        const t = stepIndex / numStepsOnLine;
+        const currentX = lineStartX + t * (lineEndX - lineStartX);
+        const currentY = lineStartY + t * (lineEndY - lineStartY);
+        const roundedCurrentX = Math.round(currentX);
+        const roundedCurrentY = Math.round(currentY);
+        let shouldDraw = false;
+
+        if (
+          roundedCurrentX >= 0 &&
+          roundedCurrentX < outputWidth &&
+          roundedCurrentY >= 0 &&
+          roundedCurrentY < outputHeight
+        ) {
+          const originalX = Math.floor(roundedCurrentX / upscale);
+          const originalY = Math.floor(roundedCurrentY / upscale);
+          if (originalX >= 0 && originalX < sourceWidth && originalY >= 0 && originalY < sourceHeight) {
+            const quantizedPixelIndex = originalY * sourceWidth + originalX;
+            const pixelLevelIndex = quantizedLevelsData[quantizedPixelIndex];
+            const pixelGrayscaleValue = Math.round(pixelLevelIndex * (255 / (levels - 1)));
+            if (pixelGrayscaleValue < whiteThreshold) {
+              const maxAnglesForDarkness = levels - pixelLevelIndex;
+              if (angleVariationIndex < maxAnglesForDarkness) {
+                shouldDraw = true;
+              }
+            }
+          }
+        }
+
+        if (shouldDraw) {
+          if (!activeSegment) {
+            activeSegment = {
+              x1: roundedCurrentX,
+              y1: roundedCurrentY,
+              lastX: roundedCurrentX,
+              lastY: roundedCurrentY,
+            };
+          } else {
+            activeSegment.lastX = roundedCurrentX;
+            activeSegment.lastY = roundedCurrentY;
+          }
+        } else if (activeSegment) {
+          appendSvgCrosshatchLine(
+            lines,
+            activeSegment.x1,
+            activeSegment.y1,
+            activeSegment.lastX,
+            activeSegment.lastY,
+            lineColor,
+            lineThickness,
+            lineAlpha,
+          );
+          lineCount += 1;
+          activeSegment = null;
+        }
+      }
+
+      if (activeSegment) {
+        appendSvgCrosshatchLine(
+          lines,
+          activeSegment.x1,
+          activeSegment.y1,
+          activeSegment.lastX,
+          activeSegment.lastY,
+          lineColor,
+          lineThickness,
+          lineAlpha,
+        );
+        lineCount += 1;
+      }
+
+      if (performance.now() - lastYieldTime > 14) {
+        await yieldToUi();
+        lastYieldTime = performance.now();
+        if (shouldCancel?.()) {
+          return null;
+        }
+      }
+    }
+
+    onProgress?.(
+      (angleVariationIndex + 1) / totalAngleVariations,
+      `crosshatch ${Math.round(((angleVariationIndex + 1) / totalAngleVariations) * 100)}%`,
+    );
+    await yieldToUi();
+  }
+
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${outputWidth}" height="${outputHeight}" viewBox="0 0 ${outputWidth} ${outputHeight}"><rect width="100%" height="100%" fill="white"/>${lines.join("")}</svg>`;
+  return {
+    svg,
+    lineCount,
+    sourceWidth,
+    sourceHeight,
+    outputWidth,
+    outputHeight,
+  };
 }
 
 async function marchingGraphImage(
@@ -4978,6 +5279,240 @@ class CarboncinoToolNode {
   }
 }
 
+class SeargeantToolNode {
+  size: [number, number] = [280, 450];
+  properties!: Record<string, unknown>;
+  preview: GraphImage | null = null;
+  status = "idle";
+  progress = 0;
+  isRendering = false;
+  executionMs: number | null = null;
+  lastSignature = "";
+  lastOptionsSignature = "";
+  renderToken = 0;
+
+  constructor() {
+    const node = this as unknown as PreviewAwareNode & SeargeantToolNode;
+    node.title = createToolTitle("Seargeant");
+    node.properties = {
+      canvasSize: 512,
+      blockingStrokes: 1000,
+      formStrokes: 3000,
+      detailStrokes: 6000,
+      highlightsStrokes: 500,
+    };
+    node.addInput("image", "image");
+    node.addOutput("image", "image");
+    node.addWidget("slider", "Canvas", 512, (value) => {
+      node.properties.canvasSize = Math.round(Number(value));
+      notifyGraphStateChange(node);
+    }, { min: 128, max: 1024, step: 32 });
+    node.addWidget("slider", "Blocking", 1000, (value) => {
+      node.properties.blockingStrokes = Math.round(Number(value));
+      notifyGraphStateChange(node);
+    }, { min: 200, max: 8000, step: 100 });
+    node.addWidget("slider", "Form", 3000, (value) => {
+      node.properties.formStrokes = Math.round(Number(value));
+      notifyGraphStateChange(node);
+    }, { min: 500, max: 14000, step: 100 });
+    node.addWidget("slider", "Detail", 6000, (value) => {
+      node.properties.detailStrokes = Math.round(Number(value));
+      notifyGraphStateChange(node);
+    }, { min: 1000, max: 26000, step: 200 });
+    node.addWidget("slider", "Highlights", 500, (value) => {
+      node.properties.highlightsStrokes = Math.round(Number(value));
+      notifyGraphStateChange(node);
+    }, { min: 100, max: 5000, step: 50 });
+    node.refreshPreviewLayout = () => {
+      refreshNode(node, node.preview, 3);
+    };
+    node.refreshPreviewLayout();
+  }
+
+  onExecute(this: PreviewAwareNode & SeargeantToolNode) {
+    const inputValue = this.getInputData(0);
+    const input = isGraphImageReady(inputValue) ? inputValue : null;
+    if (!input) {
+      this.preview = null;
+      this.status = "waiting valid image";
+      this.progress = 0;
+      this.executionMs = null;
+      this.isRendering = false;
+      this.lastSignature = "";
+      this.lastOptionsSignature = "";
+      this.setOutputData(0, null);
+      this.refreshPreviewLayout();
+      return;
+    }
+
+    const options = {
+      canvasSize: clamp(Math.round(Number(this.properties.canvasSize ?? 512)), 128, 1024),
+      blockingStrokes: clamp(Math.round(Number(this.properties.blockingStrokes ?? 1000)), 200, 8000),
+      formStrokes: clamp(Math.round(Number(this.properties.formStrokes ?? 3000)), 500, 14000),
+      detailStrokes: clamp(Math.round(Number(this.properties.detailStrokes ?? 6000)), 1000, 26000),
+      highlightsStrokes: clamp(Math.round(Number(this.properties.highlightsStrokes ?? 500)), 100, 5000),
+    };
+    const signature = getGraphImageSignature(input);
+    const optionsSignature = JSON.stringify(options);
+    if (signature !== this.lastSignature || optionsSignature !== this.lastOptionsSignature) {
+      this.lastSignature = signature;
+      this.lastOptionsSignature = optionsSignature;
+      const renderToken = ++this.renderToken;
+      const start = performance.now();
+      this.isRendering = true;
+      this.progress = 0;
+      this.status = "fase 1/5 analisi";
+      this.setDirtyCanvas(true, true);
+
+      const shouldCancel = () => renderToken !== this.renderToken;
+      const updateProgress = (value: number, status?: string) => {
+        this.progress = clamp(value, 0, 1);
+        if (status) {
+          this.status = status;
+        }
+        this.setDirtyCanvas(true, true);
+      };
+
+      void (async () => {
+        const workingSource = fitSourceToSquareCanvas(input, options.canvasSize);
+        const output = document.createElement("canvas");
+        output.width = options.canvasSize;
+        output.height = options.canvasSize;
+        const outputContext = output.getContext("2d", { willReadFrequently: true });
+        const sourceContext = workingSource.getContext("2d", { willReadFrequently: true });
+        if (!outputContext || !sourceContext) {
+          throw new Error("2D context not available.");
+        }
+
+        const originalColorData = sourceContext.getImageData(0, 0, options.canvasSize, options.canvasSize);
+        const avg = getAverageColorFromImageData(originalColorData);
+        outputContext.fillStyle = `rgb(${avg.r}, ${avg.g}, ${avg.b})`;
+        outputContext.fillRect(0, 0, output.width, output.height);
+
+        const gray = toGrayscaleImageData(originalColorData);
+        const gradientMap = sobelOperatorFromGrayscale(gray);
+        const blurredColorData = gaussianBlurImageData(originalColorData, 8);
+        if (shouldCancel()) {
+          return;
+        }
+
+        updateProgress(0.15, "fase 2/5 blocking-in");
+        const blockingOk = await renderSargentLayer({
+          context: outputContext,
+          numStrokes: options.blockingStrokes,
+          minSize: 30,
+          maxSize: 60,
+          colorSource: blurredColorData,
+          gradientMap,
+          opacity: 0.7,
+          colorJitter: 20,
+          shouldCancel,
+          onProgress: (p) => updateProgress(0.15 + p * 0.25),
+        });
+        if (!blockingOk || shouldCancel()) {
+          return;
+        }
+
+        updateProgress(0.4, "fase 3/5 costruzione forma");
+        const formOk = await renderSargentLayer({
+          context: outputContext,
+          numStrokes: options.formStrokes,
+          minSize: 10,
+          maxSize: 25,
+          colorSource: originalColorData,
+          gradientMap,
+          opacity: 0.75,
+          colorJitter: 25,
+          shouldCancel,
+          onProgress: (p) => updateProgress(0.4 + p * 0.35),
+        });
+        if (!formOk || shouldCancel()) {
+          return;
+        }
+
+        updateProgress(0.75, "fase 4/5 dettagli");
+        const detailOk = await renderSargentLayer({
+          context: outputContext,
+          numStrokes: options.detailStrokes,
+          minSize: 3,
+          maxSize: 10,
+          colorSource: originalColorData,
+          gradientMap,
+          opacity: 0.85,
+          sharpen: true,
+          colorJitter: 15,
+          shouldCancel,
+          onProgress: (p) => updateProgress(0.75 + p * 0.2),
+        });
+        if (!detailOk || shouldCancel()) {
+          return;
+        }
+
+        updateProgress(0.95, "fase 5/5 luci speculari");
+        const highlightsOk = await renderSargentLayer({
+          context: outputContext,
+          numStrokes: options.highlightsStrokes,
+          minSize: 2,
+          maxSize: 6,
+          colorSource: originalColorData,
+          gradientMap,
+          opacity: 0.95,
+          sharpen: true,
+          colorJitter: 5,
+          brightnessBoost: 40,
+          shouldCancel,
+          onProgress: (p) => updateProgress(0.95 + p * 0.05),
+        });
+        if (!highlightsOk || shouldCancel()) {
+          return;
+        }
+
+        if (renderToken !== this.renderToken) {
+          return;
+        }
+        this.preview = output;
+        this.progress = 1;
+        this.status = "ready";
+        this.executionMs = performance.now() - start;
+        this.isRendering = false;
+        this.setDirtyCanvas(true, true);
+      })().catch((error) => {
+        if (renderToken !== this.renderToken) {
+          return;
+        }
+        this.preview = input;
+        this.progress = 0;
+        this.status = error instanceof Error ? error.message : "seargeant error";
+        this.executionMs = null;
+        this.isRendering = false;
+        this.setDirtyCanvas(true, true);
+      });
+    }
+
+    this.setOutputData(0, this.preview ?? input);
+    this.refreshPreviewLayout();
+  }
+
+  onDrawBackground(this: PreviewAwareNode & SeargeantToolNode, context: CanvasRenderingContext2D) {
+    const layout = drawImagePreview(context, this, this.preview, { footerLines: 3 });
+    context.save();
+    context.fillStyle = "rgba(255,255,255,0.65)";
+    context.font = "12px sans-serif";
+    context.fillText(
+      `${this.status}${this.isRendering ? "..." : ""}`,
+      10,
+      layout.footerTop + 12,
+    );
+    context.fillText(
+      `progress ${Math.round(this.progress * 100)}% | out ${this.preview ? `${this.preview.width}x${this.preview.height}` : "-"}`,
+      10,
+      layout.footerTop + 30,
+    );
+    context.fillText(formatExecutionInfo(this.executionMs), 10, layout.footerTop + 48);
+    context.restore();
+  }
+}
+
 class FaceLandmarkerToolNode {
   size: [number, number] = [280, 540];
   properties!: Record<string, unknown>;
@@ -5908,6 +6443,7 @@ export function registerImageNodes() {
   LiteGraph.registerNodeType("tools/rough", RoughToolNode as unknown as NodeCtor);
   LiteGraph.registerNodeType("tools/svg-simplify", SvgSimplifyToolNode as unknown as NodeCtor);
   LiteGraph.registerNodeType("tools/boldini", BoldiniToolNode as unknown as NodeCtor);
+  LiteGraph.registerNodeType("tools/seargeant", SeargeantToolNode as unknown as NodeCtor);
   LiteGraph.registerNodeType("tools/carboncino", CarboncinoToolNode as unknown as NodeCtor);
   LiteGraph.registerNodeType("tools/pose-detect", PoseDetectToolNode as unknown as NodeCtor);
   LiteGraph.registerNodeType("tools/face-landmarker", FaceLandmarkerToolNode as unknown as NodeCtor);
