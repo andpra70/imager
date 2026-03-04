@@ -12,6 +12,7 @@ import type { GraphImage } from "../models/graphImage";
 import type { GraphFaceBlendshapeCategory, GraphFaceLandmarksData } from "../models/graphFaceLandmarks";
 import type { GraphMl5Data, Ml5Task } from "../models/graphMl5";
 import type { GraphPalette } from "../models/graphPalette";
+import type { GraphPoseBox, GraphPoseData } from "../models/graphPose";
 import type { GraphSvg } from "../models/graphSvg";
 import {
   blendGraphImages,
@@ -138,6 +139,34 @@ interface BgSegmentationModelLike {
   segment: (input: GraphImage) => Promise<ImageData>;
 }
 
+interface PoseKeypointLike {
+  name?: string;
+  x: number;
+  y: number;
+  score?: number;
+}
+
+interface PoseLike {
+  keypoints?: PoseKeypointLike[];
+}
+
+interface PoseDetectionDetectorLike {
+  estimatePoses: (input: CanvasImageSource, options?: Record<string, unknown>) => Promise<PoseLike[]>;
+}
+
+interface PoseDetectionRuntimeLike {
+  SupportedModels: {
+    MoveNet: unknown;
+  };
+  createDetector: (model: unknown, config?: Record<string, unknown>) => Promise<PoseDetectionDetectorLike>;
+}
+
+interface TfJsRuntimeLike {
+  ready?: () => Promise<void>;
+  setBackend?: (backend: string) => Promise<boolean>;
+  getBackend?: () => string;
+}
+
 interface MediaPipeFaceLandmarkerLike {
   detect: (input: CanvasImageSource) => unknown;
   close?: () => void;
@@ -246,8 +275,12 @@ const MEDIAPIPE_FACE_LANDMARKER_MODEL_URL =
   "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task";
 const MEDIAPIPE_SELFIE_SEGMENTER_MODEL_URL =
   "https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/1/selfie_segmenter.tflite";
+const TFJS_SCRIPT_URL = "https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js";
+const POSE_DETECTION_SCRIPT_URL =
+  "https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection@latest/dist/pose-detection.min.js";
 
 let mediaPipeVisionPromise: Promise<MediaPipeVisionApi> | null = null;
+let tfPoseRuntimePromise: Promise<PoseDetectionRuntimeLike> | null = null;
 
 function importExternalModule(moduleUrl: string) {
   return import(/* @vite-ignore */ moduleUrl);
@@ -260,6 +293,67 @@ function loadMediaPipeVisionApi() {
     );
   }
   return mediaPipeVisionPromise;
+}
+
+function loadScriptOnce(url: string) {
+  return new Promise<void>((resolve, reject) => {
+    const existing = document.querySelector(`script[data-src='${url}']`) as HTMLScriptElement | null;
+    if (existing) {
+      if (existing.dataset.loaded === "true") {
+        resolve();
+        return;
+      }
+      existing.addEventListener("load", () => resolve(), { once: true });
+      existing.addEventListener("error", () => reject(new Error(`Failed to load script: ${url}`)), { once: true });
+      return;
+    }
+
+    const script = document.createElement("script");
+    script.src = url;
+    script.async = true;
+    script.dataset.src = url;
+    script.addEventListener(
+      "load",
+      () => {
+        script.dataset.loaded = "true";
+        resolve();
+      },
+      { once: true },
+    );
+    script.addEventListener("error", () => reject(new Error(`Failed to load script: ${url}`)), {
+      once: true,
+    });
+    document.head.appendChild(script);
+  });
+}
+
+function loadTfPoseRuntime() {
+  if (!tfPoseRuntimePromise) {
+    tfPoseRuntimePromise = (async () => {
+      await loadScriptOnce(TFJS_SCRIPT_URL);
+      await loadScriptOnce(POSE_DETECTION_SCRIPT_URL);
+      const tfRuntime = (globalThis as { tf?: TfJsRuntimeLike }).tf;
+      if (!tfRuntime) {
+        throw new Error("TensorFlow.js runtime not available.");
+      }
+      if (typeof tfRuntime.setBackend === "function") {
+        try {
+          await tfRuntime.setBackend("webgl");
+        } catch {
+          await tfRuntime.setBackend("cpu");
+        }
+      }
+      if (typeof tfRuntime.ready === "function") {
+        await tfRuntime.ready();
+      }
+      const runtime = globalThis as { poseDetection?: PoseDetectionRuntimeLike };
+      if (!runtime.poseDetection) {
+        throw new Error("pose-detection runtime not available.");
+      }
+      return runtime.poseDetection;
+    })();
+  }
+  return tfPoseRuntimePromise;
 }
 
 function isPromiseLike(value: unknown): value is Promise<unknown> {
@@ -751,6 +845,318 @@ async function loadMediaPipeSelfieSegmenterModel(): Promise<BgSegmentationModelL
       return resizeMaskToImage(baseMask, input.width, input.height);
     },
   };
+}
+
+function parseConnectionIndices(connection: unknown): [number, number] | null {
+  if (Array.isArray(connection) && connection.length >= 2) {
+    const a = Number(connection[0]);
+    const b = Number(connection[1]);
+    if (Number.isInteger(a) && Number.isInteger(b)) {
+      return [a, b];
+    }
+  }
+
+  if (connection && typeof connection === "object") {
+    const record = connection as { start?: unknown; end?: unknown };
+    const a = Number(record.start);
+    const b = Number(record.end);
+    if (Number.isInteger(a) && Number.isInteger(b)) {
+      return [a, b];
+    }
+  }
+  return null;
+}
+
+function drawFaceConnections(
+  context: CanvasRenderingContext2D,
+  points: Array<{ x: number; y: number }>,
+  connections: unknown[],
+  color: string,
+  lineWidth: number,
+) {
+  context.strokeStyle = color;
+  context.lineWidth = lineWidth;
+  context.beginPath();
+  connections.forEach((entry) => {
+    const parsed = parseConnectionIndices(entry);
+    if (!parsed) {
+      return;
+    }
+    const a = points[parsed[0]];
+    const b = points[parsed[1]];
+    if (!a || !b) {
+      return;
+    }
+    context.moveTo(a.x, a.y);
+    context.lineTo(b.x, b.y);
+  });
+  context.stroke();
+}
+
+function normalizeBlendshapeCategories(result: MediaPipeFaceLandmarkerResult) {
+  const categories = result.faceBlendshapes?.[0]?.categories ?? [];
+  const normalized: GraphFaceBlendshapeCategory[] = categories
+    .map((category) => ({
+      categoryName: String(category?.categoryName ?? ""),
+      displayName: String(category?.displayName ?? category?.categoryName ?? ""),
+      score: Number(category?.score ?? 0),
+    }))
+    .filter((item) => item.categoryName.length > 0)
+    .sort((a, b) => b.score - a.score);
+  return normalized;
+}
+
+function drawFaceLandmarkerOverlay(
+  input: GraphImage,
+  result: MediaPipeFaceLandmarkerResult,
+  options: {
+    drawTessellation: boolean;
+    drawEyes: boolean;
+    drawEyebrows: boolean;
+    drawFaceOval: boolean;
+    drawLips: boolean;
+    drawIris: boolean;
+  },
+  connections: FaceLandmarkerConnections,
+) {
+  const preview = drawSourceToCanvas(input);
+  const context = preview.getContext("2d");
+  if (!context) {
+    return preview;
+  }
+
+  const faces = result.faceLandmarks ?? [];
+  const width = preview.width;
+  const height = preview.height;
+  context.save();
+  faces.forEach((landmarks) => {
+    const points = landmarks.map((point) => ({
+      x: point.x * width,
+      y: point.y * height,
+    }));
+    if (options.drawTessellation) {
+      drawFaceConnections(context, points, connections.tessellation, "#C0C0C070", 1);
+    }
+    if (options.drawEyes) {
+      drawFaceConnections(context, points, connections.rightEye, "#FF3030", 2);
+      drawFaceConnections(context, points, connections.leftEye, "#30FF30", 2);
+    }
+    if (options.drawEyebrows) {
+      drawFaceConnections(context, points, connections.rightEyebrow, "#FF3030", 2);
+      drawFaceConnections(context, points, connections.leftEyebrow, "#30FF30", 2);
+    }
+    if (options.drawFaceOval) {
+      drawFaceConnections(context, points, connections.faceOval, "#E0E0E0", 2);
+    }
+    if (options.drawLips) {
+      drawFaceConnections(context, points, connections.lips, "#E0E0E0", 2);
+    }
+    if (options.drawIris) {
+      drawFaceConnections(context, points, connections.rightIris, "#FF3030", 2);
+      drawFaceConnections(context, points, connections.leftIris, "#30FF30", 2);
+    }
+  });
+  context.restore();
+  return preview;
+}
+
+async function loadMediaPipeFaceLandmarkerModel(
+  options: { numFaces: number; outputBlendshapes: boolean; delegate: "GPU" | "CPU" },
+): Promise<FaceLandmarkerModelLike> {
+  const visionApi = await loadMediaPipeVisionApi();
+  const vision = await visionApi.FilesetResolver.forVisionTasks(MEDIAPIPE_TASKS_WASM_ROOT);
+  const ctor = visionApi.FaceLandmarker;
+  const detector = await ctor.createFromOptions(vision, {
+    baseOptions: {
+      modelAssetPath: MEDIAPIPE_FACE_LANDMARKER_MODEL_URL,
+      delegate: options.delegate,
+    },
+    runningMode: "IMAGE",
+    outputFaceBlendshapes: options.outputBlendshapes,
+    numFaces: clamp(Math.round(options.numFaces), 1, 4),
+  });
+
+  return {
+    detect: (input: GraphImage) => detector.detect(input) as MediaPipeFaceLandmarkerResult,
+    connections: {
+      tessellation: ctor.FACE_LANDMARKS_TESSELATION ?? [],
+      rightEye: ctor.FACE_LANDMARKS_RIGHT_EYE ?? [],
+      rightEyebrow: ctor.FACE_LANDMARKS_RIGHT_EYEBROW ?? [],
+      leftEye: ctor.FACE_LANDMARKS_LEFT_EYE ?? [],
+      leftEyebrow: ctor.FACE_LANDMARKS_LEFT_EYEBROW ?? [],
+      faceOval: ctor.FACE_LANDMARKS_FACE_OVAL ?? [],
+      lips: ctor.FACE_LANDMARKS_LIPS ?? [],
+      rightIris: ctor.FACE_LANDMARKS_RIGHT_IRIS ?? [],
+      leftIris: ctor.FACE_LANDMARKS_LEFT_IRIS ?? [],
+    },
+  };
+}
+
+function getPoseKeypoint(keypoints: PoseKeypointLike[], name: string) {
+  return keypoints.find((item) => item.name === name);
+}
+
+function getBoundingBoxForPosePoints(points: Array<PoseKeypointLike | undefined>, padding = 10) {
+  const validPoints = points.filter(
+    (point): point is PoseKeypointLike =>
+      point !== undefined &&
+      Number(point.score ?? 1) > 0.3 &&
+      Number.isFinite(point.x) &&
+      Number.isFinite(point.y),
+  );
+  if (!validPoints.length) {
+    return null;
+  }
+  let minX = Number.POSITIVE_INFINITY;
+  let minY = Number.POSITIVE_INFINITY;
+  let maxX = Number.NEGATIVE_INFINITY;
+  let maxY = Number.NEGATIVE_INFINITY;
+  validPoints.forEach((point) => {
+    minX = Math.min(minX, point.x);
+    minY = Math.min(minY, point.y);
+    maxX = Math.max(maxX, point.x);
+    maxY = Math.max(maxY, point.y);
+  });
+
+  return {
+    x: minX - padding,
+    y: minY - padding,
+    width: maxX - minX + padding * 2,
+    height: maxY - minY + padding * 2,
+  };
+}
+
+function buildPoseBoxes(keypoints: PoseKeypointLike[]): GraphPoseBox[] {
+  const definitions: Array<{ label: string; points: Array<PoseKeypointLike | undefined>; padding?: number }> = [
+    {
+      label: "Testa",
+      points: [
+        getPoseKeypoint(keypoints, "nose"),
+        getPoseKeypoint(keypoints, "left_eye"),
+        getPoseKeypoint(keypoints, "right_eye"),
+        getPoseKeypoint(keypoints, "left_ear"),
+        getPoseKeypoint(keypoints, "right_ear"),
+      ],
+      padding: 15,
+    },
+    {
+      label: "Torso",
+      points: [
+        getPoseKeypoint(keypoints, "left_shoulder"),
+        getPoseKeypoint(keypoints, "right_shoulder"),
+        getPoseKeypoint(keypoints, "left_hip"),
+        getPoseKeypoint(keypoints, "right_hip"),
+      ],
+      padding: 15,
+    },
+    {
+      label: "Gamba Sinistra",
+      points: [
+        getPoseKeypoint(keypoints, "left_hip"),
+        getPoseKeypoint(keypoints, "left_knee"),
+        getPoseKeypoint(keypoints, "left_ankle"),
+      ],
+      padding: 15,
+    },
+    {
+      label: "Gamba Destra",
+      points: [
+        getPoseKeypoint(keypoints, "right_hip"),
+        getPoseKeypoint(keypoints, "right_knee"),
+        getPoseKeypoint(keypoints, "right_ankle"),
+      ],
+      padding: 15,
+    },
+    {
+      label: "Mano/Braccio Sinistro",
+      points: [getPoseKeypoint(keypoints, "left_elbow"), getPoseKeypoint(keypoints, "left_wrist")],
+      padding: 15,
+    },
+    {
+      label: "Mano/Braccio Destro",
+      points: [getPoseKeypoint(keypoints, "right_elbow"), getPoseKeypoint(keypoints, "right_wrist")],
+      padding: 15,
+    },
+    {
+      label: "Piede Sinistro",
+      points: [getPoseKeypoint(keypoints, "left_ankle")],
+      padding: 25,
+    },
+    {
+      label: "Piede Destro",
+      points: [getPoseKeypoint(keypoints, "right_ankle")],
+      padding: 25,
+    },
+  ];
+
+  const boxes = definitions
+    .map((definition) => {
+      const box = getBoundingBoxForPosePoints(definition.points, definition.padding ?? 10);
+      if (!box) {
+        return null;
+      }
+      return {
+        label: definition.label,
+        x: box.x,
+        y: box.y,
+        width: box.width,
+        height: box.height,
+      };
+    })
+    .filter((item): item is GraphPoseBox => Boolean(item));
+
+  const leftShoulder = getPoseKeypoint(keypoints, "left_shoulder");
+  const rightShoulder = getPoseKeypoint(keypoints, "right_shoulder");
+  const nose = getPoseKeypoint(keypoints, "nose");
+  if (
+    leftShoulder &&
+    rightShoulder &&
+    nose &&
+    (leftShoulder.score ?? 1) > 0.3 &&
+    (rightShoulder.score ?? 1) > 0.3 &&
+    (nose.score ?? 1) > 0.3
+  ) {
+    const shoulderY = (leftShoulder.y + rightShoulder.y) * 0.5;
+    const neckTopY = shoulderY - Math.abs(shoulderY - nose.y) * 0.5;
+    boxes.push({
+      label: "Collo",
+      x: Math.min(leftShoulder.x, rightShoulder.x),
+      y: neckTopY,
+      width: Math.abs(leftShoulder.x - rightShoulder.x),
+      height: shoulderY - neckTopY + 10,
+    });
+  }
+
+  return boxes;
+}
+
+function drawPoseBoxesOverlay(input: GraphImage, boxes: GraphPoseBox[]) {
+  const preview = drawSourceToCanvas(input);
+  const context = preview.getContext("2d");
+  if (!context) {
+    return preview;
+  }
+  context.save();
+  context.strokeStyle = "#00ff00";
+  context.fillStyle = "#00ff00";
+  context.lineWidth = 3;
+  context.font = "bold 14px sans-serif";
+  boxes.forEach((box) => {
+    context.strokeRect(box.x, box.y, box.width, box.height);
+    const textWidth = context.measureText(box.label).width + 10;
+    const textY = Math.max(0, box.y - 18);
+    context.fillRect(box.x, textY, textWidth, 18);
+    context.fillStyle = "#101010";
+    context.fillText(box.label, box.x + 5, textY + 13);
+    context.fillStyle = "#00ff00";
+  });
+  context.restore();
+  return preview;
+}
+
+async function loadPoseDetectorModel() {
+  const poseDetection = await loadTfPoseRuntime();
+  return poseDetection.createDetector(poseDetection.SupportedModels.MoveNet);
 }
 
 async function loadMl5Model(task: Ml5Task, modelKey: string): Promise<Ml5ModelLike> {
@@ -3659,6 +4065,387 @@ class SvgSimplifyToolNode {
   }
 }
 
+class FaceLandmarkerToolNode {
+  size: [number, number] = [280, 540];
+  properties!: Record<string, unknown>;
+  preview: GraphImage | null = null;
+  data: GraphFaceLandmarksData | null = null;
+  status = "idle";
+  executionMs: number | null = null;
+  isRendering = false;
+  lastSignature = "";
+  lastOptionsSignature = "";
+  renderToken = 0;
+  model: FaceLandmarkerModelLike | null = null;
+  modelPromise: Promise<FaceLandmarkerModelLike> | null = null;
+  modelOptionsSignature = "";
+
+  constructor() {
+    const node = this as unknown as PreviewAwareNode & FaceLandmarkerToolNode;
+    node.title = createToolTitle("Face Landmarker");
+    node.properties = {
+      numFaces: 1,
+      outputBlendshapes: true,
+      delegate: "GPU",
+      drawTessellation: true,
+      drawEyes: true,
+      drawEyebrows: true,
+      drawFaceOval: true,
+      drawLips: true,
+      drawIris: true,
+    };
+    node.addInput("image", "image");
+    node.addOutput("image", "image");
+    node.addOutput("face", "face");
+    node.addWidget("combo", "Delegate", "GPU", (value) => {
+      node.properties.delegate = String(value);
+      node.invalidateModel();
+      notifyGraphStateChange(node);
+    }, { values: ["GPU", "CPU"] });
+    node.addWidget("slider", "Faces", 1, (value) => {
+      node.properties.numFaces = Math.round(Number(value));
+      node.invalidateModel();
+      notifyGraphStateChange(node);
+    }, { min: 1, max: 4, step: 1 });
+    node.addWidget("toggle", "Blendshapes", true, (value) => {
+      node.properties.outputBlendshapes = Boolean(value);
+      node.invalidateModel();
+      notifyGraphStateChange(node);
+    });
+    node.addWidget("toggle", "Mesh", true, (value) => {
+      node.properties.drawTessellation = Boolean(value);
+      notifyGraphStateChange(node);
+    });
+    node.addWidget("toggle", "Eyes", true, (value) => {
+      node.properties.drawEyes = Boolean(value);
+      notifyGraphStateChange(node);
+    });
+    node.addWidget("toggle", "Eyebrows", true, (value) => {
+      node.properties.drawEyebrows = Boolean(value);
+      notifyGraphStateChange(node);
+    });
+    node.addWidget("toggle", "Face oval", true, (value) => {
+      node.properties.drawFaceOval = Boolean(value);
+      notifyGraphStateChange(node);
+    });
+    node.addWidget("toggle", "Lips", true, (value) => {
+      node.properties.drawLips = Boolean(value);
+      notifyGraphStateChange(node);
+    });
+    node.addWidget("toggle", "Iris", true, (value) => {
+      node.properties.drawIris = Boolean(value);
+      notifyGraphStateChange(node);
+    });
+    node.refreshPreviewLayout = () => {
+      refreshNode(node, node.preview, 3);
+    };
+    node.refreshPreviewLayout();
+  }
+
+  invalidateModel(this: FaceLandmarkerToolNode) {
+    this.model = null;
+    this.modelPromise = null;
+    this.modelOptionsSignature = "";
+  }
+
+  getModelOptions(this: FaceLandmarkerToolNode) {
+    return {
+      numFaces: clamp(Math.round(Number(this.properties.numFaces ?? 1)), 1, 4),
+      outputBlendshapes: Boolean(this.properties.outputBlendshapes ?? true),
+      delegate: String(this.properties.delegate ?? "GPU") === "CPU" ? "CPU" : "GPU",
+    } as const;
+  }
+
+  getDrawOptions(this: FaceLandmarkerToolNode) {
+    return {
+      drawTessellation: Boolean(this.properties.drawTessellation ?? true),
+      drawEyes: Boolean(this.properties.drawEyes ?? true),
+      drawEyebrows: Boolean(this.properties.drawEyebrows ?? true),
+      drawFaceOval: Boolean(this.properties.drawFaceOval ?? true),
+      drawLips: Boolean(this.properties.drawLips ?? true),
+      drawIris: Boolean(this.properties.drawIris ?? true),
+    };
+  }
+
+  getOrLoadModel(this: FaceLandmarkerToolNode, modelOptions: { numFaces: number; outputBlendshapes: boolean; delegate: "GPU" | "CPU" }) {
+    const signature = JSON.stringify(modelOptions);
+    if (this.model && this.modelOptionsSignature === signature) {
+      return Promise.resolve(this.model);
+    }
+    if (this.modelPromise && this.modelOptionsSignature === signature) {
+      return this.modelPromise;
+    }
+
+    this.model = null;
+    this.modelOptionsSignature = signature;
+    this.modelPromise = loadMediaPipeFaceLandmarkerModel(modelOptions)
+      .then((model) => {
+        if (this.modelOptionsSignature === signature) {
+          this.model = model;
+        }
+        return model;
+      })
+      .finally(() => {
+        if (this.modelOptionsSignature === signature) {
+          this.modelPromise = null;
+        }
+      });
+    return this.modelPromise;
+  }
+
+  onExecute(this: PreviewAwareNode & FaceLandmarkerToolNode) {
+    const inputValue = this.getInputData(0);
+    const input = isGraphImageReady(inputValue) ? inputValue : null;
+    if (!input) {
+      this.status = "waiting valid image";
+      this.isRendering = false;
+      this.setOutputData(0, this.preview);
+      this.setOutputData(1, this.data);
+      this.refreshPreviewLayout();
+      return;
+    }
+
+    const signature = getGraphImageSignature(input);
+    const modelOptions = this.getModelOptions();
+    const drawOptions = this.getDrawOptions();
+    const optionsSignature = JSON.stringify({ modelOptions, drawOptions });
+
+    if (signature !== this.lastSignature || optionsSignature !== this.lastOptionsSignature) {
+      this.lastSignature = signature;
+      this.lastOptionsSignature = optionsSignature;
+      const renderToken = ++this.renderToken;
+      const start = performance.now();
+      this.isRendering = true;
+      this.status = "detecting face...";
+      this.setDirtyCanvas(true, true);
+
+      void this.getOrLoadModel(modelOptions)
+        .then((model) => {
+          const result = model.detect(input);
+          const blendshapes = normalizeBlendshapeCategories(result);
+          const faceCount = result.faceLandmarks?.length ?? 0;
+          const landmarkCount = result.faceLandmarks?.reduce((total, face) => total + face.length, 0) ?? 0;
+          const data: GraphFaceLandmarksData = {
+            task: "face-landmarker",
+            image: { width: input.width, height: input.height },
+            faceCount,
+            landmarkCount,
+            blendshapes,
+            generatedAtIso: new Date().toISOString(),
+            raw: result,
+          };
+          const preview = drawFaceLandmarkerOverlay(input, result, drawOptions, model.connections);
+          return { data, preview };
+        })
+        .then((payload) => {
+          if (renderToken !== this.renderToken || !payload) {
+            return;
+          }
+          this.data = payload.data;
+          this.preview = payload.preview;
+          this.executionMs = performance.now() - start;
+          this.status = "ready";
+          this.isRendering = false;
+          this.setDirtyCanvas(true, true);
+        })
+        .catch((error) => {
+          if (renderToken !== this.renderToken) {
+            return;
+          }
+          this.status = error instanceof Error ? error.message : "face landmark error";
+          this.executionMs = null;
+          this.isRendering = false;
+          this.setDirtyCanvas(true, true);
+        });
+    }
+
+    this.setOutputData(0, this.preview ?? input);
+    this.setOutputData(1, this.data);
+    this.refreshPreviewLayout();
+  }
+
+  onDrawBackground(this: PreviewAwareNode & FaceLandmarkerToolNode, context: CanvasRenderingContext2D) {
+    const layout = drawImagePreview(context, this, this.preview, { footerLines: 3 });
+    context.save();
+    context.fillStyle = "rgba(255,255,255,0.65)";
+    context.font = "12px sans-serif";
+    context.fillText(
+      `faces ${this.data?.faceCount ?? 0} | landmarks ${this.data?.landmarkCount ?? 0}`,
+      10,
+      layout.footerTop + 12,
+    );
+    const topBlendshape = this.data?.blendshapes?.[0];
+    context.fillText(
+      `${topBlendshape ? `${topBlendshape.displayName}: ${topBlendshape.score.toFixed(3)}` : this.status}`,
+      10,
+      layout.footerTop + 30,
+    );
+    context.fillText(formatExecutionInfo(this.executionMs), 10, layout.footerTop + 48);
+    context.restore();
+  }
+}
+
+class PoseDetectToolNode {
+  size: [number, number] = [280, 400];
+  properties!: Record<string, unknown>;
+  preview: GraphImage | null = null;
+  data: GraphPoseData | null = null;
+  status = "idle";
+  executionMs: number | null = null;
+  isRendering = false;
+  lastSignature = "";
+  lastOptionsSignature = "";
+  renderToken = 0;
+  detector: PoseDetectionDetectorLike | null = null;
+  detectorPromise: Promise<PoseDetectionDetectorLike> | null = null;
+
+  constructor() {
+    const node = this as unknown as PreviewAwareNode & PoseDetectToolNode;
+    node.title = createToolTitle("Pose Detect");
+    node.properties = {
+      maxPoses: 1,
+      flipHorizontal: false,
+    };
+    node.addInput("image", "image");
+    node.addOutput("image", "image");
+    node.addOutput("pose", "pose");
+    node.addWidget("slider", "Max poses", 1, (value) => {
+      node.properties.maxPoses = Math.round(Number(value));
+      notifyGraphStateChange(node);
+    }, { min: 1, max: 5, step: 1 });
+    node.addWidget("toggle", "Flip horizontal", false, (value) => {
+      node.properties.flipHorizontal = Boolean(value);
+      notifyGraphStateChange(node);
+    });
+    node.addWidget("button", "Reset model", null, () => {
+      node.clearDetectorCache();
+      notifyGraphStateChange(node);
+    });
+    node.refreshPreviewLayout = () => {
+      refreshNode(node, node.preview, 3);
+    };
+    node.refreshPreviewLayout();
+  }
+
+  clearDetectorCache(this: PoseDetectToolNode) {
+    this.detector = null;
+    this.detectorPromise = null;
+  }
+
+  getOrLoadDetector(this: PoseDetectToolNode) {
+    if (this.detector) {
+      return Promise.resolve(this.detector);
+    }
+    if (this.detectorPromise) {
+      return this.detectorPromise;
+    }
+    this.detectorPromise = loadPoseDetectorModel()
+      .then((detector) => {
+        this.detector = detector;
+        return detector;
+      })
+      .finally(() => {
+        this.detectorPromise = null;
+      });
+    return this.detectorPromise;
+  }
+
+  onExecute(this: PreviewAwareNode & PoseDetectToolNode) {
+    const inputValue = this.getInputData(0);
+    const input = isGraphImageReady(inputValue) ? inputValue : null;
+    if (!input) {
+      this.preview = null;
+      this.data = null;
+      this.status = "waiting valid image";
+      this.executionMs = null;
+      this.isRendering = false;
+      this.lastSignature = "";
+      this.lastOptionsSignature = "";
+      this.setOutputData(0, null);
+      this.setOutputData(1, null);
+      this.refreshPreviewLayout();
+      return;
+    }
+
+    const options = {
+      maxPoses: clamp(Math.round(Number(this.properties.maxPoses ?? 1)), 1, 5),
+      flipHorizontal: Boolean(this.properties.flipHorizontal ?? false),
+    };
+    const signature = getGraphImageSignature(input);
+    const optionsSignature = JSON.stringify(options);
+
+    if (signature !== this.lastSignature || optionsSignature !== this.lastOptionsSignature) {
+      this.lastSignature = signature;
+      this.lastOptionsSignature = optionsSignature;
+      const renderToken = ++this.renderToken;
+      const start = performance.now();
+      this.isRendering = true;
+      this.status = "detecting pose...";
+      this.setDirtyCanvas(true, true);
+
+      void this.getOrLoadDetector()
+        .then((detector) => detector.estimatePoses(input, options))
+        .then((poses) => {
+          if (renderToken !== this.renderToken) {
+            return;
+          }
+
+          const selectedPose = poses?.[0] ?? null;
+          const keypoints = Array.isArray(selectedPose?.keypoints) ? selectedPose.keypoints : [];
+          const boxes = buildPoseBoxes(keypoints);
+          this.data = {
+            task: "pose-detection",
+            image: { width: input.width, height: input.height },
+            poseCount: Array.isArray(poses) ? poses.length : 0,
+            keypointCount: keypoints.length,
+            boxes,
+            generatedAtIso: new Date().toISOString(),
+            raw: poses,
+          };
+          this.preview = drawPoseBoxesOverlay(input, boxes);
+          this.executionMs = performance.now() - start;
+          this.status = "ready";
+          this.isRendering = false;
+          this.setDirtyCanvas(true, true);
+        })
+        .catch((error) => {
+          if (renderToken !== this.renderToken) {
+            return;
+          }
+          this.preview = input;
+          this.data = null;
+          this.executionMs = null;
+          this.status = error instanceof Error ? error.message : "pose detect error";
+          this.isRendering = false;
+          this.setDirtyCanvas(true, true);
+        });
+    }
+
+    this.setOutputData(0, this.preview ?? input);
+    this.setOutputData(1, this.data);
+    this.refreshPreviewLayout();
+  }
+
+  onDrawBackground(this: PreviewAwareNode & PoseDetectToolNode, context: CanvasRenderingContext2D) {
+    const layout = drawImagePreview(context, this, this.preview, { footerLines: 3 });
+    context.save();
+    context.fillStyle = "rgba(255,255,255,0.65)";
+    context.font = "12px sans-serif";
+    context.fillText(
+      `poses ${this.data?.poseCount ?? 0} | keypoints ${this.data?.keypointCount ?? 0}`,
+      10,
+      layout.footerTop + 12,
+    );
+    context.fillText(
+      `boxes ${this.data?.boxes.length ?? 0} | ${this.status}`,
+      10,
+      layout.footerTop + 30,
+    );
+    context.fillText(formatExecutionInfo(this.executionMs), 10, layout.footerTop + 48);
+    context.restore();
+  }
+}
+
 class BgRemoveToolNode {
   size: [number, number] = [280, 430];
   properties!: Record<string, unknown>;
@@ -4207,6 +4994,8 @@ export function registerImageNodes() {
   LiteGraph.registerNodeType("tools/marching", MarchingToolNode as unknown as NodeCtor);
   LiteGraph.registerNodeType("tools/rough", RoughToolNode as unknown as NodeCtor);
   LiteGraph.registerNodeType("tools/svg-simplify", SvgSimplifyToolNode as unknown as NodeCtor);
+  LiteGraph.registerNodeType("tools/pose-detect", PoseDetectToolNode as unknown as NodeCtor);
+  LiteGraph.registerNodeType("tools/face-landmarker", FaceLandmarkerToolNode as unknown as NodeCtor);
   LiteGraph.registerNodeType("tools/bg-remove", BgRemoveToolNode as unknown as NodeCtor);
   LiteGraph.registerNodeType("tools/ml5-extract", Ml5ExtractToolNode as unknown as NodeCtor);
   LiteGraph.registerNodeType("output/image", OutputImageNode as unknown as NodeCtor);

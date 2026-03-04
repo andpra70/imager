@@ -383,9 +383,11 @@ function GraphEditor() {
     }
 
     const resizeCanvas = () => {
-      const parent = canvasElement.parentElement;
-      const width = parent?.clientWidth ?? window.innerWidth;
-      const height = parent?.clientHeight ?? window.innerHeight;
+      const width = Math.max(1, Math.floor(canvasElement.clientWidth || canvasElement.getBoundingClientRect().width));
+      const height = Math.max(
+        1,
+        Math.floor(canvasElement.clientHeight || canvasElement.getBoundingClientRect().height || window.innerHeight),
+      );
       canvasElement.width = width;
       canvasElement.height = height;
       graphCanvas.resize(width, height);
