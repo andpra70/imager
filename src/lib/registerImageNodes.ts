@@ -1852,6 +1852,281 @@ function toHexColorChannel(value: number) {
   return clamp(Math.round(value), 0, 255).toString(16).padStart(2, "0");
 }
 
+interface BoldiniGradientMap {
+  magnitudes: Float32Array;
+  directions: Float32Array;
+}
+
+function getAverageColorFromImageData(imageData: ImageData) {
+  const data = imageData.data;
+  let r = 0;
+  let g = 0;
+  let b = 0;
+  let count = 0;
+  for (let index = 0; index < data.length; index += 4) {
+    if (data[index + 3] <= 0) {
+      continue;
+    }
+    r += data[index];
+    g += data[index + 1];
+    b += data[index + 2];
+    count += 1;
+  }
+  if (count === 0) {
+    return { r: 255, g: 255, b: 255 };
+  }
+  return {
+    r: Math.round(r / count),
+    g: Math.round(g / count),
+    b: Math.round(b / count),
+  };
+}
+
+function toGrayscaleImageData(imageData: ImageData) {
+  const source = imageData.data;
+  const gray = new Uint8ClampedArray(source.length);
+  for (let index = 0; index < source.length; index += 4) {
+    const luminosity = 0.299 * source[index] + 0.587 * source[index + 1] + 0.114 * source[index + 2];
+    gray[index] = luminosity;
+    gray[index + 1] = luminosity;
+    gray[index + 2] = luminosity;
+    gray[index + 3] = source[index + 3];
+  }
+  return new ImageData(gray, imageData.width, imageData.height);
+}
+
+function sobelOperatorFromGrayscale(imageData: ImageData): BoldiniGradientMap {
+  const width = imageData.width;
+  const height = imageData.height;
+  const data = imageData.data;
+  const magnitudes = new Float32Array(width * height);
+  const directions = new Float32Array(width * height);
+  const gx = [-1, 0, 1, -2, 0, 2, -1, 0, 1];
+  const gy = [-1, -2, -1, 0, 0, 0, 1, 2, 1];
+
+  for (let y = 1; y < height - 1; y += 1) {
+    for (let x = 1; x < width - 1; x += 1) {
+      let sumX = 0;
+      let sumY = 0;
+      for (let ky = -1; ky <= 1; ky += 1) {
+        for (let kx = -1; kx <= 1; kx += 1) {
+          const sampleIndex = ((y + ky) * width + (x + kx)) * 4;
+          const value = data[sampleIndex];
+          const kernelIndex = (ky + 1) * 3 + (kx + 1);
+          sumX += value * gx[kernelIndex];
+          sumY += value * gy[kernelIndex];
+        }
+      }
+      const targetIndex = y * width + x;
+      magnitudes[targetIndex] = Math.min(1, Math.sqrt(sumX * sumX + sumY * sumY) / 1140);
+      directions[targetIndex] = Math.atan2(sumY, sumX);
+    }
+  }
+
+  return { magnitudes, directions };
+}
+
+function createGaussianKernel(radius: number) {
+  const size = radius * 2 + 1;
+  const kernel = Array.from({ length: size }, () => Array<number>(size).fill(0));
+  const sigma = Math.max(0.0001, radius / 2);
+  const sigma2 = 2 * sigma * sigma;
+  let sum = 0;
+
+  for (let y = -radius; y <= radius; y += 1) {
+    for (let x = -radius; x <= radius; x += 1) {
+      const distance = Math.sqrt(x * x + y * y);
+      const value = Math.exp(-(distance * distance) / sigma2) / (Math.PI * sigma2);
+      kernel[y + radius][x + radius] = value;
+      sum += value;
+    }
+  }
+
+  for (let y = 0; y < size; y += 1) {
+    for (let x = 0; x < size; x += 1) {
+      kernel[y][x] /= sum;
+    }
+  }
+
+  return kernel;
+}
+
+function gaussianBlurImageData(imageData: ImageData, radius: number) {
+  const width = imageData.width;
+  const height = imageData.height;
+  const source = imageData.data;
+  const output = new Uint8ClampedArray(source.length);
+  const kernel = createGaussianKernel(radius);
+  const side = radius;
+
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      let r = 0;
+      let g = 0;
+      let b = 0;
+      let a = 0;
+      let weightSum = 0;
+      for (let ky = -side; ky <= side; ky += 1) {
+        for (let kx = -side; kx <= side; kx += 1) {
+          const sampleX = clamp(x + kx, 0, width - 1);
+          const sampleY = clamp(y + ky, 0, height - 1);
+          const sourceIndex = (sampleY * width + sampleX) * 4;
+          const weight = kernel[ky + side][kx + side];
+          r += source[sourceIndex] * weight;
+          g += source[sourceIndex + 1] * weight;
+          b += source[sourceIndex + 2] * weight;
+          a += source[sourceIndex + 3] * weight;
+          weightSum += weight;
+        }
+      }
+      const outputIndex = (y * width + x) * 4;
+      output[outputIndex] = r / weightSum;
+      output[outputIndex + 1] = g / weightSum;
+      output[outputIndex + 2] = b / weightSum;
+      output[outputIndex + 3] = a / weightSum;
+    }
+  }
+
+  return new ImageData(output, width, height);
+}
+
+function drawBoldiniSimpleStroke(
+  context: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  size: number,
+  angle: number,
+  color: string,
+) {
+  context.translate(x, y);
+  context.rotate(angle);
+  context.fillStyle = color;
+  context.beginPath();
+  context.ellipse(0, 0, size, size / 3, 0, 0, Math.PI * 2);
+  context.fill();
+}
+
+function drawBoldiniCurvedStroke(
+  context: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  size: number,
+  angle: number,
+  color: string,
+) {
+  const length = size * 1.5;
+  const curveAmount = (Math.random() - 0.5) * 0.8;
+  context.strokeStyle = color;
+  context.lineWidth = Math.max(1, size / 4);
+  context.lineCap = "round";
+  context.beginPath();
+  context.moveTo(x, y);
+  const endX = x + Math.cos(angle) * length;
+  const endY = y + Math.sin(angle) * length;
+  const cpX = x + Math.cos(angle + curveAmount) * length * 0.5;
+  const cpY = y + Math.sin(angle + curveAmount) * length * 0.5;
+  context.quadraticCurveTo(cpX, cpY, endX, endY);
+  context.stroke();
+}
+
+async function renderBoldiniLayer(options: {
+  context: CanvasRenderingContext2D;
+  numStrokes: number;
+  minSize: number;
+  maxSize: number;
+  colorSource: ImageData;
+  gradientMap: BoldiniGradientMap;
+  opacity: number;
+  useCurve?: boolean;
+  sharpen?: boolean;
+  colorJitter?: number;
+  shouldCancel?: () => boolean;
+  onProgress?: (progress: number) => void;
+}) {
+  const {
+    context,
+    numStrokes,
+    minSize,
+    maxSize,
+    colorSource,
+    gradientMap,
+    opacity,
+    useCurve = false,
+    sharpen = false,
+    colorJitter = 0,
+    shouldCancel,
+    onProgress,
+  } = options;
+  const width = context.canvas.width;
+  const height = context.canvas.height;
+  const data = colorSource.data;
+
+  for (let strokeIndex = 0; strokeIndex < numStrokes; strokeIndex += 1) {
+    if (shouldCancel?.()) {
+      return false;
+    }
+
+    let x = 0;
+    let y = 0;
+    if (sharpen) {
+      do {
+        x = Math.floor(Math.random() * width);
+        y = Math.floor(Math.random() * height);
+      } while (Math.random() > gradientMap.magnitudes[y * width + x]);
+    } else {
+      x = Math.floor(Math.random() * width);
+      y = Math.floor(Math.random() * height);
+    }
+
+    const pixelIndex = (y * width + x) * 4;
+    let r = data[pixelIndex];
+    let g = data[pixelIndex + 1];
+    let b = data[pixelIndex + 2];
+    if (colorJitter > 0) {
+      r = clamp(r + (Math.random() - 0.5) * colorJitter, 0, 255);
+      g = clamp(g + (Math.random() - 0.5) * colorJitter, 0, 255);
+      b = clamp(b + (Math.random() - 0.5) * colorJitter, 0, 255);
+    }
+    const color = `rgb(${Math.round(r)},${Math.round(g)},${Math.round(b)})`;
+    const size = Math.random() * (maxSize - minSize) + minSize;
+    const angle = gradientMap.directions[y * width + x] + Math.PI / 2;
+    context.save();
+    context.globalAlpha = opacity * (Math.random() * 0.5 + 0.5);
+    if (useCurve) {
+      drawBoldiniCurvedStroke(context, x, y, size, angle, color);
+    } else {
+      drawBoldiniSimpleStroke(context, x, y, size, angle, color);
+    }
+    context.restore();
+
+    if (strokeIndex % 100 === 0) {
+      onProgress?.(strokeIndex / numStrokes);
+      await yieldToUi();
+    }
+  }
+
+  onProgress?.(1);
+  return true;
+}
+
+function fitSourceToSquareCanvas(input: GraphImage, side: number) {
+  const canvas = document.createElement("canvas");
+  canvas.width = side;
+  canvas.height = side;
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  if (!context) {
+    throw new Error("2D context not available.");
+  }
+  const ratio = Math.min(side / input.width, side / input.height);
+  const drawWidth = input.width * ratio;
+  const drawHeight = input.height * ratio;
+  const offsetX = (side - drawWidth) * 0.5;
+  const offsetY = (side - drawHeight) * 0.5;
+  context.clearRect(0, 0, side, side);
+  context.drawImage(input, 0, 0, input.width, input.height, offsetX, offsetY, drawWidth, drawHeight);
+  return canvas;
+}
+
 async function marchingGraphImage(
   input: GraphImage,
   options: {
@@ -4065,6 +4340,216 @@ class SvgSimplifyToolNode {
   }
 }
 
+class BoldiniToolNode {
+  size: [number, number] = [280, 430];
+  properties!: Record<string, unknown>;
+  preview: GraphImage | null = null;
+  status = "idle";
+  progress = 0;
+  isRendering = false;
+  executionMs: number | null = null;
+  lastSignature = "";
+  lastOptionsSignature = "";
+  renderToken = 0;
+
+  constructor() {
+    const node = this as unknown as PreviewAwareNode & BoldiniToolNode;
+    node.title = createToolTitle("Boldini");
+    node.properties = {
+      canvasSize: 512,
+      baseStrokes: 1500,
+      middleStrokes: 4000,
+      detailStrokes: 8000,
+    };
+    node.addInput("image", "image");
+    node.addOutput("image", "image");
+    node.addWidget("slider", "Canvas", 512, (value) => {
+      node.properties.canvasSize = Math.round(Number(value));
+      notifyGraphStateChange(node);
+    }, { min: 128, max: 1024, step: 32 });
+    node.addWidget("slider", "Base", 1500, (value) => {
+      node.properties.baseStrokes = Math.round(Number(value));
+      notifyGraphStateChange(node);
+    }, { min: 200, max: 8000, step: 100 });
+    node.addWidget("slider", "Middle", 4000, (value) => {
+      node.properties.middleStrokes = Math.round(Number(value));
+      notifyGraphStateChange(node);
+    }, { min: 500, max: 16000, step: 100 });
+    node.addWidget("slider", "Detail", 8000, (value) => {
+      node.properties.detailStrokes = Math.round(Number(value));
+      notifyGraphStateChange(node);
+    }, { min: 1000, max: 32000, step: 200 });
+    node.refreshPreviewLayout = () => {
+      refreshNode(node, node.preview, 3);
+    };
+    node.refreshPreviewLayout();
+  }
+
+  onExecute(this: PreviewAwareNode & BoldiniToolNode) {
+    const inputValue = this.getInputData(0);
+    const input = isGraphImageReady(inputValue) ? inputValue : null;
+    if (!input) {
+      this.preview = null;
+      this.status = "waiting valid image";
+      this.progress = 0;
+      this.executionMs = null;
+      this.isRendering = false;
+      this.lastSignature = "";
+      this.lastOptionsSignature = "";
+      this.setOutputData(0, null);
+      this.refreshPreviewLayout();
+      return;
+    }
+
+    const options = {
+      canvasSize: clamp(Math.round(Number(this.properties.canvasSize ?? 512)), 128, 1024),
+      baseStrokes: clamp(Math.round(Number(this.properties.baseStrokes ?? 1500)), 200, 8000),
+      middleStrokes: clamp(Math.round(Number(this.properties.middleStrokes ?? 4000)), 500, 16000),
+      detailStrokes: clamp(Math.round(Number(this.properties.detailStrokes ?? 8000)), 1000, 32000),
+    };
+    const signature = getGraphImageSignature(input);
+    const optionsSignature = JSON.stringify(options);
+    if (signature !== this.lastSignature || optionsSignature !== this.lastOptionsSignature) {
+      this.lastSignature = signature;
+      this.lastOptionsSignature = optionsSignature;
+      const renderToken = ++this.renderToken;
+      const start = performance.now();
+      this.isRendering = true;
+      this.progress = 0;
+      this.status = "fase 1/4 analisi";
+      this.setDirtyCanvas(true, true);
+
+      const shouldCancel = () => renderToken !== this.renderToken;
+      const updateProgress = (value: number, status?: string) => {
+        this.progress = clamp(value, 0, 1);
+        if (status) {
+          this.status = status;
+        }
+        this.setDirtyCanvas(true, true);
+      };
+
+      void (async () => {
+        const workingSource = fitSourceToSquareCanvas(input, options.canvasSize);
+        const output = document.createElement("canvas");
+        output.width = options.canvasSize;
+        output.height = options.canvasSize;
+        const outputContext = output.getContext("2d", { willReadFrequently: true });
+        const sourceContext = workingSource.getContext("2d", { willReadFrequently: true });
+        if (!outputContext || !sourceContext) {
+          throw new Error("2D context not available.");
+        }
+
+        const originalColorData = sourceContext.getImageData(0, 0, options.canvasSize, options.canvasSize);
+        const avg = getAverageColorFromImageData(originalColorData);
+        outputContext.fillStyle = `rgb(${avg.r}, ${avg.g}, ${avg.b})`;
+        outputContext.fillRect(0, 0, output.width, output.height);
+
+        const gray = toGrayscaleImageData(originalColorData);
+        const gradientMap = sobelOperatorFromGrayscale(gray);
+        const blurredColorData = gaussianBlurImageData(originalColorData, 5);
+        if (shouldCancel()) {
+          return;
+        }
+
+        updateProgress(0.2, "fase 2/4 base");
+        const baseCompleted = await renderBoldiniLayer({
+          context: outputContext,
+          numStrokes: options.baseStrokes,
+          minSize: 20,
+          maxSize: 50,
+          colorSource: blurredColorData,
+          gradientMap,
+          opacity: 0.7,
+          colorJitter: 15,
+          shouldCancel,
+          onProgress: (p) => updateProgress(0.2 + p * 0.3),
+        });
+        if (!baseCompleted || shouldCancel()) {
+          return;
+        }
+
+        updateProgress(0.5, "fase 3/4 intermedie");
+        const middleCompleted = await renderBoldiniLayer({
+          context: outputContext,
+          numStrokes: options.middleStrokes,
+          minSize: 8,
+          maxSize: 20,
+          colorSource: originalColorData,
+          gradientMap,
+          opacity: 0.6,
+          useCurve: true,
+          colorJitter: 25,
+          shouldCancel,
+          onProgress: (p) => updateProgress(0.5 + p * 0.3),
+        });
+        if (!middleCompleted || shouldCancel()) {
+          return;
+        }
+
+        updateProgress(0.8, "fase 4/4 dettagli");
+        const detailCompleted = await renderBoldiniLayer({
+          context: outputContext,
+          numStrokes: options.detailStrokes,
+          minSize: 2,
+          maxSize: 8,
+          colorSource: originalColorData,
+          gradientMap,
+          opacity: 0.9,
+          sharpen: true,
+          colorJitter: 10,
+          shouldCancel,
+          onProgress: (p) => updateProgress(0.8 + p * 0.2),
+        });
+        if (!detailCompleted || shouldCancel()) {
+          return;
+        }
+
+        if (renderToken !== this.renderToken) {
+          return;
+        }
+        this.preview = output;
+        this.progress = 1;
+        this.status = "ready";
+        this.executionMs = performance.now() - start;
+        this.isRendering = false;
+        this.setDirtyCanvas(true, true);
+      })().catch((error) => {
+        if (renderToken !== this.renderToken) {
+          return;
+        }
+        this.preview = input;
+        this.progress = 0;
+        this.status = error instanceof Error ? error.message : "boldini error";
+        this.executionMs = null;
+        this.isRendering = false;
+        this.setDirtyCanvas(true, true);
+      });
+    }
+
+    this.setOutputData(0, this.preview ?? input);
+    this.refreshPreviewLayout();
+  }
+
+  onDrawBackground(this: PreviewAwareNode & BoldiniToolNode, context: CanvasRenderingContext2D) {
+    const layout = drawImagePreview(context, this, this.preview, { footerLines: 3 });
+    context.save();
+    context.fillStyle = "rgba(255,255,255,0.65)";
+    context.font = "12px sans-serif";
+    context.fillText(
+      `${this.status}${this.isRendering ? "..." : ""}`,
+      10,
+      layout.footerTop + 12,
+    );
+    context.fillText(
+      `progress ${Math.round(this.progress * 100)}% | out ${this.preview ? `${this.preview.width}x${this.preview.height}` : "-"}`,
+      10,
+      layout.footerTop + 30,
+    );
+    context.fillText(formatExecutionInfo(this.executionMs), 10, layout.footerTop + 48);
+    context.restore();
+  }
+}
+
 class FaceLandmarkerToolNode {
   size: [number, number] = [280, 540];
   properties!: Record<string, unknown>;
@@ -4994,6 +5479,7 @@ export function registerImageNodes() {
   LiteGraph.registerNodeType("tools/marching", MarchingToolNode as unknown as NodeCtor);
   LiteGraph.registerNodeType("tools/rough", RoughToolNode as unknown as NodeCtor);
   LiteGraph.registerNodeType("tools/svg-simplify", SvgSimplifyToolNode as unknown as NodeCtor);
+  LiteGraph.registerNodeType("tools/boldini", BoldiniToolNode as unknown as NodeCtor);
   LiteGraph.registerNodeType("tools/pose-detect", PoseDetectToolNode as unknown as NodeCtor);
   LiteGraph.registerNodeType("tools/face-landmarker", FaceLandmarkerToolNode as unknown as NodeCtor);
   LiteGraph.registerNodeType("tools/bg-remove", BgRemoveToolNode as unknown as NodeCtor);
