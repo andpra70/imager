@@ -77,6 +77,7 @@ function GraphEditor() {
   const autoSaveIntervalRef = useRef<number | null>(null);
   const previewWidthBounds = getPreviewWidthBounds();
   const [previewWidthValue, setPreviewWidthValue] = useState(getPreviewWidth());
+  const [isToolbarCollapsed, setIsToolbarCollapsed] = useState(false);
   const [statusMessage, setStatusMessage] = useState(
     "Create nodes from the toolbar or from the LiteGraph context menu.",
   );
@@ -346,7 +347,7 @@ function GraphEditor() {
   }, []);
 
   return (
-    <section className="editor-panel">
+    <section className={`editor-panel${isToolbarCollapsed ? " toolbar-collapsed" : ""}`}>
       <GraphToolbar
         onAddNode={addNode}
         onExportGraph={exportGraph}
@@ -360,6 +361,7 @@ function GraphEditor() {
         previewWidthMax={previewWidthBounds.max}
         previewWidthMin={previewWidthBounds.min}
         statusMessage={statusMessage}
+        onCollapseChange={setIsToolbarCollapsed}
       />
       <canvas className="editor-stage" ref={canvasRef} />
       <input
