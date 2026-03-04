@@ -24,6 +24,7 @@ export const nodePalette: NodePaletteItem[] = [
   { type: "tools/vectorize", glyph: "SVG", shortLabel: "Vector", tooltip: "VECTORIZE: vettorizza l'immagine con ImageTracer e produce raster+SVG." },
   { type: "tools/marching", glyph: "ISO", shortLabel: "Marching", tooltip: "MARCHING: estrae superfici di livello dall'immagine (output raster + SVG) con preset Fast/Quality." },
   { type: "tools/boldini", glyph: "BOL", shortLabel: "Boldini", tooltip: "BOLDINI: pittura stilizzata a pennellate multi-layer (base/intermedie/dettagli) da immagine input." },
+  { type: "tools/carboncino", glyph: "CRB", shortLabel: "Carbon", tooltip: "CARBONCINO: disegno a tratti e scumble in 3 passate con controlli upscale/densita/pressione." },
   { type: "tools/rough", glyph: "RFX", shortLabel: "Rough", tooltip: "ROUGH: applica stile rough a un SVG in ingresso e produce un nuovo SVG." },
   { type: "tools/svg-simplify", glyph: "SMP", shortLabel: "Simplify", tooltip: "SVG SIMPLIFY: semplifica path e minifica SVG riducendo il peso mantenendo i colori." },
   { type: "tools/bg-remove", glyph: "BGR", shortLabel: "BG Remove", tooltip: "BG REMOVE: rimuove lo sfondo con segmentazione persona AI (stile MediaPipe/selfie segmentation)." },

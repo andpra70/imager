@@ -2127,6 +2127,184 @@ function fitSourceToSquareCanvas(input: GraphImage, side: number) {
   return canvas;
 }
 
+function fitSourceToMaxWidthCanvas(input: GraphImage, maxWidth: number) {
+  const safeMaxWidth = Math.max(1, Math.round(maxWidth));
+  const scale = Math.min(1, safeMaxWidth / input.width);
+  const width = Math.max(1, Math.round(input.width * scale));
+  const height = Math.max(1, Math.round(input.height * scale));
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  if (!context) {
+    throw new Error("2D context not available.");
+  }
+  context.clearRect(0, 0, width, height);
+  context.drawImage(input, 0, 0, input.width, input.height, 0, 0, width, height);
+  return canvas;
+}
+
+function createGrayMapFromImageData(imageData: ImageData) {
+  const grayMap = new Uint8Array(imageData.width * imageData.height);
+  const data = imageData.data;
+  for (let index = 0; index < data.length; index += 4) {
+    grayMap[index / 4] = 0.299 * data[index] + 0.587 * data[index + 1] + 0.114 * data[index + 2];
+  }
+  return grayMap;
+}
+
+function drawCarbonHumanStroke(
+  context: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  length: number,
+  angleDeg: number,
+  baseAlpha: number,
+  lineWidth: number,
+) {
+  const radians = angleDeg * (Math.PI / 180);
+  const x1 = x;
+  const y1 = y;
+  const x2 = x1 + Math.cos(radians) * length;
+  const y2 = y1 + Math.sin(radians) * length;
+  const gradient = context.createLinearGradient(x1, y1, x2, y2);
+  gradient.addColorStop(0, `rgba(0,0,0,${baseAlpha * (0.4 + Math.random() * 0.4)})`);
+  gradient.addColorStop(0.5, `rgba(0,0,0,${baseAlpha * (0.8 + Math.random() * 0.4)})`);
+  gradient.addColorStop(1, `rgba(0,0,0,${baseAlpha * (0.3 + Math.random() * 0.4)})`);
+  context.strokeStyle = gradient;
+  context.lineWidth = Math.max(0.5, lineWidth * (0.8 + Math.random() * 0.4));
+  const midX = (x1 + x2) * 0.5;
+  const midY = (y1 + y2) * 0.5;
+  const curveStrength = length * 0.15;
+  const cpX = midX + (Math.random() - 0.5) * curveStrength;
+  const cpY = midY + (Math.random() - 0.5) * curveStrength;
+  context.beginPath();
+  context.moveTo(x1, y1);
+  context.quadraticCurveTo(cpX, cpY, x2, y2);
+  context.stroke();
+}
+
+function drawCarbonScumble(
+  context: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  radius: number,
+  baseAlpha: number,
+  maxLineWidth: number,
+) {
+  const numPoints = 10 + Math.random() * 15;
+  for (let index = 0; index < numPoints; index += 1) {
+    const angle = Math.random() * Math.PI * 2;
+    const distance = Math.random() * radius;
+    const px = x + Math.cos(angle) * distance;
+    const py = y + Math.sin(angle) * distance;
+    context.fillStyle = `rgba(0,0,0,${baseAlpha * (0.5 + Math.random() * 0.5)})`;
+    context.fillRect(
+      px,
+      py,
+      Math.max(1, maxLineWidth * Math.random()),
+      Math.max(1, maxLineWidth * Math.random()),
+    );
+  }
+}
+
+async function renderCarbonLayer(options: {
+  context: CanvasRenderingContext2D;
+  passName: string;
+  numStrokes: number;
+  brightnessThreshold: number;
+  angle: number | "random";
+  angleJitter: number;
+  scumbleChance: number;
+  getStrokeLength: (gray: number) => number;
+  getStrokeWidth: (gray: number) => number;
+  getAlpha: (gray: number) => number;
+  grayMap: Uint8Array;
+  width: number;
+  height: number;
+  upscaleFactor: number;
+  alphaFactor: number;
+  progressState: { drawn: number; total: number };
+  shouldCancel?: () => boolean;
+  onProgress?: (progress: number, status: string) => void;
+}) {
+  const {
+    context,
+    passName,
+    numStrokes,
+    brightnessThreshold,
+    angle,
+    angleJitter,
+    scumbleChance,
+    getStrokeLength,
+    getStrokeWidth,
+    getAlpha,
+    grayMap,
+    width,
+    height,
+    upscaleFactor,
+    alphaFactor,
+    progressState,
+    shouldCancel,
+    onProgress,
+  } = options;
+  const HIGHLIGHT_THRESHOLD = 245;
+  const UPDATE_INTERVAL = 3000;
+  const totalStrokes = Math.max(1, Math.round(numStrokes));
+
+  for (let index = 0; index < totalStrokes; index += 1) {
+    if (shouldCancel?.()) {
+      return false;
+    }
+
+    const x = Math.random() * width;
+    const y = Math.random() * height;
+    const mapIndex = Math.floor(y) * width + Math.floor(x);
+    const grayValue = grayMap[mapIndex];
+    progressState.drawn += 1;
+
+    if (grayValue <= HIGHLIGHT_THRESHOLD && grayValue <= brightnessThreshold) {
+      const baseAlpha = getAlpha(grayValue) * alphaFactor;
+      const finalLength = getStrokeLength(grayValue) * upscaleFactor;
+      const finalWidth = getStrokeWidth(grayValue) * upscaleFactor;
+      if (Math.random() < scumbleChance) {
+        drawCarbonScumble(
+          context,
+          x * upscaleFactor,
+          y * upscaleFactor,
+          finalLength * 0.5,
+          baseAlpha,
+          finalWidth,
+        );
+      } else {
+        const strokeAngle =
+          angle === "random"
+            ? Math.random() * 180
+            : angle + (Math.random() - 0.5) * angleJitter;
+        drawCarbonHumanStroke(
+          context,
+          x * upscaleFactor,
+          y * upscaleFactor,
+          finalLength,
+          strokeAngle,
+          baseAlpha,
+          finalWidth,
+        );
+      }
+    }
+
+    if (index % UPDATE_INTERVAL === 0) {
+      const progress = progressState.total > 0 ? progressState.drawn / progressState.total : 0;
+      onProgress?.(progress, `passata: ${passName}`);
+      await yieldToUi();
+    }
+  }
+
+  const progress = progressState.total > 0 ? progressState.drawn / progressState.total : 1;
+  onProgress?.(progress, `passata: ${passName}`);
+  return true;
+}
+
 async function marchingGraphImage(
   input: GraphImage,
   options: {
@@ -4550,6 +4728,256 @@ class BoldiniToolNode {
   }
 }
 
+class CarboncinoToolNode {
+  size: [number, number] = [280, 460];
+  properties!: Record<string, unknown>;
+  preview: GraphImage | null = null;
+  status = "idle";
+  progress = 0;
+  isRendering = false;
+  executionMs: number | null = null;
+  lastSignature = "";
+  lastOptionsSignature = "";
+  renderToken = 0;
+
+  constructor() {
+    const node = this as unknown as PreviewAwareNode & CarboncinoToolNode;
+    node.title = createToolTitle("Carboncino");
+    node.properties = {
+      maxWidth: 500,
+      upscale: 2,
+      density: 1,
+      pressure: 1,
+      maxStrokes: 260000,
+    };
+    node.addInput("image", "image");
+    node.addOutput("image", "image");
+    node.addWidget("slider", "Max width", 500, (value) => {
+      node.properties.maxWidth = Math.round(Number(value));
+      notifyGraphStateChange(node);
+    }, { min: 128, max: 1400, step: 8 });
+    node.addWidget("slider", "Upscale", 2, (value) => {
+      node.properties.upscale = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 1, max: 4, step: 0.5, precision: 1 });
+    node.addWidget("slider", "Density", 1, (value) => {
+      node.properties.density = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0.2, max: 2.5, step: 0.1, precision: 1 });
+    node.addWidget("slider", "Pressure", 1, (value) => {
+      node.properties.pressure = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0.3, max: 2, step: 0.1, precision: 1 });
+    node.addWidget("slider", "Max strokes", 260000, (value) => {
+      node.properties.maxStrokes = Math.round(Number(value));
+      notifyGraphStateChange(node);
+    }, { min: 20000, max: 600000, step: 5000 });
+    node.refreshPreviewLayout = () => {
+      refreshNode(node, node.preview, 3);
+    };
+    node.refreshPreviewLayout();
+  }
+
+  onExecute(this: PreviewAwareNode & CarboncinoToolNode) {
+    const inputValue = this.getInputData(0);
+    const input = isGraphImageReady(inputValue) ? inputValue : null;
+    if (!input) {
+      this.preview = null;
+      this.status = "waiting valid image";
+      this.progress = 0;
+      this.executionMs = null;
+      this.isRendering = false;
+      this.lastSignature = "";
+      this.lastOptionsSignature = "";
+      this.setOutputData(0, null);
+      this.refreshPreviewLayout();
+      return;
+    }
+
+    const options = {
+      maxWidth: clamp(Math.round(Number(this.properties.maxWidth ?? 500)), 128, 1400),
+      upscale: clamp(Number(this.properties.upscale ?? 2), 1, 4),
+      density: clamp(Number(this.properties.density ?? 1), 0.2, 2.5),
+      pressure: clamp(Number(this.properties.pressure ?? 1), 0.3, 2),
+      maxStrokes: clamp(Math.round(Number(this.properties.maxStrokes ?? 260000)), 20000, 600000),
+    };
+    const signature = getGraphImageSignature(input);
+    const optionsSignature = JSON.stringify(options);
+    if (signature !== this.lastSignature || optionsSignature !== this.lastOptionsSignature) {
+      this.lastSignature = signature;
+      this.lastOptionsSignature = optionsSignature;
+      const renderToken = ++this.renderToken;
+      const start = performance.now();
+      this.isRendering = true;
+      this.progress = 0;
+      this.status = "inizializzazione";
+      this.setDirtyCanvas(true, true);
+
+      const shouldCancel = () => renderToken !== this.renderToken;
+      const updateProgress = (value: number, status?: string) => {
+        this.progress = clamp(value, 0, 1);
+        if (status) {
+          this.status = status;
+        }
+        this.setDirtyCanvas(true, true);
+      };
+
+      void (async () => {
+        const source = fitSourceToMaxWidthCanvas(input, options.maxWidth);
+        const width = source.width;
+        const height = source.height;
+        const sourceContext = source.getContext("2d", { willReadFrequently: true });
+        if (!sourceContext) {
+          throw new Error("2D context not available.");
+        }
+
+        const originalImageData = sourceContext.getImageData(0, 0, width, height);
+        const grayMap = createGrayMapFromImageData(originalImageData);
+        const output = document.createElement("canvas");
+        output.width = Math.max(1, Math.round(width * options.upscale));
+        output.height = Math.max(1, Math.round(height * options.upscale));
+        const outputContext = output.getContext("2d", { willReadFrequently: true });
+        if (!outputContext) {
+          throw new Error("2D context not available.");
+        }
+        outputContext.fillStyle = "white";
+        outputContext.fillRect(0, 0, output.width, output.height);
+        outputContext.lineCap = "round";
+
+        const baseStrokes = width * height * options.density;
+        let pass1Strokes = (baseStrokes / 3) * options.upscale * options.upscale;
+        let pass2Strokes = (baseStrokes / 2.5) * options.upscale * options.upscale;
+        let pass3Strokes = (baseStrokes / 2) * options.upscale * options.upscale;
+        const totalRaw = pass1Strokes + pass2Strokes + pass3Strokes;
+        if (totalRaw > options.maxStrokes) {
+          const ratio = options.maxStrokes / totalRaw;
+          pass1Strokes *= ratio;
+          pass2Strokes *= ratio;
+          pass3Strokes *= ratio;
+        }
+
+        const progressState = {
+          drawn: 0,
+          total: Math.max(1, Math.round(pass1Strokes + pass2Strokes + pass3Strokes)),
+        };
+
+        updateProgress(0, "passata: base tonale");
+        const layer1Ok = await renderCarbonLayer({
+          context: outputContext,
+          passName: "base tonale",
+          numStrokes: pass1Strokes,
+          brightnessThreshold: 220,
+          angle: 45,
+          angleJitter: 15,
+          scumbleChance: 0,
+          getStrokeLength: (gray) => 15 + (gray / 255) * 25,
+          getStrokeWidth: (gray) => 0.5 + (1 - gray / 255) * 1,
+          getAlpha: (gray) => ((1 - gray / 255) ** 2) * 0.1,
+          grayMap,
+          width,
+          height,
+          upscaleFactor: options.upscale,
+          alphaFactor: options.pressure,
+          progressState,
+          shouldCancel,
+          onProgress: updateProgress,
+        });
+        if (!layer1Ok || shouldCancel()) {
+          return;
+        }
+
+        updateProgress(progressState.drawn / progressState.total, "passata: ombreggiature");
+        const layer2Ok = await renderCarbonLayer({
+          context: outputContext,
+          passName: "ombreggiature",
+          numStrokes: pass2Strokes,
+          brightnessThreshold: 160,
+          angle: 135,
+          angleJitter: 20,
+          scumbleChance: 0.02,
+          getStrokeLength: (gray) => 8 + (gray / 255) * 15,
+          getStrokeWidth: (gray) => 0.8 + (1 - gray / 255) * 1.5,
+          getAlpha: (gray) => ((1 - gray / 255) ** 2) * 0.3,
+          grayMap,
+          width,
+          height,
+          upscaleFactor: options.upscale,
+          alphaFactor: options.pressure,
+          progressState,
+          shouldCancel,
+          onProgress: updateProgress,
+        });
+        if (!layer2Ok || shouldCancel()) {
+          return;
+        }
+
+        updateProgress(progressState.drawn / progressState.total, "passata: dettagli e texture");
+        const layer3Ok = await renderCarbonLayer({
+          context: outputContext,
+          passName: "dettagli e texture",
+          numStrokes: pass3Strokes,
+          brightnessThreshold: 90,
+          angle: "random",
+          angleJitter: 180,
+          scumbleChance: 0.05,
+          getStrokeLength: (gray) => 3 + (gray / 255) * 8,
+          getStrokeWidth: (gray) => 1 + (1 - gray / 255) * 2,
+          getAlpha: (gray) => ((1 - gray / 255) ** 1.5) * 0.8,
+          grayMap,
+          width,
+          height,
+          upscaleFactor: options.upscale,
+          alphaFactor: options.pressure,
+          progressState,
+          shouldCancel,
+          onProgress: updateProgress,
+        });
+        if (!layer3Ok || shouldCancel()) {
+          return;
+        }
+
+        if (renderToken !== this.renderToken) {
+          return;
+        }
+        this.preview = output;
+        this.progress = 1;
+        this.status = "ready";
+        this.executionMs = performance.now() - start;
+        this.isRendering = false;
+        this.setDirtyCanvas(true, true);
+      })().catch((error) => {
+        if (renderToken !== this.renderToken) {
+          return;
+        }
+        this.preview = input;
+        this.progress = 0;
+        this.status = error instanceof Error ? error.message : "carboncino error";
+        this.executionMs = null;
+        this.isRendering = false;
+        this.setDirtyCanvas(true, true);
+      });
+    }
+
+    this.setOutputData(0, this.preview ?? input);
+    this.refreshPreviewLayout();
+  }
+
+  onDrawBackground(this: PreviewAwareNode & CarboncinoToolNode, context: CanvasRenderingContext2D) {
+    const layout = drawImagePreview(context, this, this.preview, { footerLines: 3 });
+    context.save();
+    context.fillStyle = "rgba(255,255,255,0.65)";
+    context.font = "12px sans-serif";
+    context.fillText(`${this.status}${this.isRendering ? "..." : ""}`, 10, layout.footerTop + 12);
+    context.fillText(
+      `progress ${Math.round(this.progress * 100)}% | out ${this.preview ? `${this.preview.width}x${this.preview.height}` : "-"}`,
+      10,
+      layout.footerTop + 30,
+    );
+    context.fillText(formatExecutionInfo(this.executionMs), 10, layout.footerTop + 48);
+    context.restore();
+  }
+}
+
 class FaceLandmarkerToolNode {
   size: [number, number] = [280, 540];
   properties!: Record<string, unknown>;
@@ -5480,6 +5908,7 @@ export function registerImageNodes() {
   LiteGraph.registerNodeType("tools/rough", RoughToolNode as unknown as NodeCtor);
   LiteGraph.registerNodeType("tools/svg-simplify", SvgSimplifyToolNode as unknown as NodeCtor);
   LiteGraph.registerNodeType("tools/boldini", BoldiniToolNode as unknown as NodeCtor);
+  LiteGraph.registerNodeType("tools/carboncino", CarboncinoToolNode as unknown as NodeCtor);
   LiteGraph.registerNodeType("tools/pose-detect", PoseDetectToolNode as unknown as NodeCtor);
   LiteGraph.registerNodeType("tools/face-landmarker", FaceLandmarkerToolNode as unknown as NodeCtor);
   LiteGraph.registerNodeType("tools/bg-remove", BgRemoveToolNode as unknown as NodeCtor);
