@@ -29,9 +29,10 @@ interface DragState {
   offsetY: number;
 }
 
-type ToolbarTab = NodePaletteItem["category"];
+type ToolbarTab = NodePaletteItem["category"] | "file";
 
 const TOOLBAR_TABS: Array<{ id: ToolbarTab; label: string }> = [
+  { id: "file", label: "FILE" },
   { id: "io", label: "I/O" },
   { id: "basic", label: "Basic" },
   { id: "focus", label: "Focus" },
@@ -58,7 +59,8 @@ function GraphToolbar({
   const [position, setPosition] = useState<ToolbarPosition>({ x: 14, y: 14 });
   const [activeTab, setActiveTab] = useState<ToolbarTab>("basic");
   const dragStateRef = useRef<DragState | null>(null);
-  const visibleNodes = nodePalette.filter((item) => item.category === activeTab);
+  const visibleNodes =
+    activeTab === "file" ? [] : nodePalette.filter((item) => item.category === activeTab);
   const actionButtons = [
     {
       glyph: "SV",
@@ -167,42 +169,45 @@ function GraphToolbar({
         ))}
       </div>
 
-      <div className="toolbar-group tool-grid">
-        {visibleNodes.map((item) => (
-          <button
-            aria-label={item.tooltip}
-            className="toolbar-icon-button"
-            data-tooltip={item.tooltip}
-            key={item.type}
-            onClick={() => onAddNode(item.type)}
-            title={item.tooltip}
-            type="button"
-          >
-            <span aria-hidden="true" className="toolbar-glyph">
-              {item.glyph}
-            </span>
-            <span className="toolbar-text">{item.shortLabel}</span>
-          </button>
-        ))}
-      </div>
-      <div className="toolbar-group action-grid">
-        {actionButtons.map((item) => (
-          <button
-            aria-label={item.tooltip}
-            className={`toolbar-icon-button${item.danger ? " danger" : ""}`}
-            data-tooltip={item.tooltip}
-            key={item.glyph}
-            onClick={item.onClick}
-            title={item.tooltip}
-            type="button"
-          >
-            <span aria-hidden="true" className="toolbar-glyph">
-              {item.glyph}
-            </span>
-            <span className="toolbar-text">{item.shortLabel}</span>
-          </button>
-        ))}
-      </div>
+      {activeTab === "file" ? (
+        <div className="toolbar-group action-grid">
+          {actionButtons.map((item) => (
+            <button
+              aria-label={item.tooltip}
+              className={`toolbar-icon-button${item.danger ? " danger" : ""}`}
+              data-tooltip={item.tooltip}
+              key={item.glyph}
+              onClick={item.onClick}
+              title={item.tooltip}
+              type="button"
+            >
+              <span aria-hidden="true" className="toolbar-glyph">
+                {item.glyph}
+              </span>
+              <span className="toolbar-text">{item.shortLabel}</span>
+            </button>
+          ))}
+        </div>
+      ) : (
+        <div className="toolbar-group tool-grid">
+          {visibleNodes.map((item) => (
+            <button
+              aria-label={item.tooltip}
+              className="toolbar-icon-button"
+              data-tooltip={item.tooltip}
+              key={item.type}
+              onClick={() => onAddNode(item.type)}
+              title={item.tooltip}
+              type="button"
+            >
+              <span aria-hidden="true" className="toolbar-glyph">
+                {item.glyph}
+              </span>
+              <span className="toolbar-text">{item.shortLabel}</span>
+            </button>
+          ))}
+        </div>
+      )}
       <label className="toolbar-setting">
         <span className="toolbar-setting-label" title="Larghezza preview dei nodi">
           W
