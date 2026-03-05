@@ -3,6 +3,8 @@ import type { NodeCtor, RegisterNodeTypeFn } from "./types";
 interface ArtToolNodeCtors {
   OilToolNode: NodeCtor;
   Oil2ToolNode: NodeCtor;
+  Oil3ToolNode: NodeCtor;
+  LinesToolNode: NodeCtor;
   AsciifyToolNode: NodeCtor;
   SketchToolNode: NodeCtor;
   DelanoyToolNode: NodeCtor;
@@ -23,6 +25,8 @@ interface ArtToolNodeCtors {
 export function registerArtToolNodes(registerNodeType: RegisterNodeTypeFn, ctors: ArtToolNodeCtors) {
   registerNodeType("tools/art/oil", ctors.OilToolNode);
   registerNodeType("tools/art/oil2", ctors.Oil2ToolNode);
+  registerNodeType("tools/art/oil3", ctors.Oil3ToolNode);
+  registerNodeType("tools/art/lines", ctors.LinesToolNode);
   registerNodeType("tools/art/asciify", ctors.AsciifyToolNode);
   registerNodeType("tools/art/sketch", ctors.SketchToolNode);
   registerNodeType("tools/art/delanoy", ctors.DelanoyToolNode);

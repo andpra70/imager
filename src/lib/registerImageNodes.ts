@@ -3285,6 +3285,24 @@ interface Oil2Result {
   height: number;
 }
 
+interface Oil3Result {
+  svg: GraphSvg;
+  preview: GraphImage;
+  strokeCount: number;
+  pathCount: number;
+  width: number;
+  height: number;
+}
+
+interface LineFieldResult {
+  svg: GraphSvg;
+  preview: GraphImage;
+  lineCount: number;
+  pointCount: number;
+  width: number;
+  height: number;
+}
+
 interface DelanoyResult {
   svg: GraphSvg;
   preview: GraphImage;
@@ -4813,6 +4831,398 @@ async function generateOil2Svg(
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><rect width="100%" height="100%" fill="${backgroundColor}"/>${svgPaths.join("")}</svg>`;
   onProgress?.(1, "ready");
   return { svg, preview, strokeCount, pathCount, width, height };
+}
+
+function generateOil3StrokePaths(options: {
+  context: CanvasRenderingContext2D;
+  x: number;
+  y: number;
+  angleRad: number;
+  strokeLength: number;
+  strokeThickness: number;
+  strokeColor: { r: number; g: number; b: number; a: number };
+  stepDiv: number;
+  tangentChance: number;
+  detailChance: number;
+  detailJitter: number;
+  rng: () => number;
+  maxSvgPaths: number;
+  svgPaths: string[];
+}) {
+  const {
+    context,
+    x,
+    y,
+    angleRad,
+    strokeLength,
+    strokeThickness,
+    strokeColor,
+    stepDiv,
+    tangentChance,
+    detailChance,
+    detailJitter,
+    rng,
+    maxSvgPaths,
+    svgPaths,
+  } = options;
+  const stepLength = strokeLength / Math.max(1, stepDiv);
+  let tangent1 = 0;
+  let tangent2 = 0;
+  if (rng() < tangentChance) {
+    tangent1 = -strokeLength + rng() * strokeLength * 2;
+    tangent2 = -strokeLength + rng() * strokeLength * 2;
+  }
+  const cosA = Math.cos(angleRad);
+  const sinA = Math.sin(angleRad);
+  const transformPoint = (px: number, py: number) => ({
+    x: x + px * cosA - py * sinA,
+    y: y + px * sinA + py * cosA,
+  });
+  const drawCurve = (
+    p0: { x: number; y: number },
+    p1: { x: number; y: number },
+    p2: { x: number; y: number },
+    p3: { x: number; y: number },
+    colorCss: string,
+    weight: number,
+  ) => {
+    const safeWeight = Math.max(0.1, weight);
+    const tp0 = transformPoint(p0.x, p0.y);
+    const tp1 = transformPoint(p1.x, p1.y);
+    const tp2 = transformPoint(p2.x, p2.y);
+    const tp3 = transformPoint(p3.x, p3.y);
+    const c1 = {
+      x: tp1.x + (tp2.x - tp0.x) / 6,
+      y: tp1.y + (tp2.y - tp0.y) / 6,
+    };
+    const c2 = {
+      x: tp2.x - (tp3.x - tp1.x) / 6,
+      y: tp2.y - (tp3.y - tp1.y) / 6,
+    };
+    context.strokeStyle = colorCss;
+    context.lineWidth = safeWeight;
+    context.lineCap = "round";
+    context.lineJoin = "round";
+    context.beginPath();
+    context.moveTo(tp1.x, tp1.y);
+    context.bezierCurveTo(c1.x, c1.y, c2.x, c2.y, tp2.x, tp2.y);
+    context.stroke();
+    if (svgPaths.length < maxSvgPaths) {
+      const d =
+        `M ${tp1.x.toFixed(2)} ${tp1.y.toFixed(2)} ` +
+        `C ${c1.x.toFixed(2)} ${c1.y.toFixed(2)}, ${c2.x.toFixed(2)} ${c2.y.toFixed(2)}, ${tp2.x.toFixed(2)} ${tp2.y.toFixed(2)}`;
+      svgPaths.push(
+        `<path d="${d}" fill="none" stroke="${colorCss}" stroke-width="${safeWeight.toFixed(2)}" stroke-linecap="round" stroke-linejoin="round"/>`,
+      );
+    }
+  };
+
+  const baseColorCss = oil2RgbaCss(strokeColor.r, strokeColor.g, strokeColor.b, strokeColor.a);
+  drawCurve(
+    { x: tangent1, y: -stepLength * 2 },
+    { x: 0, y: -stepLength },
+    { x: 0, y: stepLength },
+    { x: tangent2, y: stepLength * 2 },
+    baseColorCss,
+    strokeThickness,
+  );
+
+  if (rng() > detailChance) {
+    return;
+  }
+
+  let z = 1;
+  const detailIterations = Math.max(1, Math.round(strokeThickness));
+  for (let num = detailIterations; num > 0; num -= 1) {
+    const offset = -detailJitter + rng() * detailJitter * 1.5;
+    const detailColorCss = oil2RgbaCss(
+      strokeColor.r + offset,
+      strokeColor.g + offset,
+      strokeColor.b + offset,
+      (100 + rng() * 155) / 255,
+    );
+    const detailWeight = Math.floor(rng() * 2);
+    if (detailWeight <= 0) {
+      z += 1;
+      continue;
+    }
+    const localX = z - strokeThickness / 2;
+    drawCurve(
+      { x: tangent1, y: -stepLength * 2 },
+      { x: localX, y: -stepLength * (0.9 + rng() * 0.2) },
+      { x: localX, y: stepLength * (0.9 + rng() * 0.2) },
+      { x: tangent2, y: stepLength * 2 },
+      detailColorCss,
+      detailWeight,
+    );
+    z += 1;
+  }
+}
+
+async function generateOil3Svg(
+  input: GraphImage,
+  options: {
+    maxWidth: number;
+    density: number;
+    probabilityDiv: number;
+    seed: number;
+    refreshEvery: number;
+    maxSvgPaths: number;
+    backgroundColor: string;
+    rotationMin: number;
+    rotationMax: number;
+    alpha: number;
+    stepDiv: number;
+    tangentChance: number;
+    detailChance: number;
+    detailJitter: number;
+  },
+  shouldCancel?: () => boolean,
+  onProgress?: (progress: number, status: string) => void,
+  onPreview?: (preview: GraphImage) => void,
+): Promise<Oil3Result | null> {
+  const source = fitSourceToMaxWidthCanvas(input, options.maxWidth);
+  const width = source.width;
+  const height = source.height;
+  const context = source.getContext("2d", { willReadFrequently: true });
+  if (!context) {
+    throw new Error("2D context not available.");
+  }
+  const imageData = context.getImageData(0, 0, width, height);
+  const pixels = imageData.data;
+
+  const preview = document.createElement("canvas");
+  preview.width = width;
+  preview.height = height;
+  const previewContext = preview.getContext("2d");
+  if (!previewContext) {
+    throw new Error("2D context not available.");
+  }
+  const backgroundColor = normalizeHexColor(options.backgroundColor);
+  previewContext.fillStyle = backgroundColor;
+  previewContext.fillRect(0, 0, width, height);
+
+  const rng = createSeededRandom(options.seed);
+  const safeDensity = clamp(options.density, 0.05, 8);
+  const safeProbabilityDiv = clamp(Math.round(options.probabilityDiv), 2000, 120000);
+  const expectedPerFrame = (width * height * safeDensity) / safeProbabilityDiv;
+  const refreshEvery = clamp(Math.round(options.refreshEvery), 1, 512);
+  const maxSvgPaths = clamp(Math.round(options.maxSvgPaths), 1000, 300000);
+  const rotationMin = clamp(options.rotationMin, -180, 180);
+  const rotationMax = clamp(options.rotationMax, rotationMin, 180);
+  const alpha = clamp(options.alpha, 0, 1);
+  const stepDiv = clamp(options.stepDiv, 1, 100);
+  const tangentChance = clamp(options.tangentChance, 0, 1);
+  const detailChance = clamp(options.detailChance, 0, 1);
+  const detailJitter = clamp(options.detailJitter, 0, 255);
+
+  const stages = [
+    { name: "rough", frames: 20, lenMin: 150, lenMax: 250, thickMin: 20, thickMax: 40 },
+    { name: "thick", frames: 30, lenMin: 75, lenMax: 125, thickMin: 8, thickMax: 12 },
+    { name: "small", frames: 250, lenMin: 30, lenMax: 60, thickMin: 1, thickMax: 4 },
+    { name: "big-dots", frames: 50, lenMin: 5, lenMax: 20, thickMin: 5, thickMax: 15 },
+    { name: "small-dots", frames: 250, lenMin: 1, lenMax: 10, thickMin: 1, thickMax: 7 },
+  ] as const;
+  const stageTargets = stages.map((stage) => Math.max(1, Math.round(expectedPerFrame * stage.frames)));
+  const totalStrokesTarget = stageTargets.reduce((sum, value) => sum + value, 0);
+
+  const svgPaths: string[] = [];
+  let strokeCount = 0;
+  let lastYieldTime = performance.now();
+  for (let stageIndex = 0; stageIndex < stages.length; stageIndex += 1) {
+    const stage = stages[stageIndex];
+    const target = stageTargets[stageIndex];
+    for (let index = 0; index < target; index += 1) {
+      if (shouldCancel?.()) {
+        return null;
+      }
+      const px = Math.floor(rng() * width);
+      const py = Math.floor(rng() * height);
+      const pixelIndex = (py * width + px) * 4;
+      const r = pixels[pixelIndex];
+      const g = pixels[pixelIndex + 1];
+      const b = pixels[pixelIndex + 2];
+      const angleRad = ((rotationMin + rng() * (rotationMax - rotationMin)) * Math.PI) / 180;
+      const strokeLength = stage.lenMin + rng() * (stage.lenMax - stage.lenMin);
+      const thickness = Math.floor(stage.thickMin + rng() * (stage.thickMax - stage.thickMin + 1));
+
+      generateOil3StrokePaths({
+        context: previewContext,
+        x: px,
+        y: py,
+        angleRad,
+        strokeLength,
+        strokeThickness: thickness,
+        strokeColor: { r, g, b, a: alpha },
+        stepDiv,
+        tangentChance,
+        detailChance,
+        detailJitter,
+        rng,
+        maxSvgPaths,
+        svgPaths,
+      });
+      strokeCount += 1;
+
+      if (strokeCount % refreshEvery === 0 || strokeCount === totalStrokesTarget) {
+        onProgress?.(strokeCount / Math.max(1, totalStrokesTarget), `${stage.name} ${index + 1}/${target}`);
+        onPreview?.(preview);
+      }
+      if (performance.now() - lastYieldTime > 12) {
+        await yieldToUi();
+        lastYieldTime = performance.now();
+      }
+    }
+  }
+
+  const pathCount = svgPaths.length;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><rect width="100%" height="100%" fill="${backgroundColor}"/>${svgPaths.join("")}</svg>`;
+  onProgress?.(1, "ready");
+  return { svg, preview, strokeCount, pathCount, width, height };
+}
+
+async function generateLinesSvg(
+  input: GraphImage,
+  options: {
+    maxWidth: number;
+    lineCount: number;
+    pointsPerLine: number;
+    amplitude: number;
+    channel: "luma" | "red" | "green" | "blue";
+    invert: boolean;
+    zoom: number;
+    offsetX: number;
+    offsetY: number;
+    lineWidth: number;
+    lineAlpha: number;
+    lineColor: string;
+    backgroundColor: string;
+    refreshEvery: number;
+  },
+  shouldCancel?: () => boolean,
+  onProgress?: (progress: number, status: string) => void,
+  onPreview?: (preview: GraphImage) => void,
+): Promise<LineFieldResult | null> {
+  const source = fitSourceToMaxWidthCanvas(input, options.maxWidth);
+  const width = source.width;
+  const height = source.height;
+  const sourceContext = source.getContext("2d", { willReadFrequently: true });
+  if (!sourceContext) {
+    throw new Error("2D context not available.");
+  }
+  const pixels = sourceContext.getImageData(0, 0, width, height).data;
+
+  const lineCount = clamp(Math.round(options.lineCount), 2, 4096);
+  const pointsPerLine = clamp(Math.round(options.pointsPerLine), 4, 8192);
+  const amplitude = clamp(options.amplitude, 0, height);
+  const zoom = clamp(options.zoom, 0.05, 20);
+  const offsetX = options.offsetX;
+  const offsetY = options.offsetY;
+  const lineWidth = clamp(options.lineWidth, 0.1, 20);
+  const lineAlpha = clamp(options.lineAlpha, 0, 1);
+  const lineColor = normalizeHexColor(options.lineColor);
+  const backgroundColor = normalizeHexColor(options.backgroundColor);
+  const refreshEvery = clamp(Math.round(options.refreshEvery), 1, 512);
+  const invert = options.invert;
+  const channel = options.channel;
+
+  const sampleValue = (ix: number, iy: number) => {
+    const x = Math.floor(ix);
+    const y = Math.floor(iy);
+    if (x < 0 || y < 0 || x >= width || y >= height) {
+      return 255;
+    }
+    const index = (y * width + x) * 4;
+    if (channel === "red") {
+      return pixels[index];
+    }
+    if (channel === "green") {
+      return pixels[index + 1];
+    }
+    if (channel === "blue") {
+      return pixels[index + 2];
+    }
+    return Math.round(0.299 * pixels[index] + 0.587 * pixels[index + 1] + 0.114 * pixels[index + 2]);
+  };
+
+  const preview = document.createElement("canvas");
+  preview.width = width;
+  preview.height = height;
+  const previewContext = preview.getContext("2d");
+  if (!previewContext) {
+    throw new Error("2D context not available.");
+  }
+  previewContext.fillStyle = backgroundColor;
+  previewContext.fillRect(0, 0, width, height);
+  previewContext.strokeStyle = lineColor;
+  previewContext.lineWidth = lineWidth;
+  previewContext.globalAlpha = lineAlpha;
+  previewContext.lineCap = "round";
+  previewContext.lineJoin = "round";
+
+  const pointSpacing = width / (pointsPerLine + 1);
+  const lineSpacing = height / (lineCount + 1);
+  const svgPaths: string[] = [];
+  let totalPoints = 0;
+  let lastYieldTime = performance.now();
+
+  for (let lineIndex = 1; lineIndex <= lineCount; lineIndex += 1) {
+    if (shouldCancel?.()) {
+      return null;
+    }
+    const y = lineIndex * lineSpacing;
+    const points: Array<{ x: number; y: number }> = [];
+    for (let pointIndex = 1; pointIndex <= pointsPerLine; pointIndex += 1) {
+      const x = pointIndex * pointSpacing;
+      const centeredX = x - width * 0.5 - offsetX;
+      const centeredY = y - height * 0.5 - offsetY;
+      const imgX = centeredX / zoom + width * 0.5;
+      const imgY = centeredY / zoom + height * 0.5;
+      const value = sampleValue(imgX, imgY);
+      const mapped = invert
+        ? ((value / 255) * amplitude)
+        : ((value / 255) * amplitude - amplitude);
+      points.push({ x, y: y + mapped });
+    }
+    if (points.length < 2) {
+      continue;
+    }
+
+    previewContext.beginPath();
+    previewContext.moveTo(points[0].x, points[0].y);
+    for (let i = 1; i < points.length; i += 1) {
+      previewContext.lineTo(points[i].x, points[i].y);
+    }
+    previewContext.stroke();
+
+    const d =
+      `M${points[0].x.toFixed(2)},${points[0].y.toFixed(2)} ` +
+      points
+        .slice(1)
+        .map((point) => `L${point.x.toFixed(2)},${point.y.toFixed(2)}`)
+        .join(" ");
+    svgPaths.push(`<path d="${d}" fill="none"/>`);
+    totalPoints += points.length;
+
+    onProgress?.(lineIndex / lineCount, `line ${lineIndex}/${lineCount}`);
+    if (lineIndex % refreshEvery === 0 || lineIndex === lineCount) {
+      onPreview?.(preview);
+    }
+    if (performance.now() - lastYieldTime > 12) {
+      await yieldToUi();
+      lastYieldTime = performance.now();
+    }
+  }
+
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><rect width="100%" height="100%" fill="${backgroundColor}"/><g stroke="${lineColor}" stroke-width="${lineWidth}" stroke-opacity="${lineAlpha.toFixed(4)}" stroke-linecap="round" stroke-linejoin="round">${svgPaths.join("")}</g></svg>`;
+  return {
+    svg,
+    preview,
+    lineCount: svgPaths.length,
+    pointCount: totalPoints,
+    width,
+    height,
+  };
 }
 
 const ASCIIFY_CHARSETS = {
@@ -8748,6 +9158,628 @@ class Oil2ToolNode {
       10,
       layout.footerTop + 48,
     );
+    context.fillText(formatExecutionInfo(this.executionMs), 10, layout.footerTop + 66);
+    context.restore();
+  }
+}
+
+class Oil3ToolNode {
+  size: [number, number] = [280, 760];
+  properties!: Record<string, unknown>;
+  preview: GraphImage | null = null;
+  svg: GraphSvg | null = null;
+  status = "idle";
+  progress = 0;
+  strokeCount = 0;
+  pathCount = 0;
+  outputWidth = 0;
+  outputHeight = 0;
+  isRendering = false;
+  executionMs: number | null = null;
+  lastSignature = "";
+  lastOptionsSignature = "";
+  renderToken = 0;
+
+  setWidgetValue(this: Oil3ToolNode, name: string, value: unknown) {
+    const widgets = (this as unknown as LiteNode).widgets;
+    if (!widgets?.length) {
+      return;
+    }
+    const widget = widgets.find((item) => {
+      if (!item || typeof item !== "object") {
+        return false;
+      }
+      return (item as { name?: unknown }).name === name;
+    }) as { value?: unknown } | undefined;
+    if (widget) {
+      widget.value = value;
+    }
+  }
+
+  applyPreset(
+    this: PreviewAwareNode & Oil3ToolNode,
+    preset: "fast" | "normal" | "slow",
+    notify = true,
+  ) {
+    const values =
+      preset === "fast"
+        ? {
+            maxWidth: 720,
+            density: 0.6,
+            probabilityDiv: 3000,
+            refreshEvery: 48,
+            maxSvgPaths: 12000,
+          }
+        : preset === "slow"
+          ? {
+              maxWidth: 1400,
+              density: 1.8,
+              probabilityDiv: 3000,
+              refreshEvery: 10,
+              maxSvgPaths: 120000,
+            }
+          : {
+              maxWidth: 1000,
+              density: 1,
+              probabilityDiv: 3000,
+              refreshEvery: 24,
+              maxSvgPaths: 50000,
+            };
+    Object.assign(this.properties, values, { preset });
+    this.setWidgetValue("Preset", preset);
+    this.setWidgetValue("Max width", values.maxWidth);
+    this.setWidgetValue("Density", values.density);
+    this.setWidgetValue("Chance div", values.probabilityDiv);
+    this.setWidgetValue("Refresh", values.refreshEvery);
+    this.setWidgetValue("Max SVG", values.maxSvgPaths);
+    this.setDirtyCanvas(true, true);
+    if (notify) {
+      notifyGraphStateChange(this);
+    }
+  }
+
+  markCustom(this: PreviewAwareNode & Oil3ToolNode) {
+    if (String(this.properties.preset ?? "normal") !== "custom") {
+      this.properties.preset = "custom";
+      this.setWidgetValue("Preset", "custom");
+    }
+  }
+
+  constructor() {
+    const node = this as unknown as PreviewAwareNode & Oil3ToolNode;
+    node.title = createToolTitle("Oil3");
+    node.properties = {
+      preset: "normal",
+      maxWidth: 1000,
+      density: 1,
+      probabilityDiv: 3000,
+      seed: 1337,
+      refreshEvery: 24,
+      maxSvgPaths: 50000,
+      backgroundColor: "#FFFFFF",
+      rotationMin: -90,
+      rotationMax: 90,
+      alpha: 0.5,
+      stepDiv: 22,
+      tangentChance: 1,
+      detailChance: 0,
+      detailJitter: 50,
+    };
+    node.addInput("image", "image");
+    node.addOutput("image", "image");
+    node.addOutput("svg", "svg");
+    node.addWidget("combo", "Preset", "normal", (value) => {
+      const preset = String(value);
+      if (preset === "fast" || preset === "normal" || preset === "slow") {
+        node.applyPreset(preset, true);
+      } else {
+        node.properties.preset = "custom";
+        node.setDirtyCanvas(true, true);
+        notifyGraphStateChange(node);
+      }
+    }, { values: ["fast", "normal", "slow", "custom"] });
+    node.addWidget("slider", "Max width", 1000, (value) => {
+      node.properties.maxWidth = Math.round(Number(value));
+      node.markCustom();
+      notifyGraphStateChange(node);
+    }, { min: 128, max: 2800, step: 8 });
+    node.addWidget("slider", "Density", 1, (value) => {
+      node.properties.density = Number(value);
+      node.markCustom();
+      notifyGraphStateChange(node);
+    }, { min: 0.05, max: 8, step: 0.01, precision: 2 });
+    node.addWidget("slider", "Chance div", 3000, (value) => {
+      node.properties.probabilityDiv = Math.round(Number(value));
+      node.markCustom();
+      notifyGraphStateChange(node);
+    }, { min: 1000, max: 120000, step: 100 });
+    node.addWidget("number", "Seed", 1337, (value) => {
+      node.properties.seed = Math.round(Number(value));
+      notifyGraphStateChange(node);
+    }, { step: 1 });
+    node.addWidget("slider", "Rot min", -90, (value) => {
+      node.properties.rotationMin = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: -180, max: 180, step: 1 });
+    node.addWidget("slider", "Rot max", 90, (value) => {
+      node.properties.rotationMax = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: -180, max: 180, step: 1 });
+    node.addWidget("slider", "Alpha", 0.5, (value) => {
+      node.properties.alpha = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0, max: 1, step: 0.01, precision: 2 });
+    node.addWidget("slider", "Step div", 22, (value) => {
+      node.properties.stepDiv = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 1, max: 100, step: 0.5, precision: 1 });
+    node.addWidget("slider", "Tangent %", 1, (value) => {
+      node.properties.tangentChance = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0, max: 1, step: 0.01, precision: 2 });
+    node.addWidget("slider", "Detail %", 0, (value) => {
+      node.properties.detailChance = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0, max: 1, step: 0.01, precision: 2 });
+    node.addWidget("slider", "Detail jitter", 50, (value) => {
+      node.properties.detailJitter = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0, max: 255, step: 1 });
+    node.addWidget("slider", "Refresh", 24, (value) => {
+      node.properties.refreshEvery = Math.round(Number(value));
+      node.markCustom();
+      notifyGraphStateChange(node);
+    }, { min: 1, max: 512, step: 1 });
+    node.addWidget("slider", "Max SVG", 50000, (value) => {
+      node.properties.maxSvgPaths = Math.round(Number(value));
+      notifyGraphStateChange(node);
+    }, { min: 1000, max: 300000, step: 500 });
+    node.addWidget("text", "BG color", "#FFFFFF", (value) => {
+      node.properties.backgroundColor = normalizeHexColor(String(value));
+      notifyGraphStateChange(node);
+    });
+    node.refreshPreviewLayout = () => {
+      refreshNode(node, node.preview, 4);
+    };
+    node.applyPreset("normal", false);
+    node.refreshPreviewLayout();
+  }
+
+  onExecute(this: PreviewAwareNode & Oil3ToolNode) {
+    const inputValue = this.getInputData(0);
+    const input = isGraphImageReady(inputValue) ? inputValue : null;
+    if (!input) {
+      this.preview = null;
+      this.svg = null;
+      this.status = "waiting valid image";
+      this.progress = 0;
+      this.strokeCount = 0;
+      this.pathCount = 0;
+      this.outputWidth = 0;
+      this.outputHeight = 0;
+      this.executionMs = null;
+      this.isRendering = false;
+      this.lastSignature = "";
+      this.lastOptionsSignature = "";
+      this.setOutputData(0, null);
+      this.setOutputData(1, null);
+      this.refreshPreviewLayout();
+      return;
+    }
+
+    const options = {
+      maxWidth: clamp(Math.round(Number(this.properties.maxWidth ?? 1000)), 128, 2800),
+      density: clamp(Number(this.properties.density ?? 1), 0.05, 8),
+      probabilityDiv: clamp(Math.round(Number(this.properties.probabilityDiv ?? 3000)), 1000, 120000),
+      seed: Math.round(Number(this.properties.seed ?? 1337)),
+      refreshEvery: clamp(Math.round(Number(this.properties.refreshEvery ?? 24)), 1, 512),
+      maxSvgPaths: clamp(Math.round(Number(this.properties.maxSvgPaths ?? 50000)), 1000, 300000),
+      backgroundColor: normalizeHexColor(String(this.properties.backgroundColor ?? "#FFFFFF")),
+      rotationMin: clamp(Number(this.properties.rotationMin ?? -90), -180, 180),
+      rotationMax: clamp(Number(this.properties.rotationMax ?? 90), -180, 180),
+      alpha: clamp(Number(this.properties.alpha ?? 0.5), 0, 1),
+      stepDiv: clamp(Number(this.properties.stepDiv ?? 22), 1, 100),
+      tangentChance: clamp(Number(this.properties.tangentChance ?? 1), 0, 1),
+      detailChance: clamp(Number(this.properties.detailChance ?? 0), 0, 1),
+      detailJitter: clamp(Number(this.properties.detailJitter ?? 50), 0, 255),
+    };
+    const signature = getGraphImageSignature(input);
+    const optionsSignature = JSON.stringify(options);
+    if (signature !== this.lastSignature || optionsSignature !== this.lastOptionsSignature) {
+      this.lastSignature = signature;
+      this.lastOptionsSignature = optionsSignature;
+      const renderToken = ++this.renderToken;
+      const start = performance.now();
+      this.isRendering = true;
+      this.progress = 0;
+      this.status = "generating oil3...";
+      this.setDirtyCanvas(true, true);
+
+      const shouldCancel = () => renderToken !== this.renderToken;
+      const updateProgress = (value: number, status?: string) => {
+        this.progress = clamp(value, 0, 1);
+        if (status) {
+          this.status = status;
+        }
+        this.setDirtyCanvas(true, true);
+      };
+
+      void generateOil3Svg(
+        input,
+        options,
+        shouldCancel,
+        updateProgress,
+        (partialPreview) => {
+          if (shouldCancel()) {
+            return;
+          }
+          this.preview = partialPreview;
+          this.setDirtyCanvas(true, true);
+        },
+      )
+        .then((result) => {
+          if (renderToken !== this.renderToken || !result) {
+            return;
+          }
+          this.preview = result.preview;
+          this.svg = result.svg;
+          this.strokeCount = result.strokeCount;
+          this.pathCount = result.pathCount;
+          this.outputWidth = result.width;
+          this.outputHeight = result.height;
+          this.progress = 1;
+          this.status = "ready";
+          this.executionMs = performance.now() - start;
+          this.isRendering = false;
+          this.setDirtyCanvas(true, true);
+        })
+        .catch((error) => {
+          if (renderToken !== this.renderToken) {
+            return;
+          }
+          this.preview = input;
+          this.svg = null;
+          this.strokeCount = 0;
+          this.pathCount = 0;
+          this.outputWidth = 0;
+          this.outputHeight = 0;
+          this.progress = 0;
+          this.status = error instanceof Error ? error.message : "oil3 error";
+          this.executionMs = null;
+          this.isRendering = false;
+          this.setDirtyCanvas(true, true);
+        });
+    }
+
+    this.setOutputData(0, this.preview ?? input);
+    this.setOutputData(1, this.svg);
+    this.refreshPreviewLayout();
+  }
+
+  onDrawBackground(this: PreviewAwareNode & Oil3ToolNode, context: CanvasRenderingContext2D) {
+    const layout = drawImagePreview(context, this, this.preview, { footerLines: 4 });
+    context.save();
+    context.fillStyle = "rgba(255,255,255,0.65)";
+    context.font = "12px sans-serif";
+    context.fillText(`${this.status}${this.isRendering ? "..." : ""}`, 10, layout.footerTop + 12);
+    context.fillText(
+      `progress ${Math.round(this.progress * 100)}% | strokes ${this.strokeCount} | paths ${this.pathCount}`,
+      10,
+      layout.footerTop + 30,
+    );
+    context.fillText(`out ${this.outputWidth || "-"}x${this.outputHeight || "-"}`, 10, layout.footerTop + 48);
+    context.fillText(formatExecutionInfo(this.executionMs), 10, layout.footerTop + 66);
+    context.restore();
+  }
+}
+
+class LinesToolNode {
+  size: [number, number] = [280, 700];
+  properties!: Record<string, unknown>;
+  preview: GraphImage | null = null;
+  svg: GraphSvg | null = null;
+  status = "idle";
+  progress = 0;
+  lineCount = 0;
+  pointCount = 0;
+  outputWidth = 0;
+  outputHeight = 0;
+  isRendering = false;
+  executionMs: number | null = null;
+  lastSignature = "";
+  lastOptionsSignature = "";
+  renderToken = 0;
+
+  setWidgetValue(this: LinesToolNode, name: string, value: unknown) {
+    const widgets = (this as unknown as LiteNode).widgets;
+    if (!widgets?.length) {
+      return;
+    }
+    const widget = widgets.find((item) => {
+      if (!item || typeof item !== "object") {
+        return false;
+      }
+      return (item as { name?: unknown }).name === name;
+    }) as { value?: unknown } | undefined;
+    if (widget) {
+      widget.value = value;
+    }
+  }
+
+  applyPreset(
+    this: PreviewAwareNode & LinesToolNode,
+    preset: "fast" | "normal" | "slow",
+    notify = true,
+  ) {
+    const values =
+      preset === "fast"
+        ? {
+            maxWidth: 700,
+            lineCount: 120,
+            pointsPerLine: 220,
+            refreshEvery: 12,
+          }
+        : preset === "slow"
+          ? {
+              maxWidth: 1400,
+              lineCount: 420,
+              pointsPerLine: 900,
+              refreshEvery: 2,
+            }
+          : {
+              maxWidth: 960,
+              lineCount: 256,
+              pointsPerLine: 512,
+              refreshEvery: 6,
+            };
+    Object.assign(this.properties, values, { preset });
+    this.setWidgetValue("Preset", preset);
+    this.setWidgetValue("Max width", values.maxWidth);
+    this.setWidgetValue("Lines", values.lineCount);
+    this.setWidgetValue("Points", values.pointsPerLine);
+    this.setWidgetValue("Refresh", values.refreshEvery);
+    this.setDirtyCanvas(true, true);
+    if (notify) {
+      notifyGraphStateChange(this);
+    }
+  }
+
+  markCustom(this: PreviewAwareNode & LinesToolNode) {
+    if (String(this.properties.preset ?? "normal") !== "custom") {
+      this.properties.preset = "custom";
+      this.setWidgetValue("Preset", "custom");
+    }
+  }
+
+  constructor() {
+    const node = this as unknown as PreviewAwareNode & LinesToolNode;
+    node.title = createToolTitle("Lines");
+    node.properties = {
+      preset: "normal",
+      maxWidth: 960,
+      lineCount: 256,
+      pointsPerLine: 512,
+      amplitude: 32,
+      channel: "red",
+      invert: false,
+      zoom: 1,
+      offsetX: 0,
+      offsetY: 0,
+      lineWidth: 1,
+      lineAlpha: 1,
+      lineColor: "#000000",
+      backgroundColor: "#FFFFFF",
+      refreshEvery: 6,
+    };
+    node.addInput("image", "image");
+    node.addOutput("image", "image");
+    node.addOutput("svg", "svg");
+    node.addWidget("combo", "Preset", "normal", (value) => {
+      const preset = String(value);
+      if (preset === "fast" || preset === "normal" || preset === "slow") {
+        node.applyPreset(preset, true);
+      } else {
+        node.properties.preset = "custom";
+        node.setDirtyCanvas(true, true);
+        notifyGraphStateChange(node);
+      }
+    }, { values: ["fast", "normal", "slow", "custom"] });
+    node.addWidget("slider", "Max width", 960, (value) => {
+      node.properties.maxWidth = Math.round(Number(value));
+      node.markCustom();
+      notifyGraphStateChange(node);
+    }, { min: 128, max: 3000, step: 8 });
+    node.addWidget("slider", "Lines", 256, (value) => {
+      node.properties.lineCount = Math.round(Number(value));
+      node.markCustom();
+      notifyGraphStateChange(node);
+    }, { min: 2, max: 4096, step: 1 });
+    node.addWidget("slider", "Points", 512, (value) => {
+      node.properties.pointsPerLine = Math.round(Number(value));
+      node.markCustom();
+      notifyGraphStateChange(node);
+    }, { min: 4, max: 8192, step: 1 });
+    node.addWidget("slider", "Interlinea amp", 32, (value) => {
+      node.properties.amplitude = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0, max: 1024, step: 1 });
+    node.addWidget("combo", "Channel", "red", (value) => {
+      const v = String(value);
+      node.properties.channel = v === "luma" || v === "green" || v === "blue" ? v : "red";
+      notifyGraphStateChange(node);
+    }, { values: ["red", "green", "blue", "luma"] });
+    node.addWidget("toggle", "Invert", false, (value) => {
+      node.properties.invert = Boolean(value);
+      notifyGraphStateChange(node);
+    });
+    node.addWidget("slider", "Zoom", 1, (value) => {
+      node.properties.zoom = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0.05, max: 20, step: 0.01, precision: 2 });
+    node.addWidget("slider", "Offset X", 0, (value) => {
+      node.properties.offsetX = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: -5000, max: 5000, step: 1 });
+    node.addWidget("slider", "Offset Y", 0, (value) => {
+      node.properties.offsetY = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: -5000, max: 5000, step: 1 });
+    node.addWidget("slider", "Line width", 1, (value) => {
+      node.properties.lineWidth = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0.1, max: 20, step: 0.1, precision: 1 });
+    node.addWidget("slider", "Line alpha", 1, (value) => {
+      node.properties.lineAlpha = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0, max: 1, step: 0.01, precision: 2 });
+    node.addWidget("text", "Line color", "#000000", (value) => {
+      node.properties.lineColor = normalizeHexColor(String(value));
+      notifyGraphStateChange(node);
+    });
+    node.addWidget("text", "BG color", "#FFFFFF", (value) => {
+      node.properties.backgroundColor = normalizeHexColor(String(value));
+      notifyGraphStateChange(node);
+    });
+    node.addWidget("slider", "Refresh", 6, (value) => {
+      node.properties.refreshEvery = Math.round(Number(value));
+      node.markCustom();
+      notifyGraphStateChange(node);
+    }, { min: 1, max: 512, step: 1 });
+    node.refreshPreviewLayout = () => {
+      refreshNode(node, node.preview, 4);
+    };
+    node.applyPreset("normal", false);
+    node.refreshPreviewLayout();
+  }
+
+  onExecute(this: PreviewAwareNode & LinesToolNode) {
+    const inputValue = this.getInputData(0);
+    const input = isGraphImageReady(inputValue) ? inputValue : null;
+    if (!input) {
+      this.preview = null;
+      this.svg = null;
+      this.status = "waiting valid image";
+      this.progress = 0;
+      this.lineCount = 0;
+      this.pointCount = 0;
+      this.outputWidth = 0;
+      this.outputHeight = 0;
+      this.executionMs = null;
+      this.isRendering = false;
+      this.lastSignature = "";
+      this.lastOptionsSignature = "";
+      this.setOutputData(0, null);
+      this.setOutputData(1, null);
+      this.refreshPreviewLayout();
+      return;
+    }
+
+    const channelRaw = String(this.properties.channel ?? "red");
+    const channel: "luma" | "red" | "green" | "blue" =
+      channelRaw === "luma" || channelRaw === "green" || channelRaw === "blue"
+        ? channelRaw
+        : "red";
+    const options = {
+      maxWidth: clamp(Math.round(Number(this.properties.maxWidth ?? 960)), 128, 3000),
+      lineCount: clamp(Math.round(Number(this.properties.lineCount ?? 256)), 2, 4096),
+      pointsPerLine: clamp(Math.round(Number(this.properties.pointsPerLine ?? 512)), 4, 8192),
+      amplitude: clamp(Number(this.properties.amplitude ?? 32), 0, 10000),
+      channel,
+      invert: Boolean(this.properties.invert ?? false),
+      zoom: clamp(Number(this.properties.zoom ?? 1), 0.05, 20),
+      offsetX: Number(this.properties.offsetX ?? 0),
+      offsetY: Number(this.properties.offsetY ?? 0),
+      lineWidth: clamp(Number(this.properties.lineWidth ?? 1), 0.1, 20),
+      lineAlpha: clamp(Number(this.properties.lineAlpha ?? 1), 0, 1),
+      lineColor: normalizeHexColor(String(this.properties.lineColor ?? "#000000")),
+      backgroundColor: normalizeHexColor(String(this.properties.backgroundColor ?? "#FFFFFF")),
+      refreshEvery: clamp(Math.round(Number(this.properties.refreshEvery ?? 6)), 1, 512),
+    };
+    const signature = getGraphImageSignature(input);
+    const optionsSignature = JSON.stringify(options);
+    if (signature !== this.lastSignature || optionsSignature !== this.lastOptionsSignature) {
+      this.lastSignature = signature;
+      this.lastOptionsSignature = optionsSignature;
+      const renderToken = ++this.renderToken;
+      const start = performance.now();
+      this.isRendering = true;
+      this.progress = 0;
+      this.status = "generating lines...";
+      this.setDirtyCanvas(true, true);
+
+      const shouldCancel = () => renderToken !== this.renderToken;
+      const updateProgress = (value: number, status?: string) => {
+        this.progress = clamp(value, 0, 1);
+        if (status) {
+          this.status = status;
+        }
+        this.setDirtyCanvas(true, true);
+      };
+
+      void generateLinesSvg(
+        input,
+        options,
+        shouldCancel,
+        updateProgress,
+        (partialPreview) => {
+          if (shouldCancel()) {
+            return;
+          }
+          this.preview = partialPreview;
+          this.setDirtyCanvas(true, true);
+        },
+      )
+        .then((result) => {
+          if (renderToken !== this.renderToken || !result) {
+            return;
+          }
+          this.preview = result.preview;
+          this.svg = result.svg;
+          this.lineCount = result.lineCount;
+          this.pointCount = result.pointCount;
+          this.outputWidth = result.width;
+          this.outputHeight = result.height;
+          this.progress = 1;
+          this.status = "ready";
+          this.executionMs = performance.now() - start;
+          this.isRendering = false;
+          this.setDirtyCanvas(true, true);
+        })
+        .catch((error) => {
+          if (renderToken !== this.renderToken) {
+            return;
+          }
+          this.preview = input;
+          this.svg = null;
+          this.lineCount = 0;
+          this.pointCount = 0;
+          this.outputWidth = 0;
+          this.outputHeight = 0;
+          this.progress = 0;
+          this.status = error instanceof Error ? error.message : "lines error";
+          this.executionMs = null;
+          this.isRendering = false;
+          this.setDirtyCanvas(true, true);
+        });
+    }
+
+    this.setOutputData(0, this.preview ?? input);
+    this.setOutputData(1, this.svg);
+    this.refreshPreviewLayout();
+  }
+
+  onDrawBackground(this: PreviewAwareNode & LinesToolNode, context: CanvasRenderingContext2D) {
+    const layout = drawImagePreview(context, this, this.preview, { footerLines: 4 });
+    context.save();
+    context.fillStyle = "rgba(255,255,255,0.65)";
+    context.font = "12px sans-serif";
+    context.fillText(`${this.status}${this.isRendering ? "..." : ""}`, 10, layout.footerTop + 12);
+    context.fillText(
+      `progress ${Math.round(this.progress * 100)}% | lines ${this.lineCount} | points ${this.pointCount}`,
+      10,
+      layout.footerTop + 30,
+    );
+    context.fillText(`out ${this.outputWidth || "-"}x${this.outputHeight || "-"}`, 10, layout.footerTop + 48);
     context.fillText(formatExecutionInfo(this.executionMs), 10, layout.footerTop + 66);
     context.restore();
   }
@@ -13870,6 +14902,8 @@ export function registerImageNodes() {
   registerArtToolNodes(registerNodeType, {
     OilToolNode: OilToolNode as unknown as NodeCtor,
     Oil2ToolNode: Oil2ToolNode as unknown as NodeCtor,
+    Oil3ToolNode: Oil3ToolNode as unknown as NodeCtor,
+    LinesToolNode: LinesToolNode as unknown as NodeCtor,
     AsciifyToolNode: AsciifyToolNode as unknown as NodeCtor,
     SketchToolNode: SketchToolNode as unknown as NodeCtor,
     DelanoyToolNode: DelanoyToolNode as unknown as NodeCtor,
