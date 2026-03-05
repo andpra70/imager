@@ -3303,6 +3303,16 @@ interface LineFieldResult {
   height: number;
 }
 
+interface DotsResult {
+  svg: GraphSvg;
+  preview: GraphImage;
+  dotCount: number;
+  cols: number;
+  rows: number;
+  width: number;
+  height: number;
+}
+
 interface DelanoyResult {
   svg: GraphSvg;
   preview: GraphImage;
@@ -5223,6 +5233,153 @@ async function generateLinesSvg(
     width,
     height,
   };
+}
+
+async function generateDotsSvg(
+  input: GraphImage,
+  options: {
+    maxWidth: number;
+    tileSize: number;
+    dotScale: number;
+    jitter: number;
+    sampleMode: "nearest" | "average";
+    backgroundColor: string;
+    stroke: boolean;
+    strokeColor: string;
+    strokeWidth: number;
+    refreshEvery: number;
+    seed: number;
+  },
+  shouldCancel?: () => boolean,
+  onProgress?: (progress: number, status: string) => void,
+  onPreview?: (preview: GraphImage) => void,
+): Promise<DotsResult | null> {
+  const source = fitSourceToMaxWidthCanvas(input, options.maxWidth);
+  const width = source.width;
+  const height = source.height;
+  const sourceContext = source.getContext("2d", { willReadFrequently: true });
+  if (!sourceContext) {
+    throw new Error("2D context not available.");
+  }
+  const pixels = sourceContext.getImageData(0, 0, width, height).data;
+
+  const tileSize = clamp(options.tileSize, 2, 256);
+  const dotScale = clamp(options.dotScale, 0.05, 2);
+  const jitter = clamp(options.jitter, 0, 1);
+  const backgroundColor = normalizeHexColor(options.backgroundColor);
+  const strokeColor = normalizeHexColor(options.strokeColor);
+  const strokeWidth = clamp(options.strokeWidth, 0.1, 20);
+  const refreshEvery = clamp(Math.round(options.refreshEvery), 1, 512);
+  const sampleMode = options.sampleMode;
+  const rng = createSeededRandom(options.seed);
+
+  const cols = Math.max(1, Math.floor(width / tileSize));
+  const rows = Math.max(1, Math.floor(height / tileSize));
+
+  const preview = document.createElement("canvas");
+  preview.width = width;
+  preview.height = height;
+  const previewContext = preview.getContext("2d");
+  if (!previewContext) {
+    throw new Error("2D context not available.");
+  }
+  previewContext.fillStyle = backgroundColor;
+  previewContext.fillRect(0, 0, width, height);
+  previewContext.lineJoin = "round";
+  previewContext.lineCap = "round";
+
+  const circles: string[] = [];
+  let dotCount = 0;
+  let lastYieldTime = performance.now();
+  const dotRadius = (tileSize * dotScale) * 0.5;
+
+  const sampleNearest = (cx: number, cy: number) => {
+    const x = clamp(Math.round(cx), 0, width - 1);
+    const y = clamp(Math.round(cy), 0, height - 1);
+    const index = (y * width + x) * 4;
+    return {
+      r: pixels[index],
+      g: pixels[index + 1],
+      b: pixels[index + 2],
+      a: pixels[index + 3] / 255,
+    };
+  };
+  const sampleAverage = (left: number, top: number, right: number, bottom: number) => {
+    let sumR = 0;
+    let sumG = 0;
+    let sumB = 0;
+    let sumA = 0;
+    let count = 0;
+    for (let y = top; y < bottom; y += 1) {
+      for (let x = left; x < right; x += 1) {
+        const index = (y * width + x) * 4;
+        sumR += pixels[index];
+        sumG += pixels[index + 1];
+        sumB += pixels[index + 2];
+        sumA += pixels[index + 3];
+        count += 1;
+      }
+    }
+    if (count <= 0) {
+      return { r: 0, g: 0, b: 0, a: 1 };
+    }
+    return {
+      r: sumR / count,
+      g: sumG / count,
+      b: sumB / count,
+      a: (sumA / count) / 255,
+    };
+  };
+
+  for (let row = 0; row <= rows; row += 1) {
+    if (shouldCancel?.()) {
+      return null;
+    }
+    const y = row * tileSize;
+    for (let col = 0; col <= cols; col += 1) {
+      const x = col * tileSize;
+      const jitterX = (rng() - 0.5) * tileSize * jitter;
+      const jitterY = (rng() - 0.5) * tileSize * jitter;
+      const cx = clamp(x + jitterX, 0, width - 1);
+      const cy = clamp(y + jitterY, 0, height - 1);
+
+      const left = clamp(Math.floor(x), 0, width - 1);
+      const top = clamp(Math.floor(y), 0, height - 1);
+      const right = clamp(Math.ceil(x + tileSize), left + 1, width);
+      const bottom = clamp(Math.ceil(y + tileSize), top + 1, height);
+      const color = sampleMode === "average"
+        ? sampleAverage(left, top, right, bottom)
+        : sampleNearest(cx, cy);
+      const fillCss = oil2RgbaCss(color.r, color.g, color.b, color.a);
+
+      previewContext.fillStyle = fillCss;
+      previewContext.beginPath();
+      previewContext.arc(cx, cy, dotRadius, 0, Math.PI * 2);
+      previewContext.fill();
+      if (options.stroke) {
+        previewContext.strokeStyle = strokeColor;
+        previewContext.lineWidth = strokeWidth;
+        previewContext.stroke();
+      }
+
+      circles.push(
+        `<circle cx="${cx.toFixed(2)}" cy="${cy.toFixed(2)}" r="${dotRadius.toFixed(2)}" fill="${fillCss}"${options.stroke ? ` stroke="${strokeColor}" stroke-width="${strokeWidth.toFixed(2)}"` : ""}/>`,
+      );
+      dotCount += 1;
+    }
+
+    onProgress?.((row + 1) / (rows + 1), `row ${row + 1}/${rows + 1}`);
+    if ((row + 1) % refreshEvery === 0 || row === rows) {
+      onPreview?.(preview);
+    }
+    if (performance.now() - lastYieldTime > 12) {
+      await yieldToUi();
+      lastYieldTime = performance.now();
+    }
+  }
+
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><rect width="100%" height="100%" fill="${backgroundColor}"/>${circles.join("")}</svg>`;
+  return { svg, preview, dotCount, cols: cols + 1, rows: rows + 1, width, height };
 }
 
 const ASCIIFY_CHARSETS = {
@@ -9780,6 +9937,277 @@ class LinesToolNode {
       layout.footerTop + 30,
     );
     context.fillText(`out ${this.outputWidth || "-"}x${this.outputHeight || "-"}`, 10, layout.footerTop + 48);
+    context.fillText(formatExecutionInfo(this.executionMs), 10, layout.footerTop + 66);
+    context.restore();
+  }
+}
+
+class DotsToolNode {
+  size: [number, number] = [280, 640];
+  properties!: Record<string, unknown>;
+  preview: GraphImage | null = null;
+  svg: GraphSvg | null = null;
+  status = "idle";
+  progress = 0;
+  dotCount = 0;
+  gridInfo = "-";
+  outputWidth = 0;
+  outputHeight = 0;
+  isRendering = false;
+  executionMs: number | null = null;
+  lastSignature = "";
+  lastOptionsSignature = "";
+  renderToken = 0;
+
+  setWidgetValue(this: DotsToolNode, name: string, value: unknown) {
+    const widgets = (this as unknown as LiteNode).widgets;
+    if (!widgets?.length) {
+      return;
+    }
+    const widget = widgets.find((item) => {
+      if (!item || typeof item !== "object") {
+        return false;
+      }
+      return (item as { name?: unknown }).name === name;
+    }) as { value?: unknown } | undefined;
+    if (widget) {
+      widget.value = value;
+    }
+  }
+
+  applyPreset(
+    this: PreviewAwareNode & DotsToolNode,
+    preset: "fast" | "normal" | "slow",
+    notify = true,
+  ) {
+    const values =
+      preset === "fast"
+        ? { maxWidth: 800, tileSize: 14, refreshEvery: 10 }
+        : preset === "slow"
+          ? { maxWidth: 1600, tileSize: 5, refreshEvery: 2 }
+          : { maxWidth: 1200, tileSize: 8, refreshEvery: 4 };
+    Object.assign(this.properties, values, { preset });
+    this.setWidgetValue("Preset", preset);
+    this.setWidgetValue("Max width", values.maxWidth);
+    this.setWidgetValue("Tile size", values.tileSize);
+    this.setWidgetValue("Refresh", values.refreshEvery);
+    this.setDirtyCanvas(true, true);
+    if (notify) {
+      notifyGraphStateChange(this);
+    }
+  }
+
+  markCustom(this: PreviewAwareNode & DotsToolNode) {
+    if (String(this.properties.preset ?? "normal") !== "custom") {
+      this.properties.preset = "custom";
+      this.setWidgetValue("Preset", "custom");
+    }
+  }
+
+  constructor() {
+    const node = this as unknown as PreviewAwareNode & DotsToolNode;
+    node.title = createToolTitle("Dots");
+    node.properties = {
+      preset: "normal",
+      maxWidth: 1200,
+      tileSize: 8,
+      dotScale: 1,
+      jitter: 0,
+      sampleMode: "nearest",
+      backgroundColor: "#000000",
+      stroke: false,
+      strokeColor: "#000000",
+      strokeWidth: 0.4,
+      refreshEvery: 4,
+      seed: 1337,
+    };
+    node.addInput("image", "image");
+    node.addOutput("image", "image");
+    node.addOutput("svg", "svg");
+    node.addWidget("combo", "Preset", "normal", (value) => {
+      const preset = String(value);
+      if (preset === "fast" || preset === "normal" || preset === "slow") {
+        node.applyPreset(preset, true);
+      } else {
+        node.properties.preset = "custom";
+        node.setDirtyCanvas(true, true);
+        notifyGraphStateChange(node);
+      }
+    }, { values: ["fast", "normal", "slow", "custom"] });
+    node.addWidget("slider", "Max width", 1200, (value) => {
+      node.properties.maxWidth = Math.round(Number(value));
+      node.markCustom();
+      notifyGraphStateChange(node);
+    }, { min: 128, max: 3000, step: 8 });
+    node.addWidget("slider", "Tile size", 8, (value) => {
+      node.properties.tileSize = Number(value);
+      node.markCustom();
+      notifyGraphStateChange(node);
+    }, { min: 2, max: 256, step: 0.5, precision: 1 });
+    node.addWidget("slider", "Dot scale", 1, (value) => {
+      node.properties.dotScale = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0.05, max: 2, step: 0.01, precision: 2 });
+    node.addWidget("slider", "Jitter", 0, (value) => {
+      node.properties.jitter = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0, max: 1, step: 0.01, precision: 2 });
+    node.addWidget("combo", "Sample", "nearest", (value) => {
+      node.properties.sampleMode = String(value) === "average" ? "average" : "nearest";
+      notifyGraphStateChange(node);
+    }, { values: ["nearest", "average"] });
+    node.addWidget("text", "BG color", "#000000", (value) => {
+      node.properties.backgroundColor = normalizeHexColor(String(value));
+      notifyGraphStateChange(node);
+    });
+    node.addWidget("toggle", "Stroke", false, (value) => {
+      node.properties.stroke = Boolean(value);
+      notifyGraphStateChange(node);
+    });
+    node.addWidget("text", "Stroke color", "#000000", (value) => {
+      node.properties.strokeColor = normalizeHexColor(String(value));
+      notifyGraphStateChange(node);
+    });
+    node.addWidget("slider", "Stroke width", 0.4, (value) => {
+      node.properties.strokeWidth = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0.1, max: 20, step: 0.1, precision: 1 });
+    node.addWidget("slider", "Refresh", 4, (value) => {
+      node.properties.refreshEvery = Math.round(Number(value));
+      node.markCustom();
+      notifyGraphStateChange(node);
+    }, { min: 1, max: 512, step: 1 });
+    node.addWidget("number", "Seed", 1337, (value) => {
+      node.properties.seed = Math.round(Number(value));
+      notifyGraphStateChange(node);
+    }, { step: 1 });
+    node.refreshPreviewLayout = () => {
+      refreshNode(node, node.preview, 4);
+    };
+    node.applyPreset("normal", false);
+    node.refreshPreviewLayout();
+  }
+
+  onExecute(this: PreviewAwareNode & DotsToolNode) {
+    const inputValue = this.getInputData(0);
+    const input = isGraphImageReady(inputValue) ? inputValue : null;
+    if (!input) {
+      this.preview = null;
+      this.svg = null;
+      this.status = "waiting valid image";
+      this.progress = 0;
+      this.dotCount = 0;
+      this.gridInfo = "-";
+      this.outputWidth = 0;
+      this.outputHeight = 0;
+      this.executionMs = null;
+      this.isRendering = false;
+      this.lastSignature = "";
+      this.lastOptionsSignature = "";
+      this.setOutputData(0, null);
+      this.setOutputData(1, null);
+      this.refreshPreviewLayout();
+      return;
+    }
+
+    const options = {
+      maxWidth: clamp(Math.round(Number(this.properties.maxWidth ?? 1200)), 128, 3000),
+      tileSize: clamp(Number(this.properties.tileSize ?? 8), 2, 256),
+      dotScale: clamp(Number(this.properties.dotScale ?? 1), 0.05, 2),
+      jitter: clamp(Number(this.properties.jitter ?? 0), 0, 1),
+      sampleMode: String(this.properties.sampleMode ?? "nearest") === "average" ? "average" as const : "nearest" as const,
+      backgroundColor: normalizeHexColor(String(this.properties.backgroundColor ?? "#000000")),
+      stroke: Boolean(this.properties.stroke ?? false),
+      strokeColor: normalizeHexColor(String(this.properties.strokeColor ?? "#000000")),
+      strokeWidth: clamp(Number(this.properties.strokeWidth ?? 0.4), 0.1, 20),
+      refreshEvery: clamp(Math.round(Number(this.properties.refreshEvery ?? 4)), 1, 512),
+      seed: Math.round(Number(this.properties.seed ?? 1337)),
+    };
+    const signature = getGraphImageSignature(input);
+    const optionsSignature = JSON.stringify(options);
+    if (signature !== this.lastSignature || optionsSignature !== this.lastOptionsSignature) {
+      this.lastSignature = signature;
+      this.lastOptionsSignature = optionsSignature;
+      const renderToken = ++this.renderToken;
+      const start = performance.now();
+      this.isRendering = true;
+      this.progress = 0;
+      this.status = "generating dots...";
+      this.setDirtyCanvas(true, true);
+
+      const shouldCancel = () => renderToken !== this.renderToken;
+      const updateProgress = (value: number, status?: string) => {
+        this.progress = clamp(value, 0, 1);
+        if (status) {
+          this.status = status;
+        }
+        this.setDirtyCanvas(true, true);
+      };
+
+      void generateDotsSvg(
+        input,
+        options,
+        shouldCancel,
+        updateProgress,
+        (partialPreview) => {
+          if (shouldCancel()) {
+            return;
+          }
+          this.preview = partialPreview;
+          this.setDirtyCanvas(true, true);
+        },
+      )
+        .then((result) => {
+          if (renderToken !== this.renderToken || !result) {
+            return;
+          }
+          this.preview = result.preview;
+          this.svg = result.svg;
+          this.dotCount = result.dotCount;
+          this.gridInfo = `${result.cols}x${result.rows}`;
+          this.outputWidth = result.width;
+          this.outputHeight = result.height;
+          this.progress = 1;
+          this.status = "ready";
+          this.executionMs = performance.now() - start;
+          this.isRendering = false;
+          this.setDirtyCanvas(true, true);
+        })
+        .catch((error) => {
+          if (renderToken !== this.renderToken) {
+            return;
+          }
+          this.preview = input;
+          this.svg = null;
+          this.dotCount = 0;
+          this.gridInfo = "-";
+          this.outputWidth = 0;
+          this.outputHeight = 0;
+          this.progress = 0;
+          this.status = error instanceof Error ? error.message : "dots error";
+          this.executionMs = null;
+          this.isRendering = false;
+          this.setDirtyCanvas(true, true);
+        });
+    }
+
+    this.setOutputData(0, this.preview ?? input);
+    this.setOutputData(1, this.svg);
+    this.refreshPreviewLayout();
+  }
+
+  onDrawBackground(this: PreviewAwareNode & DotsToolNode, context: CanvasRenderingContext2D) {
+    const layout = drawImagePreview(context, this, this.preview, { footerLines: 4 });
+    context.save();
+    context.fillStyle = "rgba(255,255,255,0.65)";
+    context.font = "12px sans-serif";
+    context.fillText(`${this.status}${this.isRendering ? "..." : ""}`, 10, layout.footerTop + 12);
+    context.fillText(
+      `progress ${Math.round(this.progress * 100)}% | dots ${this.dotCount}`,
+      10,
+      layout.footerTop + 30,
+    );
+    context.fillText(`grid ${this.gridInfo}`, 10, layout.footerTop + 48);
     context.fillText(formatExecutionInfo(this.executionMs), 10, layout.footerTop + 66);
     context.restore();
   }
@@ -14904,6 +15332,7 @@ export function registerImageNodes() {
     Oil2ToolNode: Oil2ToolNode as unknown as NodeCtor,
     Oil3ToolNode: Oil3ToolNode as unknown as NodeCtor,
     LinesToolNode: LinesToolNode as unknown as NodeCtor,
+    DotsToolNode: DotsToolNode as unknown as NodeCtor,
     AsciifyToolNode: AsciifyToolNode as unknown as NodeCtor,
     SketchToolNode: SketchToolNode as unknown as NodeCtor,
     DelanoyToolNode: DelanoyToolNode as unknown as NodeCtor,

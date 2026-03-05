@@ -33,6 +33,7 @@ export const nodePalette: NodePaletteItem[] = [
   { type: "tools/art/oil2", category: "art", glyph: "O2", shortLabel: "Oil2", tooltip: "OIL2: portrait painter a pennellate curve multi-layer (stile p5), con output raster + SVG." },
   { type: "tools/art/oil3", category: "art", glyph: "O3", shortLabel: "Oil3", tooltip: "OIL3: variante painter basata su oilp5.2, con step/rotazione/dettagli parametrizzabili (output raster + SVG)." },
   { type: "tools/art/lines", category: "art", glyph: "LIN", shortLabel: "Lines", tooltip: "LINES: field di linee orizzontali deformate dalla luminanza immagine, con controlli su interlinea, punti, ampiezza e zoom/pan (output raster + SVG)." },
+  { type: "tools/art/dots", category: "art", glyph: "DOT", shortLabel: "Dots", tooltip: "DOTS: griglia di cerchi colorati campionati dall'immagine (stile p5 dots), con controllo tile/diametro/sfondo (output raster + SVG)." },
   { type: "tools/art/asciify", category: "art", glyph: "ASC", shortLabel: "Ascii", tooltip: "ASCIIFY: converte immagine in ASCII art con output raster, SVG e testo." },
   { type: "tools/art/sketch", category: "art", glyph: "SKT", shortLabel: "Sketch", tooltip: "SKETCH: tratteggio progressivo basato sulle aree piu scure (darkest squiggles), ottimizzato con preset FAST/NORMAL/SLOW e output raster+SVG." },
   { type: "tools/art/delanoy", category: "art", glyph: "DEL", shortLabel: "Delanoy", tooltip: "DELANOY: triangolazione Delaunay su griglia e render wireframe (output raster+SVG)." },
