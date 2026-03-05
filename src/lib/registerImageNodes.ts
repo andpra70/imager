@@ -150,6 +150,10 @@ interface C2DelaunayCtor {
   new (): C2DelaunayInstance;
 }
 
+interface C2PointCtor {
+  new (x: number, y: number): C2PointLike;
+}
+
 interface Ml5ModelLike {
   detect?: (input: CanvasImageSource, callback?: (result: unknown) => void) => unknown;
   predict?: (input: CanvasImageSource, callback?: (result: unknown) => void) => unknown;
@@ -1362,17 +1366,19 @@ function getMarchingSquares() {
   return marchingSquaresRuntime as MarchingSquaresFn;
 }
 
-function getC2DelaunayCtor() {
+function getC2Runtime() {
   const runtime = globalThis as {
     c2?: {
+      Point?: C2PointCtor;
       Delaunay?: C2DelaunayCtor;
     };
   };
-  const ctor = runtime.c2?.Delaunay;
-  if (!ctor) {
+  const pointCtor = runtime.c2?.Point;
+  const delaunayCtor = runtime.c2?.Delaunay;
+  if (!pointCtor || !delaunayCtor) {
     throw new Error("c2 Delaunay runtime is not available.");
   }
-  return ctor;
+  return { PointCtor: pointCtor, DelaunayCtor: delaunayCtor };
 }
 
 function yieldToUi() {
@@ -1499,6 +1505,15 @@ function formatImageErrorMetrics(mse: number | null, psnr: number | null) {
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
+}
+
+function escapeXmlText(value: string) {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
 }
 
 function computeImageErrorMetrics(
@@ -3243,11 +3258,40 @@ interface Linefy2Result {
   height: number;
 }
 
+interface SketchResult {
+  svg: GraphSvg;
+  preview: GraphImage;
+  pathCount: number;
+  width: number;
+  height: number;
+}
+
+interface AsciifyResult {
+  svg: GraphSvg;
+  preview: GraphImage;
+  text: string;
+  rowCount: number;
+  colCount: number;
+  width: number;
+  height: number;
+}
+
 interface DelanoyResult {
   svg: GraphSvg;
   preview: GraphImage;
   edgeCount: number;
   pointCount: number;
+  triangleCount: number;
+  width: number;
+  height: number;
+}
+
+interface Delanoy2Result {
+  svg: GraphSvg;
+  preview: GraphImage;
+  circleCount: number;
+  pointCount: number;
+  triangleCount: number;
   width: number;
   height: number;
 }
@@ -3903,6 +3947,8 @@ async function generateDelanoySvg(
     lineWidth: number;
     lineColor: string;
     backgroundColor: string;
+    renderMode: "wireframe" | "fill" | "both";
+    fillOpacity: number;
   },
   shouldCancel?: () => boolean,
   onProgress?: (progress: number, status: string) => void,
@@ -3918,6 +3964,7 @@ async function generateDelanoySvg(
   const jitter = clamp(options.jitter, 0, 1);
   const rng = createSeededRandom(1337 + width * 31 + height * 17 + gridCells * 13);
 
+  const { PointCtor, DelaunayCtor } = getC2Runtime();
   const points: C2PointLike[] = [];
   for (let y = 0; y < rows; y += 1) {
     const baseY = y * cellHeight;
@@ -3925,7 +3972,7 @@ async function generateDelanoySvg(
       const baseX = x * cellWidth;
       const px = clamp(baseX + (rng() - 0.5) * cellWidth * jitter, 0, width - 1);
       const py = clamp(baseY + (rng() - 0.5) * cellHeight * jitter, 0, height - 1);
-      points.push({ x: px, y: py });
+      points.push(new PointCtor(px, py));
     }
     if (y % 8 === 0) {
       onProgress?.((y + 1) / (rows + 4), "sampling points");
@@ -3936,7 +3983,6 @@ async function generateDelanoySvg(
     }
   }
 
-  const DelaunayCtor = getC2DelaunayCtor();
   const delaunay = new DelaunayCtor();
   delaunay.compute(points);
   if (shouldCancel?.()) {
@@ -3944,12 +3990,21 @@ async function generateDelanoySvg(
   }
 
   const edges = delaunay.edges ?? [];
+  const triangles = delaunay.triangles ?? [];
+  const sourceContext = source.getContext("2d", { willReadFrequently: true });
+  if (!sourceContext) {
+    throw new Error("2D context not available.");
+  }
+  const sourceData = sourceContext.getImageData(0, 0, width, height);
+  const grayMap = createGrayMapFromImageData(sourceData);
   const scale = clamp(options.scale, 1, 8);
   const outWidth = Math.max(1, Math.round(width * scale));
   const outHeight = Math.max(1, Math.round(height * scale));
   const lineWidth = Math.max(0.1, options.lineWidth);
   const lineColor = normalizeHexColor(options.lineColor);
   const backgroundColor = normalizeHexColor(options.backgroundColor);
+  const fillOpacity = clamp(options.fillOpacity, 0, 1);
+  const renderMode = options.renderMode;
 
   const preview = document.createElement("canvas");
   preview.width = outWidth;
@@ -3965,23 +4020,202 @@ async function generateDelanoySvg(
   previewContext.lineCap = "round";
   previewContext.lineJoin = "round";
 
-  const svgLines: string[] = [];
-  for (let index = 0; index < edges.length; index += 1) {
-    const edge = edges[index];
-    const x1 = clamp(edge.p1.x * scale, 0, outWidth - 1);
-    const y1 = clamp(edge.p1.y * scale, 0, outHeight - 1);
-    const x2 = clamp(edge.p2.x * scale, 0, outWidth - 1);
-    const y2 = clamp(edge.p2.y * scale, 0, outHeight - 1);
-    previewContext.beginPath();
-    previewContext.moveTo(x1, y1);
-    previewContext.lineTo(x2, y2);
-    previewContext.stroke();
-    svgLines.push(
-      `<line x1="${x1.toFixed(2)}" y1="${y1.toFixed(2)}" x2="${x2.toFixed(2)}" y2="${y2.toFixed(2)}"/>`,
-    );
+  const svgPolygons: string[] = [];
+  if (renderMode === "fill" || renderMode === "both") {
+    for (let index = 0; index < triangles.length; index += 1) {
+      const triangle = triangles[index];
+      const ax = clamp(triangle.p1.x, 0, width - 1);
+      const ay = clamp(triangle.p1.y, 0, height - 1);
+      const bx = clamp(triangle.p2.x, 0, width - 1);
+      const by = clamp(triangle.p2.y, 0, height - 1);
+      const cx = clamp(triangle.p3.x, 0, width - 1);
+      const cy = clamp(triangle.p3.y, 0, height - 1);
+      const centroidX = clamp(Math.round((ax + bx + cx) / 3), 0, width - 1);
+      const centroidY = clamp(Math.round((ay + by + cy) / 3), 0, height - 1);
+      const gray = Math.round(grayMap[centroidY * width + centroidX]);
+      const fillColor = `rgb(${gray}, ${gray}, ${gray})`;
 
-    if (index % 1500 === 0 || index === edges.length - 1) {
-      onProgress?.((rows + 1 + (index + 1) / Math.max(1, edges.length) * 3) / (rows + 4), "drawing edges");
+      const x1 = ax * scale;
+      const y1 = ay * scale;
+      const x2 = bx * scale;
+      const y2 = by * scale;
+      const x3 = cx * scale;
+      const y3 = cy * scale;
+
+      previewContext.save();
+      previewContext.globalAlpha = fillOpacity;
+      previewContext.fillStyle = fillColor;
+      previewContext.beginPath();
+      previewContext.moveTo(x1, y1);
+      previewContext.lineTo(x2, y2);
+      previewContext.lineTo(x3, y3);
+      previewContext.closePath();
+      previewContext.fill();
+      previewContext.restore();
+
+      svgPolygons.push(
+        `<polygon points="${x1.toFixed(2)},${y1.toFixed(2)} ${x2.toFixed(2)},${y2.toFixed(2)} ${x3.toFixed(2)},${y3.toFixed(2)}" fill="${fillColor}" fill-opacity="${fillOpacity.toFixed(4)}"/>`,
+      );
+
+      if (index % 1200 === 0 || index === triangles.length - 1) {
+        onProgress?.((rows + 1 + (index + 1) / Math.max(1, triangles.length) * 2) / (rows + 4), "filling triangles");
+        onPreview?.(preview);
+        await yieldToUi();
+        if (shouldCancel?.()) {
+          return null;
+        }
+      }
+    }
+  }
+
+  const svgLines: string[] = [];
+  if (renderMode === "wireframe" || renderMode === "both") {
+    for (let index = 0; index < edges.length; index += 1) {
+      const edge = edges[index];
+      const x1 = clamp(edge.p1.x * scale, 0, outWidth - 1);
+      const y1 = clamp(edge.p1.y * scale, 0, outHeight - 1);
+      const x2 = clamp(edge.p2.x * scale, 0, outWidth - 1);
+      const y2 = clamp(edge.p2.y * scale, 0, outHeight - 1);
+      previewContext.beginPath();
+      previewContext.moveTo(x1, y1);
+      previewContext.lineTo(x2, y2);
+      previewContext.stroke();
+      svgLines.push(
+        `<line x1="${x1.toFixed(2)}" y1="${y1.toFixed(2)}" x2="${x2.toFixed(2)}" y2="${y2.toFixed(2)}"/>`,
+      );
+
+      if (index % 1500 === 0 || index === edges.length - 1) {
+        onProgress?.((rows + 1 + (index + 1) / Math.max(1, edges.length) * 3) / (rows + 4), "drawing edges");
+        onPreview?.(preview);
+        await yieldToUi();
+        if (shouldCancel?.()) {
+          return null;
+        }
+      }
+    }
+  }
+
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${outWidth}" height="${outHeight}" viewBox="0 0 ${outWidth} ${outHeight}"><rect width="100%" height="100%" fill="${backgroundColor}"/>${svgPolygons.join("")}<g stroke="${lineColor}" stroke-width="${lineWidth}" stroke-linecap="round" stroke-linejoin="round">${svgLines.join("")}</g></svg>`;
+  return {
+    svg,
+    preview,
+    edgeCount: edges.length,
+    pointCount: points.length,
+    triangleCount: triangles.length,
+    width: outWidth,
+    height: outHeight,
+  };
+}
+
+async function generateDelanoy2Svg(
+  input: GraphImage,
+  options: {
+    maxWidth: number;
+    gridCells: number;
+    jitter: number;
+    scale: number;
+    lineWidth: number;
+    lineColor: string;
+    backgroundColor: string;
+    radiusScale: number;
+    radiusMode: "vertex" | "inradius";
+  },
+  shouldCancel?: () => boolean,
+  onProgress?: (progress: number, status: string) => void,
+  onPreview?: (preview: GraphImage) => void,
+): Promise<Delanoy2Result | null> {
+  const source = fitSourceToMaxWidthCanvas(input, options.maxWidth);
+  const width = source.width;
+  const height = source.height;
+  const gridCells = clamp(Math.round(options.gridCells), 6, 220);
+  const cellWidth = width / gridCells;
+  const rows = Math.max(6, Math.round(height / cellWidth));
+  const cellHeight = height / rows;
+  const jitter = clamp(options.jitter, 0, 1);
+  const rng = createSeededRandom(8249 + width * 29 + height * 19 + gridCells * 11);
+
+  const { PointCtor, DelaunayCtor } = getC2Runtime();
+  const points: C2PointLike[] = [];
+  for (let y = 0; y < rows; y += 1) {
+    const baseY = y * cellHeight;
+    for (let x = 0; x < gridCells; x += 1) {
+      const baseX = x * cellWidth;
+      const px = clamp(baseX + (0.5 + (rng() - 0.5) * jitter) * cellWidth, 0, width - 1);
+      const py = clamp(baseY + (0.5 + (rng() - 0.5) * jitter) * cellHeight, 0, height - 1);
+      points.push(new PointCtor(px, py));
+    }
+    if (y % 8 === 0) {
+      onProgress?.((y + 1) / (rows + 3), "sampling points");
+      await yieldToUi();
+      if (shouldCancel?.()) {
+        return null;
+      }
+    }
+  }
+
+  const delaunay = new DelaunayCtor();
+  delaunay.compute(points);
+  if (shouldCancel?.()) {
+    return null;
+  }
+  const triangles = delaunay.triangles ?? [];
+
+  const scale = clamp(options.scale, 1, 8);
+  const outWidth = Math.max(1, Math.round(width * scale));
+  const outHeight = Math.max(1, Math.round(height * scale));
+  const lineWidth = Math.max(0.1, options.lineWidth);
+  const lineColor = normalizeHexColor(options.lineColor);
+  const backgroundColor = normalizeHexColor(options.backgroundColor);
+  const radiusScale = clamp(options.radiusScale, 0.1, 3);
+  const radiusMode = options.radiusMode;
+
+  const preview = document.createElement("canvas");
+  preview.width = outWidth;
+  preview.height = outHeight;
+  const previewContext = preview.getContext("2d");
+  if (!previewContext) {
+    throw new Error("2D context not available.");
+  }
+  previewContext.fillStyle = backgroundColor;
+  previewContext.fillRect(0, 0, outWidth, outHeight);
+  previewContext.strokeStyle = lineColor;
+  previewContext.lineWidth = lineWidth;
+  previewContext.lineCap = "round";
+  previewContext.lineJoin = "round";
+
+  const svgCircles: string[] = [];
+  let circleCount = 0;
+  for (let index = 0; index < triangles.length; index += 1) {
+    const triangle = triangles[index];
+    const ax = triangle.p1.x;
+    const ay = triangle.p1.y;
+    const bx = triangle.p2.x;
+    const by = triangle.p2.y;
+    const cx = triangle.p3.x;
+    const cy = triangle.p3.y;
+
+    const centerX = (ax + bx + cx) / 3;
+    const centerY = (ay + by + cy) / 3;
+    const d1 = Math.hypot(centerX - ax, centerY - ay);
+    const d2 = Math.hypot(centerX - bx, centerY - by);
+    const d3 = Math.hypot(centerX - cx, centerY - cy);
+    const area2 = Math.abs((bx - ax) * (cy - ay) - (by - ay) * (cx - ax));
+    const perimeter = Math.hypot(ax - bx, ay - by) + Math.hypot(bx - cx, by - cy) + Math.hypot(cx - ax, cy - ay);
+    const inradius = perimeter > 1e-6 ? area2 / perimeter : 0;
+
+    const baseRadius = radiusMode === "inradius" ? inradius : (d1 + d2 + d3) / 3;
+    const radius = Math.max(0.15, baseRadius * radiusScale) * scale;
+    const x = clamp(centerX * scale, 0, outWidth - 1);
+    const y = clamp(centerY * scale, 0, outHeight - 1);
+
+    previewContext.beginPath();
+    previewContext.arc(x, y, radius, 0, Math.PI * 2);
+    previewContext.stroke();
+    svgCircles.push(`<circle cx="${x.toFixed(2)}" cy="${y.toFixed(2)}" r="${radius.toFixed(2)}" fill="none"/>`);
+    circleCount += 1;
+
+    if (index % 1200 === 0 || index === triangles.length - 1) {
+      onProgress?.((rows + 1 + (index + 1) / Math.max(1, triangles.length) * 2) / (rows + 3), "drawing circles");
       onPreview?.(preview);
       await yieldToUi();
       if (shouldCancel?.()) {
@@ -3990,14 +4224,465 @@ async function generateDelanoySvg(
     }
   }
 
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${outWidth}" height="${outHeight}" viewBox="0 0 ${outWidth} ${outHeight}"><rect width="100%" height="100%" fill="${backgroundColor}"/><g stroke="${lineColor}" stroke-width="${lineWidth}" stroke-linecap="round" stroke-linejoin="round">${svgLines.join("")}</g></svg>`;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${outWidth}" height="${outHeight}" viewBox="0 0 ${outWidth} ${outHeight}"><rect width="100%" height="100%" fill="${backgroundColor}"/><g stroke="${lineColor}" stroke-width="${lineWidth}" stroke-linecap="round" stroke-linejoin="round">${svgCircles.join("")}</g></svg>`;
   return {
     svg,
     preview,
-    edgeCount: edges.length,
+    circleCount,
     pointCount: points.length,
+    triangleCount: triangles.length,
     width: outWidth,
     height: outHeight,
+  };
+}
+
+async function generateSketchSvg(
+  input: GraphImage,
+  options: {
+    maxWidth: number;
+    lineLimit: number;
+    squiggleMaxLength: number;
+    gridCells: number;
+    darkestAreaCandidates: number;
+    lineWidth: number;
+    lineAlpha: number;
+    simplifyTolerance: number;
+    lightenStep: number;
+    refreshEvery: number;
+  },
+  shouldCancel?: () => boolean,
+  onProgress?: (progress: number, status: string) => void,
+  onPreview?: (preview: GraphImage) => void,
+): Promise<SketchResult | null> {
+  const source = fitSourceToMaxWidthCanvas(input, options.maxWidth);
+  const width = source.width;
+  const height = source.height;
+  const context = source.getContext("2d", { willReadFrequently: true });
+  if (!context) {
+    throw new Error("2D context not available.");
+  }
+  const imageData = context.getImageData(0, 0, width, height);
+  const data = imageData.data;
+  const pixelCount = width * height;
+  const luminance = new Float32Array(pixelCount);
+  for (let index = 0, pixel = 0; pixel < pixelCount; index += 4, pixel += 1) {
+    luminance[pixel] = 0.299 * data[index] + 0.587 * data[index + 1] + 0.114 * data[index + 2];
+  }
+
+  const gridCols = clamp(Math.round(options.gridCells), 8, 400);
+  const gridRows = Math.max(8, Math.round((height / width) * gridCols));
+  const cellWidth = width / gridCols;
+  const cellHeight = height / gridRows;
+  const gridCount = gridCols * gridRows;
+  const gridAverage = new Float32Array(gridCount);
+  const gridPixelCount = new Uint32Array(gridCount);
+  for (let y = 0; y < height; y += 1) {
+    const gy = clamp(Math.floor(y / cellHeight), 0, gridRows - 1);
+    for (let x = 0; x < width; x += 1) {
+      const gx = clamp(Math.floor(x / cellWidth), 0, gridCols - 1);
+      const cellIndex = gy * gridCols + gx;
+      gridAverage[cellIndex] += luminance[y * width + x];
+      gridPixelCount[cellIndex] += 1;
+    }
+  }
+  for (let index = 0; index < gridCount; index += 1) {
+    const count = gridPixelCount[index];
+    gridAverage[index] = count > 0 ? gridAverage[index] / count : 255;
+  }
+
+  const recomputeCellAverage = (cellIndex: number) => {
+    const gx = cellIndex % gridCols;
+    const gy = Math.floor(cellIndex / gridCols);
+    const left = Math.floor(gx * cellWidth);
+    const top = Math.floor(gy * cellHeight);
+    const right = Math.min(width, Math.ceil((gx + 1) * cellWidth));
+    const bottom = Math.min(height, Math.ceil((gy + 1) * cellHeight));
+    let sum = 0;
+    let count = 0;
+    for (let y = top; y < bottom; y += 1) {
+      let index = y * width + left;
+      for (let x = left; x < right; x += 1) {
+        sum += luminance[index];
+        index += 1;
+        count += 1;
+      }
+    }
+    gridAverage[cellIndex] = count > 0 ? sum / count : 255;
+  };
+
+  const findDarkestCell = () => {
+    const candidates = clamp(Math.round(options.darkestAreaCandidates), 1, 12);
+    const bestIndices = new Int32Array(candidates);
+    const bestValues = new Float32Array(candidates);
+    bestIndices.fill(-1);
+    bestValues.fill(256);
+    for (let index = 0; index < gridCount; index += 1) {
+      const value = gridAverage[index];
+      for (let rank = 0; rank < candidates; rank += 1) {
+        if (value >= bestValues[rank]) {
+          continue;
+        }
+        for (let shift = candidates - 1; shift > rank; shift -= 1) {
+          bestValues[shift] = bestValues[shift - 1];
+          bestIndices[shift] = bestIndices[shift - 1];
+        }
+        bestValues[rank] = value;
+        bestIndices[rank] = index;
+        break;
+      }
+    }
+    const picked = bestIndices[0];
+    return picked >= 0 ? picked : 0;
+  };
+
+  const findDarkestPixelInCell = (cellIndex: number) => {
+    const gx = cellIndex % gridCols;
+    const gy = Math.floor(cellIndex / gridCols);
+    const left = Math.floor(gx * cellWidth);
+    const top = Math.floor(gy * cellHeight);
+    const right = Math.min(width, Math.ceil((gx + 1) * cellWidth));
+    const bottom = Math.min(height, Math.ceil((gy + 1) * cellHeight));
+    let bestX = left;
+    let bestY = top;
+    let bestLuma = 255;
+    for (let y = top; y < bottom; y += 1) {
+      let index = y * width + left;
+      for (let x = left; x < right; x += 1) {
+        const value = luminance[index];
+        if (value < bestLuma) {
+          bestLuma = value;
+          bestX = x;
+          bestY = y;
+        }
+        index += 1;
+      }
+    }
+    return { x: bestX, y: bestY, luminance: bestLuma };
+  };
+
+  const simplifyFn = options.simplifyTolerance > 0 ? getSimplify() : null;
+  const lineLimit = clamp(Math.round(options.lineLimit), 1, 12000);
+  const squiggleMaxLength = clamp(Math.round(options.squiggleMaxLength), 8, 12000);
+  const lineWidth = clamp(options.lineWidth, 0.1, 20);
+  const lineAlpha = clamp(options.lineAlpha, 0.01, 1);
+  const lightenStep = clamp(Math.round(options.lightenStep), 1, 255);
+  const refreshEvery = clamp(Math.round(options.refreshEvery), 4, 256);
+  const brushRadius = Math.max(0, Math.round(lineWidth * 0.5));
+
+  const preview = document.createElement("canvas");
+  preview.width = width;
+  preview.height = height;
+  const previewContext = preview.getContext("2d");
+  if (!previewContext) {
+    throw new Error("2D context not available.");
+  }
+  previewContext.fillStyle = "#FFFFFF";
+  previewContext.fillRect(0, 0, width, height);
+  previewContext.strokeStyle = "#000000";
+  previewContext.lineWidth = lineWidth;
+  previewContext.lineCap = "round";
+  previewContext.lineJoin = "round";
+  previewContext.globalAlpha = lineAlpha;
+
+  const visitedStamp = new Int32Array(pixelCount);
+  let stamp = 0;
+  const dX = [-1, -1, 1, 1, -1, 1, 0, 0];
+  const dY = [-1, 0, -1, 0, 1, 1, -1, 1];
+  const svgPaths: string[] = [];
+  let pathCount = 0;
+  let lastYieldTime = performance.now();
+
+  for (let lineIndex = 0; lineIndex < lineLimit; lineIndex += 1) {
+    if (shouldCancel?.()) {
+      return null;
+    }
+    const darkestCell = findDarkestCell();
+    const start = findDarkestPixelInCell(darkestCell);
+    if (start.luminance > 245) {
+      break;
+    }
+
+    stamp += 1;
+    const rawPath: Array<{ x: number; y: number }> = [{ x: start.x, y: start.y }];
+    visitedStamp[start.y * width + start.x] = stamp;
+    let cursorX = start.x;
+    let cursorY = start.y;
+
+    for (let step = 1; step < squiggleMaxLength; step += 1) {
+      let bestNeighborX = -1;
+      let bestNeighborY = -1;
+      let bestNeighborLuma = 256;
+      for (let dir = 0; dir < 8; dir += 1) {
+        const nx = cursorX + dX[dir];
+        const ny = cursorY + dY[dir];
+        if (nx < 0 || ny < 0 || nx >= width || ny >= height) {
+          continue;
+        }
+        const nIndex = ny * width + nx;
+        if (visitedStamp[nIndex] === stamp) {
+          continue;
+        }
+        const value = luminance[nIndex];
+        if (value < bestNeighborLuma) {
+          bestNeighborLuma = value;
+          bestNeighborX = nx;
+          bestNeighborY = ny;
+        }
+      }
+      if (bestNeighborX < 0 || bestNeighborY < 0) {
+        break;
+      }
+      cursorX = bestNeighborX;
+      cursorY = bestNeighborY;
+      visitedStamp[cursorY * width + cursorX] = stamp;
+      rawPath.push({ x: cursorX, y: cursorY });
+    }
+
+    if (rawPath.length < 2) {
+      continue;
+    }
+
+    const pathRaw =
+      simplifyFn && options.simplifyTolerance > 0 && rawPath.length > 2
+        ? simplifyFn(rawPath, options.simplifyTolerance, true)
+        : rawPath;
+    const hasInvalidSimplifiedPoint = pathRaw.some((point) =>
+      !Number.isFinite(point.x) ||
+      !Number.isFinite(point.y) ||
+      point.x < 0 ||
+      point.y < 0 ||
+      point.x >= width ||
+      point.y >= height,
+    );
+    const sourcePath = hasInvalidSimplifiedPoint ? rawPath : pathRaw;
+    const sanitizedPath = sourcePath.filter((point) =>
+      Number.isFinite(point.x) &&
+      Number.isFinite(point.y) &&
+      point.x >= 0 &&
+      point.y >= 0 &&
+      point.x < width &&
+      point.y < height,
+    );
+    const path: Array<{ x: number; y: number }> = [];
+    for (let i = 0; i < sanitizedPath.length; i += 1) {
+      const point = sanitizedPath[i];
+      const prev = path[path.length - 1];
+      if (prev && Math.abs(prev.x - point.x) < 1e-6 && Math.abs(prev.y - point.y) < 1e-6) {
+        continue;
+      }
+      path.push(point);
+    }
+    if (path.length < 2) {
+      continue;
+    }
+
+    const maxPenDownDistance = 64;
+    const subpaths: Array<Array<{ x: number; y: number }>> = [];
+    let currentSubpath: Array<{ x: number; y: number }> = [path[0]];
+    for (let i = 1; i < path.length; i += 1) {
+      const prev = path[i - 1];
+      const point = path[i];
+      const dx = point.x - prev.x;
+      const dy = point.y - prev.y;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+      if (distance > maxPenDownDistance) {
+        if (currentSubpath.length >= 2) {
+          subpaths.push(currentSubpath);
+        }
+        currentSubpath = [point];
+        continue;
+      }
+      currentSubpath.push(point);
+    }
+    if (currentSubpath.length >= 2) {
+      subpaths.push(currentSubpath);
+    }
+
+    const touchedCells = new Set<number>();
+    for (let subpathIndex = 0; subpathIndex < subpaths.length; subpathIndex += 1) {
+      const subpath = subpaths[subpathIndex];
+      previewContext.beginPath();
+      previewContext.moveTo(subpath[0].x, subpath[0].y);
+      for (let i = 1; i < subpath.length; i += 1) {
+        previewContext.lineTo(subpath[i].x, subpath[i].y);
+      }
+      previewContext.stroke();
+
+      for (let i = 1; i < subpath.length; i += 1) {
+        const a = subpath[i - 1];
+        const b = subpath[i];
+        walkLineBresenham(
+          Math.round(a.x),
+          Math.round(a.y),
+          Math.round(b.x),
+          Math.round(b.y),
+          width,
+          height,
+          (pixelIndex) => {
+            const px = pixelIndex % width;
+            const py = Math.floor(pixelIndex / width);
+            const applyLighten = (tx: number, ty: number) => {
+              if (tx < 0 || ty < 0 || tx >= width || ty >= height) {
+                return;
+              }
+              const targetIndex = ty * width + tx;
+              const current = luminance[targetIndex];
+              const next = Math.min(255, current + lightenStep);
+              if (next <= current) {
+                return;
+              }
+              luminance[targetIndex] = next;
+              const gx = clamp(Math.floor(tx / cellWidth), 0, gridCols - 1);
+              const gy = clamp(Math.floor(ty / cellHeight), 0, gridRows - 1);
+              touchedCells.add(gy * gridCols + gx);
+            };
+            applyLighten(px, py);
+            if (brushRadius > 0) {
+              for (let oy = -brushRadius; oy <= brushRadius; oy += 1) {
+                for (let ox = -brushRadius; ox <= brushRadius; ox += 1) {
+                  if (ox * ox + oy * oy > brushRadius * brushRadius) {
+                    continue;
+                  }
+                  applyLighten(px + ox, py + oy);
+                }
+              }
+            }
+          },
+        );
+      }
+
+      const d =
+        `M${subpath[0].x.toFixed(2)},${subpath[0].y.toFixed(2)} ` +
+        subpath
+          .slice(1)
+          .map((point) => `L${point.x.toFixed(2)},${point.y.toFixed(2)}`)
+          .join(" ");
+      svgPaths.push(`<path d="${d}"/>`);
+    }
+
+    touchedCells.forEach((cellIndex) => {
+      recomputeCellAverage(cellIndex);
+    });
+    pathCount += subpaths.length;
+
+    const progress = (lineIndex + 1) / lineLimit;
+    onProgress?.(progress, `line ${lineIndex + 1}/${lineLimit}`);
+    if ((lineIndex + 1) % refreshEvery === 0 || lineIndex + 1 === lineLimit) {
+      onPreview?.(preview);
+    }
+    if (performance.now() - lastYieldTime > 12) {
+      await yieldToUi();
+      lastYieldTime = performance.now();
+    }
+  }
+
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><rect width="100%" height="100%" fill="#FFFFFF"/><g fill="none" stroke="#000000" stroke-width="${lineWidth}" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="${lineAlpha.toFixed(4)}">${svgPaths.join("")}</g></svg>`;
+  onProgress?.(1, "ready");
+  return { svg, preview, pathCount, width, height };
+}
+
+async function generateAsciifyOutput(
+  input: GraphImage,
+  options: {
+    maxWidth: number;
+    columns: number;
+    fontScale: number;
+    charAspect: number;
+    charset: string;
+    invert: boolean;
+    foregroundColor: string;
+    backgroundColor: string;
+    refreshEvery: number;
+  },
+  shouldCancel?: () => boolean,
+  onProgress?: (progress: number, status: string) => void,
+  onPreview?: (preview: GraphImage) => void,
+): Promise<AsciifyResult | null> {
+  const source = fitSourceToMaxWidthCanvas(input, options.maxWidth);
+  const width = source.width;
+  const height = source.height;
+  const sourceContext = source.getContext("2d", { willReadFrequently: true });
+  if (!sourceContext) {
+    throw new Error("2D context not available.");
+  }
+
+  const safeColumns = clamp(Math.round(options.columns), 16, 800);
+  const safeCharAspect = clamp(options.charAspect, 0.25, 2);
+  const rows = Math.max(8, Math.round((height / width) * safeColumns / safeCharAspect));
+  const sampleCanvas = document.createElement("canvas");
+  sampleCanvas.width = safeColumns;
+  sampleCanvas.height = rows;
+  const sampleContext = sampleCanvas.getContext("2d", { willReadFrequently: true });
+  if (!sampleContext) {
+    throw new Error("2D context not available.");
+  }
+  sampleContext.drawImage(source, 0, 0, width, height, 0, 0, safeColumns, rows);
+  const sampleData = sampleContext.getImageData(0, 0, safeColumns, rows).data;
+
+  const charset = options.charset.length > 0 ? options.charset : "@%#{}[]()<>^*+=~-:. ";
+  const cellWidth = width / safeColumns;
+  const cellHeight = height / rows;
+  const fontSize = Math.max(1, cellHeight * clamp(options.fontScale, 0.4, 2.2));
+  const foregroundColor = normalizeHexColor(options.foregroundColor);
+  const backgroundColor = normalizeHexColor(options.backgroundColor);
+  const refreshEvery = clamp(Math.round(options.refreshEvery), 1, 128);
+
+  const preview = document.createElement("canvas");
+  preview.width = width;
+  preview.height = height;
+  const previewContext = preview.getContext("2d");
+  if (!previewContext) {
+    throw new Error("2D context not available.");
+  }
+  previewContext.fillStyle = backgroundColor;
+  previewContext.fillRect(0, 0, width, height);
+  previewContext.fillStyle = foregroundColor;
+  previewContext.font = `${fontSize}px monospace`;
+  previewContext.textBaseline = "top";
+
+  const lines: string[] = new Array(rows);
+  const svgRows: string[] = [];
+  for (let y = 0; y < rows; y += 1) {
+    if (shouldCancel?.()) {
+      return null;
+    }
+    let textLine = "";
+    for (let x = 0; x < safeColumns; x += 1) {
+      const index = (y * safeColumns + x) * 4;
+      const r = sampleData[index];
+      const g = sampleData[index + 1];
+      const b = sampleData[index + 2];
+      const luminance = clamp(Math.round(0.299 * r + 0.587 * g + 0.114 * b), 0, 255);
+      const normalized = options.invert ? 1 - luminance / 255 : luminance / 255;
+      const charIndex = clamp(Math.floor(normalized * (charset.length - 1)), 0, charset.length - 1);
+      textLine += charset[charIndex];
+    }
+    lines[y] = textLine;
+    previewContext.fillText(textLine, 0, y * cellHeight);
+    svgRows.push(
+      `<text x="0" y="${(y * cellHeight).toFixed(2)}">${escapeXmlText(textLine)}</text>`,
+    );
+
+    const progress = (y + 1) / rows;
+    onProgress?.(progress, `row ${y + 1}/${rows}`);
+    if ((y + 1) % refreshEvery === 0 || y + 1 === rows) {
+      onPreview?.(preview);
+    }
+    if ((y + 1) % 8 === 0) {
+      await yieldToUi();
+    }
+  }
+
+  const text = lines.join("\n");
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><rect width="100%" height="100%" fill="${backgroundColor}"/><g fill="${foregroundColor}" font-family="monospace" font-size="${fontSize.toFixed(2)}" xml:space="preserve">${svgRows.join("")}</g></svg>`;
+  return {
+    svg,
+    preview,
+    text,
+    rowCount: rows,
+    colCount: safeColumns,
+    width,
+    height,
   };
 }
 
@@ -9055,6 +9740,7 @@ class DelanoyToolNode {
   progress = 0;
   pointCount = 0;
   edgeCount = 0;
+  triangleCount = 0;
   outputWidth = 0;
   outputHeight = 0;
   isRendering = false;
@@ -9074,6 +9760,8 @@ class DelanoyToolNode {
       lineWidth: 1,
       lineColor: "#000000",
       backgroundColor: "#FFFFFF",
+      renderMode: "wireframe",
+      fillOpacity: 0.9,
     };
     node.addInput("image", "image");
     node.addOutput("image", "image");
@@ -9098,6 +9786,16 @@ class DelanoyToolNode {
       node.properties.lineWidth = Number(value);
       notifyGraphStateChange(node);
     }, { min: 0.1, max: 8, step: 0.1, precision: 1 });
+    node.addWidget("combo", "Render", "wireframe", (value) => {
+      const mode = String(value);
+      node.properties.renderMode =
+        mode === "fill" || mode === "both" ? mode : "wireframe";
+      notifyGraphStateChange(node);
+    }, { values: ["wireframe", "fill", "both"] });
+    node.addWidget("slider", "Fill alpha", 0.9, (value) => {
+      node.properties.fillOpacity = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0, max: 1, step: 0.01, precision: 2 });
     node.addWidget("text", "Line color", "#000000", (value) => {
       node.properties.lineColor = normalizeHexColor(String(value));
       notifyGraphStateChange(node);
@@ -9122,6 +9820,7 @@ class DelanoyToolNode {
       this.progress = 0;
       this.pointCount = 0;
       this.edgeCount = 0;
+      this.triangleCount = 0;
       this.outputWidth = 0;
       this.outputHeight = 0;
       this.executionMs = null;
@@ -9142,6 +9841,13 @@ class DelanoyToolNode {
       lineWidth: clamp(Number(this.properties.lineWidth ?? 1), 0.1, 8),
       lineColor: normalizeHexColor(String(this.properties.lineColor ?? "#000000")),
       backgroundColor: normalizeHexColor(String(this.properties.backgroundColor ?? "#FFFFFF")),
+      renderMode:
+        String(this.properties.renderMode ?? "wireframe") === "fill"
+          ? "fill" as const
+          : String(this.properties.renderMode ?? "wireframe") === "both"
+            ? "both" as const
+            : "wireframe" as const,
+      fillOpacity: clamp(Number(this.properties.fillOpacity ?? 0.9), 0, 1),
     };
     const signature = getGraphImageSignature(input);
     const optionsSignature = JSON.stringify(options);
@@ -9185,6 +9891,7 @@ class DelanoyToolNode {
           this.svg = result.svg;
           this.edgeCount = result.edgeCount;
           this.pointCount = result.pointCount;
+          this.triangleCount = result.triangleCount;
           this.outputWidth = result.width;
           this.outputHeight = result.height;
           this.progress = 1;
@@ -9201,6 +9908,7 @@ class DelanoyToolNode {
           this.svg = null;
           this.edgeCount = 0;
           this.pointCount = 0;
+          this.triangleCount = 0;
           this.outputWidth = 0;
           this.outputHeight = 0;
           this.progress = 0;
@@ -9223,11 +9931,789 @@ class DelanoyToolNode {
     context.font = "12px sans-serif";
     context.fillText(`${this.status}${this.isRendering ? "..." : ""}`, 10, layout.footerTop + 12);
     context.fillText(
-      `progress ${Math.round(this.progress * 100)}% | points ${this.pointCount} | edges ${this.edgeCount}`,
+      `progress ${Math.round(this.progress * 100)}% | points ${this.pointCount} | tri ${this.triangleCount} | edges ${this.edgeCount}`,
       10,
       layout.footerTop + 30,
     );
     context.fillText(`out ${this.outputWidth || "-"}x${this.outputHeight || "-"}`, 10, layout.footerTop + 48);
+    context.fillText(formatExecutionInfo(this.executionMs), 10, layout.footerTop + 66);
+    context.restore();
+  }
+}
+
+class Delanoy2ToolNode {
+  size: [number, number] = [280, 530];
+  properties!: Record<string, unknown>;
+  preview: GraphImage | null = null;
+  svg: GraphSvg | null = null;
+  status = "idle";
+  progress = 0;
+  pointCount = 0;
+  triangleCount = 0;
+  circleCount = 0;
+  outputWidth = 0;
+  outputHeight = 0;
+  isRendering = false;
+  executionMs: number | null = null;
+  lastSignature = "";
+  lastOptionsSignature = "";
+  renderToken = 0;
+
+  constructor() {
+    const node = this as unknown as PreviewAwareNode & Delanoy2ToolNode;
+    node.title = createToolTitle("Delanoy2");
+    node.properties = {
+      maxWidth: 768,
+      gridCells: 20,
+      jitter: 1,
+      scale: 1,
+      lineWidth: 1,
+      lineColor: "#000000",
+      backgroundColor: "#FFFFFF",
+      radiusScale: 1,
+      radiusMode: "vertex",
+    };
+    node.addInput("image", "image");
+    node.addOutput("image", "image");
+    node.addOutput("svg", "svg");
+    node.addWidget("slider", "Max width", 768, (value) => {
+      node.properties.maxWidth = Math.round(Number(value));
+      notifyGraphStateChange(node);
+    }, { min: 128, max: 2400, step: 8 });
+    node.addWidget("slider", "Grid cells", 20, (value) => {
+      node.properties.gridCells = Math.round(Number(value));
+      notifyGraphStateChange(node);
+    }, { min: 6, max: 220, step: 1 });
+    node.addWidget("slider", "Jitter", 1, (value) => {
+      node.properties.jitter = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0, max: 1, step: 0.01, precision: 2 });
+    node.addWidget("slider", "Scale", 1, (value) => {
+      node.properties.scale = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 1, max: 8, step: 0.1, precision: 1 });
+    node.addWidget("combo", "Radius mode", "vertex", (value) => {
+      node.properties.radiusMode = String(value) === "inradius" ? "inradius" : "vertex";
+      notifyGraphStateChange(node);
+    }, { values: ["vertex", "inradius"] });
+    node.addWidget("slider", "Radius scale", 1, (value) => {
+      node.properties.radiusScale = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0.1, max: 3, step: 0.01, precision: 2 });
+    node.addWidget("slider", "Line width", 1, (value) => {
+      node.properties.lineWidth = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0.1, max: 8, step: 0.1, precision: 1 });
+    node.addWidget("text", "Line color", "#000000", (value) => {
+      node.properties.lineColor = normalizeHexColor(String(value));
+      notifyGraphStateChange(node);
+    });
+    node.addWidget("text", "BG color", "#FFFFFF", (value) => {
+      node.properties.backgroundColor = normalizeHexColor(String(value));
+      notifyGraphStateChange(node);
+    });
+    node.refreshPreviewLayout = () => {
+      refreshNode(node, node.preview, 4);
+    };
+    node.refreshPreviewLayout();
+  }
+
+  onExecute(this: PreviewAwareNode & Delanoy2ToolNode) {
+    const inputValue = this.getInputData(0);
+    const input = isGraphImageReady(inputValue) ? inputValue : null;
+    if (!input) {
+      this.preview = null;
+      this.svg = null;
+      this.status = "waiting valid image";
+      this.progress = 0;
+      this.pointCount = 0;
+      this.triangleCount = 0;
+      this.circleCount = 0;
+      this.outputWidth = 0;
+      this.outputHeight = 0;
+      this.executionMs = null;
+      this.isRendering = false;
+      this.lastSignature = "";
+      this.lastOptionsSignature = "";
+      this.setOutputData(0, null);
+      this.setOutputData(1, null);
+      this.refreshPreviewLayout();
+      return;
+    }
+
+    const options = {
+      maxWidth: clamp(Math.round(Number(this.properties.maxWidth ?? 768)), 128, 2400),
+      gridCells: clamp(Math.round(Number(this.properties.gridCells ?? 20)), 6, 220),
+      jitter: clamp(Number(this.properties.jitter ?? 1), 0, 1),
+      scale: clamp(Number(this.properties.scale ?? 1), 1, 8),
+      lineWidth: clamp(Number(this.properties.lineWidth ?? 1), 0.1, 8),
+      lineColor: normalizeHexColor(String(this.properties.lineColor ?? "#000000")),
+      backgroundColor: normalizeHexColor(String(this.properties.backgroundColor ?? "#FFFFFF")),
+      radiusScale: clamp(Number(this.properties.radiusScale ?? 1), 0.1, 3),
+      radiusMode: String(this.properties.radiusMode ?? "vertex") === "inradius" ? "inradius" as const : "vertex" as const,
+    };
+    const signature = getGraphImageSignature(input);
+    const optionsSignature = JSON.stringify(options);
+    if (signature !== this.lastSignature || optionsSignature !== this.lastOptionsSignature) {
+      this.lastSignature = signature;
+      this.lastOptionsSignature = optionsSignature;
+      const renderToken = ++this.renderToken;
+      const start = performance.now();
+      this.isRendering = true;
+      this.progress = 0;
+      this.status = "generating delanoy2...";
+      this.setDirtyCanvas(true, true);
+
+      const shouldCancel = () => renderToken !== this.renderToken;
+      const updateProgress = (value: number, status?: string) => {
+        this.progress = clamp(value, 0, 1);
+        if (status) {
+          this.status = status;
+        }
+        this.setDirtyCanvas(true, true);
+      };
+
+      void generateDelanoy2Svg(
+        input,
+        options,
+        shouldCancel,
+        updateProgress,
+        (partialPreview) => {
+          if (shouldCancel()) {
+            return;
+          }
+          this.preview = partialPreview;
+          this.setDirtyCanvas(true, true);
+        },
+      )
+        .then((result) => {
+          if (renderToken !== this.renderToken || !result) {
+            return;
+          }
+          this.preview = result.preview;
+          this.svg = result.svg;
+          this.pointCount = result.pointCount;
+          this.triangleCount = result.triangleCount;
+          this.circleCount = result.circleCount;
+          this.outputWidth = result.width;
+          this.outputHeight = result.height;
+          this.progress = 1;
+          this.status = "ready";
+          this.executionMs = performance.now() - start;
+          this.isRendering = false;
+          this.setDirtyCanvas(true, true);
+        })
+        .catch((error) => {
+          if (renderToken !== this.renderToken) {
+            return;
+          }
+          this.preview = input;
+          this.svg = null;
+          this.pointCount = 0;
+          this.triangleCount = 0;
+          this.circleCount = 0;
+          this.outputWidth = 0;
+          this.outputHeight = 0;
+          this.progress = 0;
+          this.status = error instanceof Error ? error.message : "delanoy2 error";
+          this.executionMs = null;
+          this.isRendering = false;
+          this.setDirtyCanvas(true, true);
+        });
+    }
+
+    this.setOutputData(0, this.preview ?? input);
+    this.setOutputData(1, this.svg);
+    this.refreshPreviewLayout();
+  }
+
+  onDrawBackground(this: PreviewAwareNode & Delanoy2ToolNode, context: CanvasRenderingContext2D) {
+    const layout = drawImagePreview(context, this, this.preview, { footerLines: 4 });
+    context.save();
+    context.fillStyle = "rgba(255,255,255,0.65)";
+    context.font = "12px sans-serif";
+    context.fillText(`${this.status}${this.isRendering ? "..." : ""}`, 10, layout.footerTop + 12);
+    context.fillText(
+      `progress ${Math.round(this.progress * 100)}% | points ${this.pointCount} | tri ${this.triangleCount} | circles ${this.circleCount}`,
+      10,
+      layout.footerTop + 30,
+    );
+    context.fillText(`out ${this.outputWidth || "-"}x${this.outputHeight || "-"}`, 10, layout.footerTop + 48);
+    context.fillText(formatExecutionInfo(this.executionMs), 10, layout.footerTop + 66);
+    context.restore();
+  }
+}
+
+class AsciifyToolNode {
+  size: [number, number] = [280, 590];
+  properties!: Record<string, unknown>;
+  preview: GraphImage | null = null;
+  svg: GraphSvg | null = null;
+  text: string | null = null;
+  status = "idle";
+  progress = 0;
+  rowCount = 0;
+  colCount = 0;
+  outputWidth = 0;
+  outputHeight = 0;
+  isRendering = false;
+  executionMs: number | null = null;
+  lastSignature = "";
+  lastOptionsSignature = "";
+  renderToken = 0;
+
+  setWidgetValue(this: AsciifyToolNode, name: string, value: unknown) {
+    const widgets = (this as unknown as LiteNode).widgets;
+    if (!widgets?.length) {
+      return;
+    }
+    const widget = widgets.find((item) => {
+      if (!item || typeof item !== "object") {
+        return false;
+      }
+      return (item as { name?: unknown }).name === name;
+    }) as { value?: unknown } | undefined;
+    if (widget) {
+      widget.value = value;
+    }
+  }
+
+  applyPreset(
+    this: PreviewAwareNode & AsciifyToolNode,
+    preset: "fast" | "normal" | "slow",
+    notify = true,
+  ) {
+    const values =
+      preset === "fast"
+        ? {
+            maxWidth: 640,
+            columns: 120,
+            refreshEvery: 8,
+          }
+        : preset === "slow"
+          ? {
+              maxWidth: 1400,
+              columns: 300,
+              refreshEvery: 2,
+            }
+          : {
+              maxWidth: 960,
+              columns: 180,
+              refreshEvery: 4,
+            };
+    Object.assign(this.properties, values, { preset });
+    this.setWidgetValue("Preset", preset);
+    this.setWidgetValue("Max width", values.maxWidth);
+    this.setWidgetValue("Columns", values.columns);
+    this.setWidgetValue("Refresh", values.refreshEvery);
+    this.setDirtyCanvas(true, true);
+    if (notify) {
+      notifyGraphStateChange(this);
+    }
+  }
+
+  markCustom(this: PreviewAwareNode & AsciifyToolNode) {
+    if (String(this.properties.preset ?? "normal") !== "custom") {
+      this.properties.preset = "custom";
+      this.setWidgetValue("Preset", "custom");
+    }
+  }
+
+  constructor() {
+    const node = this as unknown as PreviewAwareNode & AsciifyToolNode;
+    node.title = createToolTitle("Asciify");
+    node.properties = {
+      preset: "normal",
+      maxWidth: 960,
+      columns: 180,
+      charset: "@%#{}[]()<>^*+=~-:. ",
+      invert: false,
+      charAspect: 0.5,
+      fontScale: 1.1,
+      foregroundColor: "#000000",
+      backgroundColor: "#FFFFFF",
+      refreshEvery: 4,
+    };
+    node.addInput("image", "image");
+    node.addOutput("image", "image");
+    node.addOutput("svg", "svg");
+    node.addOutput("txt", "string");
+    node.addWidget("combo", "Preset", "normal", (value) => {
+      const preset = String(value);
+      if (preset === "fast" || preset === "normal" || preset === "slow") {
+        node.applyPreset(preset, true);
+      } else {
+        node.properties.preset = "custom";
+        node.setDirtyCanvas(true, true);
+        notifyGraphStateChange(node);
+      }
+    }, { values: ["fast", "normal", "slow", "custom"] });
+    node.addWidget("slider", "Max width", 960, (value) => {
+      node.properties.maxWidth = Math.round(Number(value));
+      node.markCustom();
+      notifyGraphStateChange(node);
+    }, { min: 128, max: 2800, step: 8 });
+    node.addWidget("slider", "Columns", 180, (value) => {
+      node.properties.columns = Math.round(Number(value));
+      node.markCustom();
+      notifyGraphStateChange(node);
+    }, { min: 16, max: 800, step: 1 });
+    node.addWidget("text", "Charset", "@%#{}[]()<>^*+=~-:. ", (value) => {
+      node.properties.charset = String(value || "@%#{}[]()<>^*+=~-:. ");
+      notifyGraphStateChange(node);
+    });
+    node.addWidget("toggle", "Invert", false, (value) => {
+      node.properties.invert = Boolean(value);
+      notifyGraphStateChange(node);
+    });
+    node.addWidget("slider", "Char aspect", 0.5, (value) => {
+      node.properties.charAspect = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0.25, max: 2, step: 0.01, precision: 2 });
+    node.addWidget("slider", "Font scale", 1.1, (value) => {
+      node.properties.fontScale = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0.4, max: 2.2, step: 0.01, precision: 2 });
+    node.addWidget("text", "FG color", "#000000", (value) => {
+      node.properties.foregroundColor = normalizeHexColor(String(value));
+      notifyGraphStateChange(node);
+    });
+    node.addWidget("text", "BG color", "#FFFFFF", (value) => {
+      node.properties.backgroundColor = normalizeHexColor(String(value));
+      notifyGraphStateChange(node);
+    });
+    node.addWidget("slider", "Refresh", 4, (value) => {
+      node.properties.refreshEvery = Math.round(Number(value));
+      node.markCustom();
+      notifyGraphStateChange(node);
+    }, { min: 1, max: 128, step: 1 });
+    node.refreshPreviewLayout = () => {
+      refreshNode(node, node.preview, 4);
+    };
+    node.applyPreset("normal", false);
+    node.refreshPreviewLayout();
+  }
+
+  onExecute(this: PreviewAwareNode & AsciifyToolNode) {
+    const inputValue = this.getInputData(0);
+    const input = isGraphImageReady(inputValue) ? inputValue : null;
+    if (!input) {
+      this.preview = null;
+      this.svg = null;
+      this.text = null;
+      this.status = "waiting valid image";
+      this.progress = 0;
+      this.rowCount = 0;
+      this.colCount = 0;
+      this.outputWidth = 0;
+      this.outputHeight = 0;
+      this.executionMs = null;
+      this.isRendering = false;
+      this.lastSignature = "";
+      this.lastOptionsSignature = "";
+      this.setOutputData(0, null);
+      this.setOutputData(1, null);
+      this.setOutputData(2, null);
+      this.refreshPreviewLayout();
+      return;
+    }
+
+    const options = {
+      maxWidth: clamp(Math.round(Number(this.properties.maxWidth ?? 960)), 128, 2800),
+      columns: clamp(Math.round(Number(this.properties.columns ?? 180)), 16, 800),
+      charset: String(this.properties.charset ?? "@%#{}[]()<>^*+=~-:. "),
+      invert: Boolean(this.properties.invert ?? false),
+      charAspect: clamp(Number(this.properties.charAspect ?? 0.5), 0.25, 2),
+      fontScale: clamp(Number(this.properties.fontScale ?? 1.1), 0.4, 2.2),
+      foregroundColor: normalizeHexColor(String(this.properties.foregroundColor ?? "#000000")),
+      backgroundColor: normalizeHexColor(String(this.properties.backgroundColor ?? "#FFFFFF")),
+      refreshEvery: clamp(Math.round(Number(this.properties.refreshEvery ?? 4)), 1, 128),
+    };
+    const signature = getGraphImageSignature(input);
+    const optionsSignature = JSON.stringify(options);
+    if (signature !== this.lastSignature || optionsSignature !== this.lastOptionsSignature) {
+      this.lastSignature = signature;
+      this.lastOptionsSignature = optionsSignature;
+      const renderToken = ++this.renderToken;
+      const start = performance.now();
+      this.isRendering = true;
+      this.progress = 0;
+      this.status = "generating ascii...";
+      this.setDirtyCanvas(true, true);
+
+      const shouldCancel = () => renderToken !== this.renderToken;
+      const updateProgress = (value: number, status?: string) => {
+        this.progress = clamp(value, 0, 1);
+        if (status) {
+          this.status = status;
+        }
+        this.setDirtyCanvas(true, true);
+      };
+
+      void generateAsciifyOutput(
+        input,
+        options,
+        shouldCancel,
+        updateProgress,
+        (partialPreview) => {
+          if (shouldCancel()) {
+            return;
+          }
+          this.preview = partialPreview;
+          this.setDirtyCanvas(true, true);
+        },
+      )
+        .then((result) => {
+          if (renderToken !== this.renderToken || !result) {
+            return;
+          }
+          this.preview = result.preview;
+          this.svg = result.svg;
+          this.text = result.text;
+          this.rowCount = result.rowCount;
+          this.colCount = result.colCount;
+          this.outputWidth = result.width;
+          this.outputHeight = result.height;
+          this.progress = 1;
+          this.status = "ready";
+          this.executionMs = performance.now() - start;
+          this.isRendering = false;
+          this.setDirtyCanvas(true, true);
+        })
+        .catch((error) => {
+          if (renderToken !== this.renderToken) {
+            return;
+          }
+          this.preview = input;
+          this.svg = null;
+          this.text = null;
+          this.rowCount = 0;
+          this.colCount = 0;
+          this.outputWidth = 0;
+          this.outputHeight = 0;
+          this.progress = 0;
+          this.status = error instanceof Error ? error.message : "asciify error";
+          this.executionMs = null;
+          this.isRendering = false;
+          this.setDirtyCanvas(true, true);
+        });
+    }
+
+    this.setOutputData(0, this.preview ?? input);
+    this.setOutputData(1, this.svg);
+    this.setOutputData(2, this.text);
+    this.refreshPreviewLayout();
+  }
+
+  onDrawBackground(this: PreviewAwareNode & AsciifyToolNode, context: CanvasRenderingContext2D) {
+    const layout = drawImagePreview(context, this, this.preview, { footerLines: 4 });
+    context.save();
+    context.fillStyle = "rgba(255,255,255,0.65)";
+    context.font = "12px sans-serif";
+    context.fillText(`${this.status}${this.isRendering ? "..." : ""}`, 10, layout.footerTop + 12);
+    context.fillText(
+      `progress ${Math.round(this.progress * 100)}% | grid ${this.colCount}x${this.rowCount}`,
+      10,
+      layout.footerTop + 30,
+    );
+    context.fillText(`out ${this.outputWidth || "-"}x${this.outputHeight || "-"}`, 10, layout.footerTop + 48);
+    context.fillText(formatExecutionInfo(this.executionMs), 10, layout.footerTop + 66);
+    context.restore();
+  }
+}
+
+class SketchToolNode {
+  size: [number, number] = [280, 640];
+  properties!: Record<string, unknown>;
+  preview: GraphImage | null = null;
+  svg: GraphSvg | null = null;
+  status = "idle";
+  progress = 0;
+  pathCount = 0;
+  outputWidth = 0;
+  outputHeight = 0;
+  isRendering = false;
+  executionMs: number | null = null;
+  lastSignature = "";
+  lastOptionsSignature = "";
+  renderToken = 0;
+
+  setWidgetValue(this: SketchToolNode, name: string, value: unknown) {
+    const widgets = (this as unknown as LiteNode).widgets;
+    if (!widgets?.length) {
+      return;
+    }
+    const widget = widgets.find((item) => {
+      if (!item || typeof item !== "object") {
+        return false;
+      }
+      return (item as { name?: unknown }).name === name;
+    }) as { value?: unknown } | undefined;
+    if (widget) {
+      widget.value = value;
+    }
+  }
+
+  applyPreset(
+    this: PreviewAwareNode & SketchToolNode,
+    preset: "fast" | "normal" | "slow",
+    notify = true,
+  ) {
+    const values =
+      preset === "fast"
+        ? {
+            maxWidth: 640,
+            lineLimit: 700,
+            squiggleMaxLength: 220,
+            gridCells: 36,
+            darkestAreaCandidates: 2,
+            simplifyTolerance: 2.2,
+            refreshEvery: 48,
+          }
+        : preset === "slow"
+          ? {
+              maxWidth: 1200,
+              lineLimit: 2800,
+              squiggleMaxLength: 900,
+              gridCells: 72,
+              darkestAreaCandidates: 6,
+              simplifyTolerance: 1.2,
+              refreshEvery: 12,
+            }
+          : {
+              maxWidth: 960,
+              lineLimit: 1400,
+              squiggleMaxLength: 480,
+              gridCells: 52,
+              darkestAreaCandidates: 4,
+              simplifyTolerance: 1.8,
+              refreshEvery: 24,
+            };
+    Object.assign(this.properties, values, { preset });
+    this.setWidgetValue("Preset", preset);
+    this.setWidgetValue("Max width", values.maxWidth);
+    this.setWidgetValue("Lines", values.lineLimit);
+    this.setWidgetValue("Path len", values.squiggleMaxLength);
+    this.setWidgetValue("Grid", values.gridCells);
+    this.setWidgetValue("Dark areas", values.darkestAreaCandidates);
+    this.setWidgetValue("Simplify", values.simplifyTolerance);
+    this.setWidgetValue("Refresh", values.refreshEvery);
+    this.setDirtyCanvas(true, true);
+    if (notify) {
+      notifyGraphStateChange(this);
+    }
+  }
+
+  markCustom(this: PreviewAwareNode & SketchToolNode) {
+    if (String(this.properties.preset ?? "normal") !== "custom") {
+      this.properties.preset = "custom";
+      this.setWidgetValue("Preset", "custom");
+    }
+  }
+
+  constructor() {
+    const node = this as unknown as PreviewAwareNode & SketchToolNode;
+    node.title = createToolTitle("Sketch");
+    node.properties = {
+      preset: "normal",
+      maxWidth: 960,
+      lineLimit: 1400,
+      squiggleMaxLength: 480,
+      gridCells: 52,
+      darkestAreaCandidates: 4,
+      lineWidth: 1,
+      lineAlpha: 0.12,
+      simplifyTolerance: 1.8,
+      lightenStep: 22,
+      refreshEvery: 24,
+    };
+    node.addInput("image", "image");
+    node.addOutput("image", "image");
+    node.addOutput("svg", "svg");
+    node.addWidget("combo", "Preset", "normal", (value) => {
+      const preset = String(value);
+      if (preset === "fast" || preset === "normal" || preset === "slow") {
+        node.applyPreset(preset, true);
+      } else {
+        node.properties.preset = "custom";
+        node.setDirtyCanvas(true, true);
+        notifyGraphStateChange(node);
+      }
+    }, { values: ["fast", "normal", "slow", "custom"] });
+    node.addWidget("slider", "Max width", 960, (value) => {
+      node.properties.maxWidth = Math.round(Number(value));
+      node.markCustom();
+      notifyGraphStateChange(node);
+    }, { min: 128, max: 2400, step: 8 });
+    node.addWidget("slider", "Lines", 1400, (value) => {
+      node.properties.lineLimit = Math.round(Number(value));
+      node.markCustom();
+      notifyGraphStateChange(node);
+    }, { min: 10, max: 12000, step: 1 });
+    node.addWidget("slider", "Path len", 480, (value) => {
+      node.properties.squiggleMaxLength = Math.round(Number(value));
+      node.markCustom();
+      notifyGraphStateChange(node);
+    }, { min: 8, max: 12000, step: 1 });
+    node.addWidget("slider", "Grid", 52, (value) => {
+      node.properties.gridCells = Math.round(Number(value));
+      node.markCustom();
+      notifyGraphStateChange(node);
+    }, { min: 8, max: 400, step: 1 });
+    node.addWidget("slider", "Dark areas", 4, (value) => {
+      node.properties.darkestAreaCandidates = Math.round(Number(value));
+      node.markCustom();
+      notifyGraphStateChange(node);
+    }, { min: 1, max: 12, step: 1 });
+    node.addWidget("slider", "Width", 1, (value) => {
+      node.properties.lineWidth = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0.1, max: 20, step: 0.1, precision: 1 });
+    node.addWidget("slider", "Alpha", 0.12, (value) => {
+      node.properties.lineAlpha = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0.01, max: 1, step: 0.01, precision: 2 });
+    node.addWidget("slider", "Simplify", 1.8, (value) => {
+      node.properties.simplifyTolerance = Number(value);
+      node.markCustom();
+      notifyGraphStateChange(node);
+    }, { min: 0, max: 6, step: 0.1, precision: 1 });
+    node.addWidget("slider", "Lighten", 22, (value) => {
+      node.properties.lightenStep = Math.round(Number(value));
+      notifyGraphStateChange(node);
+    }, { min: 1, max: 255, step: 1 });
+    node.addWidget("slider", "Refresh", 24, (value) => {
+      node.properties.refreshEvery = Math.round(Number(value));
+      node.markCustom();
+      notifyGraphStateChange(node);
+    }, { min: 4, max: 256, step: 1 });
+    node.refreshPreviewLayout = () => {
+      refreshNode(node, node.preview, 4);
+    };
+    node.applyPreset("normal", false);
+    node.refreshPreviewLayout();
+  }
+
+  onExecute(this: PreviewAwareNode & SketchToolNode) {
+    const inputValue = this.getInputData(0);
+    const input = isGraphImageReady(inputValue) ? inputValue : null;
+    if (!input) {
+      this.preview = null;
+      this.svg = null;
+      this.status = "waiting valid image";
+      this.progress = 0;
+      this.pathCount = 0;
+      this.outputWidth = 0;
+      this.outputHeight = 0;
+      this.executionMs = null;
+      this.isRendering = false;
+      this.lastSignature = "";
+      this.lastOptionsSignature = "";
+      this.setOutputData(0, null);
+      this.setOutputData(1, null);
+      this.refreshPreviewLayout();
+      return;
+    }
+
+    const options = {
+      maxWidth: clamp(Math.round(Number(this.properties.maxWidth ?? 960)), 128, 2400),
+      lineLimit: clamp(Math.round(Number(this.properties.lineLimit ?? 1400)), 10, 12000),
+      squiggleMaxLength: clamp(Math.round(Number(this.properties.squiggleMaxLength ?? 480)), 8, 12000),
+      gridCells: clamp(Math.round(Number(this.properties.gridCells ?? 52)), 8, 400),
+      darkestAreaCandidates: clamp(Math.round(Number(this.properties.darkestAreaCandidates ?? 4)), 1, 12),
+      lineWidth: clamp(Number(this.properties.lineWidth ?? 1), 0.1, 20),
+      lineAlpha: clamp(Number(this.properties.lineAlpha ?? 0.12), 0.01, 1),
+      simplifyTolerance: clamp(Number(this.properties.simplifyTolerance ?? 1.8), 0, 6),
+      lightenStep: clamp(Math.round(Number(this.properties.lightenStep ?? 22)), 1, 255),
+      refreshEvery: clamp(Math.round(Number(this.properties.refreshEvery ?? 24)), 4, 256),
+    };
+    const signature = getGraphImageSignature(input);
+    const optionsSignature = JSON.stringify(options);
+    if (signature !== this.lastSignature || optionsSignature !== this.lastOptionsSignature) {
+      this.lastSignature = signature;
+      this.lastOptionsSignature = optionsSignature;
+      const renderToken = ++this.renderToken;
+      const start = performance.now();
+      this.isRendering = true;
+      this.progress = 0;
+      this.status = "generating sketch...";
+      this.setDirtyCanvas(true, true);
+
+      const shouldCancel = () => renderToken !== this.renderToken;
+      const updateProgress = (value: number, status?: string) => {
+        this.progress = clamp(value, 0, 1);
+        if (status) {
+          this.status = status;
+        }
+        this.setDirtyCanvas(true, true);
+      };
+
+      void generateSketchSvg(
+        input,
+        options,
+        shouldCancel,
+        updateProgress,
+        (partialPreview) => {
+          if (shouldCancel()) {
+            return;
+          }
+          this.preview = partialPreview;
+          this.setDirtyCanvas(true, true);
+        },
+      )
+        .then((result) => {
+          if (renderToken !== this.renderToken || !result) {
+            return;
+          }
+          this.preview = result.preview;
+          this.svg = result.svg;
+          this.pathCount = result.pathCount;
+          this.outputWidth = result.width;
+          this.outputHeight = result.height;
+          this.progress = 1;
+          this.status = "ready";
+          this.executionMs = performance.now() - start;
+          this.isRendering = false;
+          this.setDirtyCanvas(true, true);
+        })
+        .catch((error) => {
+          if (renderToken !== this.renderToken) {
+            return;
+          }
+          this.preview = input;
+          this.svg = null;
+          this.pathCount = 0;
+          this.outputWidth = 0;
+          this.outputHeight = 0;
+          this.progress = 0;
+          this.status = error instanceof Error ? error.message : "sketch error";
+          this.executionMs = null;
+          this.isRendering = false;
+          this.setDirtyCanvas(true, true);
+        });
+    }
+
+    this.setOutputData(0, this.preview ?? input);
+    this.setOutputData(1, this.svg);
+    this.refreshPreviewLayout();
+  }
+
+  onDrawBackground(this: PreviewAwareNode & SketchToolNode, context: CanvasRenderingContext2D) {
+    const layout = drawImagePreview(context, this, this.preview, { footerLines: 4 });
+    context.save();
+    context.fillStyle = "rgba(255,255,255,0.65)";
+    context.font = "12px sans-serif";
+    context.fillText(`${this.status}${this.isRendering ? "..." : ""}`, 10, layout.footerTop + 12);
+    context.fillText(
+      `progress ${Math.round(this.progress * 100)}% | paths ${this.pathCount}`,
+      10,
+      layout.footerTop + 30,
+    );
+    context.fillText(
+      `out ${this.outputWidth || "-"}x${this.outputHeight || "-"}`,
+      10,
+      layout.footerTop + 48,
+    );
     context.fillText(formatExecutionInfo(this.executionMs), 10, layout.footerTop + 66);
     context.restore();
   }
@@ -11489,8 +12975,15 @@ class OutputImageNode {
 class OutputSvgNode {
   svg: GraphSvg | null = null;
   preview: GraphImage | null = null;
+  svgBytes = 0;
+  elementCount = 0;
+  elementTypeCounts: Record<string, number> = {};
+  elementReportLines: string[] = [];
+  isCountingElements = false;
   lastSvg = "";
   renderToken = 0;
+  statsToken = 0;
+  statsTimerId: number | null = null;
   size: [number, number] = [320, 340];
 
   constructor() {
@@ -11504,7 +12997,7 @@ class OutputSvgNode {
       }
     });
     node.refreshPreviewLayout = () => {
-      refreshNode(node, node.preview);
+      refreshNode(node, node.preview, 2);
     };
     node.refreshPreviewLayout();
   }
@@ -11515,13 +13008,83 @@ class OutputSvgNode {
 
     if (!this.svg) {
       this.preview = null;
+      this.svgBytes = 0;
+      this.elementCount = 0;
+      this.elementTypeCounts = {};
+      this.elementReportLines = [];
+      this.isCountingElements = false;
       this.lastSvg = "";
+      this.statsToken += 1;
+      if (this.statsTimerId !== null) {
+        window.clearTimeout(this.statsTimerId);
+        this.statsTimerId = null;
+      }
       this.refreshPreviewLayout();
       return;
     }
 
     if (this.svg !== this.lastSvg) {
       this.lastSvg = this.svg;
+      this.svgBytes = new Blob([this.svg]).size;
+      this.isCountingElements = true;
+      const statsToken = ++this.statsToken;
+      if (this.statsTimerId !== null) {
+        window.clearTimeout(this.statsTimerId);
+        this.statsTimerId = null;
+      }
+      this.statsTimerId = window.setTimeout(() => {
+        if (statsToken !== this.statsToken || !this.svg) {
+          return;
+        }
+        try {
+          const document = new DOMParser().parseFromString(this.svg, "image/svg+xml");
+          const parseError = document.querySelector("parsererror");
+          if (parseError) {
+            this.elementCount = 0;
+            this.elementTypeCounts = {};
+            this.elementReportLines = [];
+          } else {
+            const counts: Record<string, number> = {};
+            const elements = document.querySelectorAll("*");
+            for (let index = 0; index < elements.length; index += 1) {
+              const tag = elements[index].tagName.toLowerCase();
+              if (tag === "svg") {
+                continue;
+              }
+              counts[tag] = (counts[tag] ?? 0) + 1;
+            }
+            this.elementTypeCounts = counts;
+            this.elementCount = Object.values(counts).reduce((sum, value) => sum + value, 0);
+            const entries = Object.entries(counts).sort((a, b) => {
+              if (b[1] !== a[1]) {
+                return b[1] - a[1];
+              }
+              return a[0].localeCompare(b[0]);
+            });
+            const lines: string[] = [];
+            let current: string[] = [];
+            for (let i = 0; i < entries.length; i += 1) {
+              const [tag, count] = entries[i];
+              current.push(`${tag} ${count}`);
+              if (current.length >= 3) {
+                lines.push(current.join(" | "));
+                current = [];
+              }
+            }
+            if (current.length > 0) {
+              lines.push(current.join(" | "));
+            }
+            this.elementReportLines = lines;
+          }
+        } catch {
+          this.elementCount = 0;
+          this.elementTypeCounts = {};
+          this.elementReportLines = [];
+        }
+        this.isCountingElements = false;
+        this.statsTimerId = null;
+        this.setDirtyCanvas(true, true);
+      }, 300);
       const renderToken = ++this.renderToken;
       void rasterizeGraphSvg(this.svg)
         .then((preview) => {
@@ -11544,7 +13107,27 @@ class OutputSvgNode {
   }
 
   onDrawBackground(this: PreviewAwareNode & OutputSvgNode, context: CanvasRenderingContext2D) {
-    drawImagePreview(context, this, this.preview);
+    const footerLines = Math.max(2, 2 + this.elementReportLines.length);
+    const layout = drawImagePreview(context, this, this.preview, { footerLines });
+    context.save();
+    context.fillStyle = "rgba(255,255,255,0.65)";
+    context.font = "12px sans-serif";
+    context.fillText(
+      `svg ${this.svgBytes} bytes | elements ${this.isCountingElements ? "..." : this.elementCount}`,
+      10,
+      layout.footerTop + 12,
+    );
+    if (this.isCountingElements) {
+      context.fillText("report: updating...", 10, layout.footerTop + 30);
+    } else if (this.elementReportLines.length > 0) {
+      context.fillText(`report: ${this.elementReportLines[0]}`, 10, layout.footerTop + 30);
+      for (let lineIndex = 1; lineIndex < this.elementReportLines.length; lineIndex += 1) {
+        context.fillText(this.elementReportLines[lineIndex], 10, layout.footerTop + 30 + lineIndex * 18);
+      }
+    } else {
+      context.fillText(this.svg ? "report: no elements" : "no svg", 10, layout.footerTop + 30);
+    }
+    context.restore();
   }
 }
 
@@ -11683,7 +13266,10 @@ export function registerImageNodes() {
   });
   registerArtToolNodes(registerNodeType, {
     OilToolNode: OilToolNode as unknown as NodeCtor,
+    AsciifyToolNode: AsciifyToolNode as unknown as NodeCtor,
+    SketchToolNode: SketchToolNode as unknown as NodeCtor,
     DelanoyToolNode: DelanoyToolNode as unknown as NodeCtor,
+    Delanoy2ToolNode: Delanoy2ToolNode as unknown as NodeCtor,
     LinefyToolNode: LinefyToolNode as unknown as NodeCtor,
     Linefy2ToolNode: Linefy2ToolNode as unknown as NodeCtor,
     GridDotToolNode: GridDotToolNode as unknown as NodeCtor,
