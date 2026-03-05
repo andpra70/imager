@@ -1355,6 +1355,16 @@ function createToolTitle(name: string) {
   return `TOOLS / ${name}`;
 }
 
+const blendModeToCompositeOperation: Record<BlendMode, GlobalCompositeOperation> = {
+  normal: "source-over",
+  multiply: "multiply",
+  screen: "screen",
+  overlay: "overlay",
+  darken: "darken",
+  lighten: "lighten",
+  difference: "difference",
+};
+
 function notifyGraphStateChange(node: LiteNode) {
   node.graph?.onGraphStateChange?.();
 }
@@ -1453,6 +1463,13 @@ interface HistogramChannel {
   name: string;
   color: string;
   values: Uint32Array;
+}
+
+interface CropRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
 }
 
 type HistogramMode = "rgb" | "hsv" | "grayscale";
@@ -1640,6 +1657,39 @@ function shouldReuseCachedToolResult(
   );
 }
 
+class OptimizedToolNode {
+  executionMs: number | null = null;
+  lastSignature = "";
+  lastOptionsSignature = "";
+
+  protected resetOptimizedCache() {
+    this.lastSignature = "";
+    this.lastOptionsSignature = "";
+  }
+
+  protected canReuseOptimizedResult(currentSignature: string, currentOptionsSignature: string) {
+    return shouldReuseCachedToolResult(
+      this.executionMs,
+      this.lastSignature,
+      this.lastOptionsSignature,
+      currentSignature,
+      currentOptionsSignature,
+    );
+  }
+
+  protected completeOptimizedExecution(
+    startedAt: number,
+    currentSignature?: string,
+    currentOptionsSignature?: string,
+  ) {
+    this.executionMs = performance.now() - startedAt;
+    if (currentSignature !== undefined && currentOptionsSignature !== undefined) {
+      this.lastSignature = currentSignature;
+      this.lastOptionsSignature = currentOptionsSignature;
+    }
+  }
+}
+
 function oilPaintGraphImage(source: GraphImage, radius: number, intensityLevels: number) {
   const context = source.getContext("2d", { willReadFrequently: true });
   if (!context) {
@@ -1713,6 +1763,132 @@ function oilPaintGraphImage(source: GraphImage, radius: number, intensityLevels:
   }
 
   outputContext.putImageData(destinationImageData, 0, 0);
+  return output;
+}
+
+function convolveImage3x3(source: GraphImage, kernel: number[], divisor = 1, bias = 0) {
+  const sourceContext = source.getContext("2d", { willReadFrequently: true });
+  if (!sourceContext) {
+    throw new Error("2D context not available.");
+  }
+
+  const width = source.width;
+  const height = source.height;
+  const sourceImage = sourceContext.getImageData(0, 0, width, height);
+  const sourcePixels = sourceImage.data;
+  const output = document.createElement("canvas");
+  output.width = width;
+  output.height = height;
+  const outputContext = output.getContext("2d");
+  if (!outputContext) {
+    throw new Error("2D context not available.");
+  }
+  const destinationImage = outputContext.createImageData(width, height);
+  const destinationPixels = destinationImage.data;
+
+  const safeDivisor = divisor === 0 ? 1 : divisor;
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      let sumR = 0;
+      let sumG = 0;
+      let sumB = 0;
+      for (let ky = -1; ky <= 1; ky += 1) {
+        const yy = clamp(y + ky, 0, height - 1);
+        for (let kx = -1; kx <= 1; kx += 1) {
+          const xx = clamp(x + kx, 0, width - 1);
+          const kernelWeight = kernel[(ky + 1) * 3 + (kx + 1)];
+          const sourceIndex = (yy * width + xx) * 4;
+          sumR += sourcePixels[sourceIndex] * kernelWeight;
+          sumG += sourcePixels[sourceIndex + 1] * kernelWeight;
+          sumB += sourcePixels[sourceIndex + 2] * kernelWeight;
+        }
+      }
+
+      const destinationIndex = (y * width + x) * 4;
+      destinationPixels[destinationIndex] = clamp(Math.round(sumR / safeDivisor + bias), 0, 255);
+      destinationPixels[destinationIndex + 1] = clamp(Math.round(sumG / safeDivisor + bias), 0, 255);
+      destinationPixels[destinationIndex + 2] = clamp(Math.round(sumB / safeDivisor + bias), 0, 255);
+      destinationPixels[destinationIndex + 3] = sourcePixels[destinationIndex + 3];
+    }
+  }
+
+  outputContext.putImageData(destinationImage, 0, 0);
+  return output;
+}
+
+function sobelGraphImage(
+  source: GraphImage,
+  options: { mode: "magnitude" | "horizontal" | "vertical" | "threshold"; threshold: number; invert: boolean; strength: number },
+) {
+  const sourceContext = source.getContext("2d", { willReadFrequently: true });
+  if (!sourceContext) {
+    throw new Error("2D context not available.");
+  }
+
+  const width = source.width;
+  const height = source.height;
+  const sourceImage = sourceContext.getImageData(0, 0, width, height);
+  const sourcePixels = sourceImage.data;
+  const output = document.createElement("canvas");
+  output.width = width;
+  output.height = height;
+  const outputContext = output.getContext("2d");
+  if (!outputContext) {
+    throw new Error("2D context not available.");
+  }
+  const destinationImage = outputContext.createImageData(width, height);
+  const destinationPixels = destinationImage.data;
+
+  const kernelX = [-1, 0, 1, -2, 0, 2, -1, 0, 1];
+  const kernelY = [-1, -2, -1, 0, 0, 0, 1, 2, 1];
+  const threshold = clamp(Math.round(options.threshold), 0, 255);
+  const strength = clamp(options.strength, 0.5, 6);
+
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      let gx = 0;
+      let gy = 0;
+      for (let ky = -1; ky <= 1; ky += 1) {
+        const yy = clamp(y + ky, 0, height - 1);
+        for (let kx = -1; kx <= 1; kx += 1) {
+          const xx = clamp(x + kx, 0, width - 1);
+          const sourceIndex = (yy * width + xx) * 4;
+          const luminance =
+            0.2126 * sourcePixels[sourceIndex] +
+            0.7152 * sourcePixels[sourceIndex + 1] +
+            0.0722 * sourcePixels[sourceIndex + 2];
+          const kernelIndex = (ky + 1) * 3 + (kx + 1);
+          gx += luminance * kernelX[kernelIndex];
+          gy += luminance * kernelY[kernelIndex];
+        }
+      }
+
+      let edgeValue = 0;
+      if (options.mode === "horizontal") {
+        edgeValue = Math.abs(gx);
+      } else if (options.mode === "vertical") {
+        edgeValue = Math.abs(gy);
+      } else {
+        edgeValue = Math.hypot(gx, gy);
+      }
+      edgeValue = clamp(edgeValue * (strength / 4), 0, 255);
+      if (options.mode === "threshold") {
+        edgeValue = edgeValue >= threshold ? 255 : 0;
+      }
+      if (options.invert) {
+        edgeValue = 255 - edgeValue;
+      }
+
+      const destinationIndex = (y * width + x) * 4;
+      const gray = clamp(Math.round(edgeValue), 0, 255);
+      destinationPixels[destinationIndex] = gray;
+      destinationPixels[destinationIndex + 1] = gray;
+      destinationPixels[destinationIndex + 2] = gray;
+      destinationPixels[destinationIndex + 3] = sourcePixels[destinationIndex + 3];
+    }
+  }
+
+  outputContext.putImageData(destinationImage, 0, 0);
   return output;
 }
 
@@ -3634,14 +3810,12 @@ class WebcamImageNode {
   }
 }
 
-class InvertToolNode {
+class InvertToolNode extends OptimizedToolNode {
   size: [number, number] = [280, 280];
   preview: GraphImage | null = null;
-  executionMs: number | null = null;
-  lastSignature = "";
-  lastOptionsSignature = "";
 
   constructor() {
+    super();
     const node = this as unknown as PreviewAwareNode & InvertToolNode;
     node.title = createToolTitle("Invert");
     node.properties = {};
@@ -3659,9 +3833,8 @@ class InvertToolNode {
     const input = this.getInputData(0);
     if (!input) {
       this.preview = null;
-      this.executionMs = performance.now() - start;
-      this.lastSignature = "";
-      this.lastOptionsSignature = "";
+      this.completeOptimizedExecution(start);
+      this.resetOptimizedCache();
       this.setOutputData(0, null);
       this.refreshPreviewLayout();
       return;
@@ -3669,22 +3842,14 @@ class InvertToolNode {
     const signature = getGraphImageSignature(input);
     const optionsSignature = "invert";
     if (
-      shouldReuseCachedToolResult(
-        this.executionMs,
-        this.lastSignature,
-        this.lastOptionsSignature,
-        signature,
-        optionsSignature,
-      )
+      this.canReuseOptimizedResult(signature, optionsSignature)
     ) {
       this.setOutputData(0, this.preview);
       this.refreshPreviewLayout();
       return;
     }
     this.preview = invertGraphImage(input);
-    this.executionMs = performance.now() - start;
-    this.lastSignature = signature;
-    this.lastOptionsSignature = optionsSignature;
+    this.completeOptimizedExecution(start, signature, optionsSignature);
     this.setOutputData(0, this.preview);
     this.refreshPreviewLayout();
   }
@@ -3699,14 +3864,12 @@ class InvertToolNode {
   }
 }
 
-class GrayscaleToolNode {
+class GrayscaleToolNode extends OptimizedToolNode {
   size: [number, number] = [280, 280];
   preview: GraphImage | null = null;
-  executionMs: number | null = null;
-  lastSignature = "";
-  lastOptionsSignature = "";
 
   constructor() {
+    super();
     const node = this as unknown as PreviewAwareNode & GrayscaleToolNode;
     node.title = createToolTitle("Grayscale");
     node.properties = {};
@@ -3723,9 +3886,8 @@ class GrayscaleToolNode {
     const input = this.getInputData(0);
     if (!input) {
       this.preview = null;
-      this.executionMs = performance.now() - start;
-      this.lastSignature = "";
-      this.lastOptionsSignature = "";
+      this.completeOptimizedExecution(start);
+      this.resetOptimizedCache();
       this.setOutputData(0, null);
       this.refreshPreviewLayout();
       return;
@@ -3733,22 +3895,14 @@ class GrayscaleToolNode {
     const signature = getGraphImageSignature(input);
     const optionsSignature = "grayscale";
     if (
-      shouldReuseCachedToolResult(
-        this.executionMs,
-        this.lastSignature,
-        this.lastOptionsSignature,
-        signature,
-        optionsSignature,
-      )
+      this.canReuseOptimizedResult(signature, optionsSignature)
     ) {
       this.setOutputData(0, this.preview);
       this.refreshPreviewLayout();
       return;
     }
     this.preview = grayscaleGraphImage(input);
-    this.executionMs = performance.now() - start;
-    this.lastSignature = signature;
-    this.lastOptionsSignature = optionsSignature;
+    this.completeOptimizedExecution(start, signature, optionsSignature);
     this.setOutputData(0, this.preview);
     this.refreshPreviewLayout();
   }
@@ -3763,14 +3917,12 @@ class GrayscaleToolNode {
   }
 }
 
-class ThresholdToolNode {
+class ThresholdToolNode extends OptimizedToolNode {
   size: [number, number] = [280, 320];
   preview: GraphImage | null = null;
-  executionMs: number | null = null;
-  lastSignature = "";
-  lastOptionsSignature = "";
 
   constructor() {
+    super();
     const node = this as unknown as PreviewAwareNode & ThresholdToolNode;
     node.title = createToolTitle("Threshold");
     node.properties = { threshold: 128 };
@@ -3799,9 +3951,8 @@ class ThresholdToolNode {
     const threshold = Number(this.properties.threshold ?? 128);
     if (!input) {
       this.preview = null;
-      this.executionMs = performance.now() - start;
-      this.lastSignature = "";
-      this.lastOptionsSignature = "";
+      this.completeOptimizedExecution(start);
+      this.resetOptimizedCache();
       this.setOutputData(0, null);
       this.refreshPreviewLayout();
       return;
@@ -3809,22 +3960,14 @@ class ThresholdToolNode {
     const signature = getGraphImageSignature(input);
     const optionsSignature = `threshold:${Math.round(threshold)}`;
     if (
-      shouldReuseCachedToolResult(
-        this.executionMs,
-        this.lastSignature,
-        this.lastOptionsSignature,
-        signature,
-        optionsSignature,
-      )
+      this.canReuseOptimizedResult(signature, optionsSignature)
     ) {
       this.setOutputData(0, this.preview);
       this.refreshPreviewLayout();
       return;
     }
     this.preview = thresholdGraphImage(input, threshold);
-    this.executionMs = performance.now() - start;
-    this.lastSignature = signature;
-    this.lastOptionsSignature = optionsSignature;
+    this.completeOptimizedExecution(start, signature, optionsSignature);
     this.setOutputData(0, this.preview);
     this.refreshPreviewLayout();
   }
@@ -3839,14 +3982,12 @@ class ThresholdToolNode {
   }
 }
 
-class BlurToolNode {
+class BlurToolNode extends OptimizedToolNode {
   size: [number, number] = [280, 320];
   preview: GraphImage | null = null;
-  executionMs: number | null = null;
-  lastSignature = "";
-  lastOptionsSignature = "";
 
   constructor() {
+    super();
     const node = this as unknown as PreviewAwareNode & BlurToolNode;
     node.title = createToolTitle("Blur");
     node.properties = { radius: 4 };
@@ -3875,9 +4016,8 @@ class BlurToolNode {
     const radius = Number(this.properties.radius ?? 4);
     if (!input) {
       this.preview = null;
-      this.executionMs = performance.now() - start;
-      this.lastSignature = "";
-      this.lastOptionsSignature = "";
+      this.completeOptimizedExecution(start);
+      this.resetOptimizedCache();
       this.setOutputData(0, null);
       this.refreshPreviewLayout();
       return;
@@ -3885,22 +4025,14 @@ class BlurToolNode {
     const signature = getGraphImageSignature(input);
     const optionsSignature = `radius:${Math.round(radius)}`;
     if (
-      shouldReuseCachedToolResult(
-        this.executionMs,
-        this.lastSignature,
-        this.lastOptionsSignature,
-        signature,
-        optionsSignature,
-      )
+      this.canReuseOptimizedResult(signature, optionsSignature)
     ) {
       this.setOutputData(0, this.preview);
       this.refreshPreviewLayout();
       return;
     }
     this.preview = blurGraphImage(input, radius);
-    this.executionMs = performance.now() - start;
-    this.lastSignature = signature;
-    this.lastOptionsSignature = optionsSignature;
+    this.completeOptimizedExecution(start, signature, optionsSignature);
     this.setOutputData(0, this.preview);
     this.refreshPreviewLayout();
   }
@@ -3915,14 +4047,199 @@ class BlurToolNode {
   }
 }
 
-class ScaleToolNode {
-  size: [number, number] = [280, 320];
+class SharpenToolNode extends OptimizedToolNode {
+  size: [number, number] = [280, 360];
   preview: GraphImage | null = null;
-  executionMs: number | null = null;
-  lastSignature = "";
-  lastOptionsSignature = "";
 
   constructor() {
+    super();
+    const node = this as unknown as PreviewAwareNode & SharpenToolNode;
+    node.title = createToolTitle("Sharpen");
+    node.properties = {
+      preset: "classic",
+      amount: 1,
+    };
+    node.addInput("image", "image");
+    node.addOutput("image", "image");
+    node.addWidget(
+      "combo",
+      "Preset",
+      "classic",
+      (value) => {
+        node.properties.preset = String(value);
+        notifyGraphStateChange(node);
+      },
+      { values: ["classic", "strong", "edge"] },
+    );
+    node.addWidget(
+      "slider",
+      "Amount",
+      1,
+      (value) => {
+        node.properties.amount = Number(value);
+        notifyGraphStateChange(node);
+      },
+      { min: 0.5, max: 3, step: 0.1, precision: 1 },
+    );
+    node.refreshPreviewLayout = () => {
+      refreshNode(node, node.preview, 2);
+    };
+    node.refreshPreviewLayout();
+  }
+
+  onExecute(this: PreviewAwareNode & SharpenToolNode) {
+    const start = performance.now();
+    const input = this.getInputData(0);
+    if (!input) {
+      this.preview = null;
+      this.completeOptimizedExecution(start);
+      this.resetOptimizedCache();
+      this.setOutputData(0, null);
+      this.refreshPreviewLayout();
+      return;
+    }
+
+    const preset = String(this.properties.preset ?? "classic");
+    const amount = clamp(Number(this.properties.amount ?? 1), 0.5, 3);
+    const signature = getGraphImageSignature(input);
+    const optionsSignature = `preset:${preset}|amount:${amount.toFixed(2)}`;
+    if (this.canReuseOptimizedResult(signature, optionsSignature)) {
+      this.setOutputData(0, this.preview);
+      this.refreshPreviewLayout();
+      return;
+    }
+
+    const kernels: Record<string, number[]> = {
+      classic: [0, -1, 0, -1, 5, -1, 0, -1, 0],
+      strong: [-1, -1, -1, -1, 9, -1, -1, -1, -1],
+      edge: [1, -2, 1, -2, 5, -2, 1, -2, 1],
+    };
+    const baseKernel = kernels[preset] ?? kernels.classic;
+    const kernel = baseKernel.map((value, index) => (index === 4 ? 1 + (value - 1) * amount : value * amount));
+    this.preview = convolveImage3x3(input, kernel, 1, 0);
+    this.completeOptimizedExecution(start, signature, optionsSignature);
+    this.setOutputData(0, this.preview);
+    this.refreshPreviewLayout();
+  }
+
+  onDrawBackground(this: PreviewAwareNode & SharpenToolNode, context: CanvasRenderingContext2D) {
+    const layout = drawImagePreview(context, this, this.preview, { footerLines: 2 });
+    context.save();
+    context.fillStyle = "rgba(255,255,255,0.65)";
+    context.font = "12px sans-serif";
+    const preset = String(this.properties.preset ?? "classic");
+    const amount = Number(this.properties.amount ?? 1);
+    context.fillText(`preset:${preset} | amount:${amount.toFixed(1)}`, 10, layout.footerTop + 12);
+    context.fillText(formatExecutionInfo(this.executionMs), 10, layout.footerTop + 30);
+    context.restore();
+  }
+}
+
+class SobelToolNode extends OptimizedToolNode {
+  size: [number, number] = [280, 400];
+  preview: GraphImage | null = null;
+
+  constructor() {
+    super();
+    const node = this as unknown as PreviewAwareNode & SobelToolNode;
+    node.title = createToolTitle("Sobel");
+    node.properties = {
+      mode: "magnitude",
+      threshold: 80,
+      invert: false,
+      strength: 1,
+    };
+    node.addInput("image", "image");
+    node.addOutput("image", "image");
+    node.addWidget(
+      "combo",
+      "Mode",
+      "magnitude",
+      (value) => {
+        node.properties.mode = String(value);
+        notifyGraphStateChange(node);
+      },
+      { values: ["magnitude", "horizontal", "vertical", "threshold"] },
+    );
+    node.addWidget(
+      "slider",
+      "Threshold",
+      80,
+      (value) => {
+        node.properties.threshold = Number(value);
+        notifyGraphStateChange(node);
+      },
+      { min: 0, max: 255, step: 1 },
+    );
+    node.addWidget("toggle", "Invert", false, (value) => {
+      node.properties.invert = Boolean(value);
+      notifyGraphStateChange(node);
+    });
+    node.addWidget(
+      "slider",
+      "Strength",
+      1,
+      (value) => {
+        node.properties.strength = Number(value);
+        notifyGraphStateChange(node);
+      },
+      { min: 0.5, max: 6, step: 0.1, precision: 1 },
+    );
+    node.refreshPreviewLayout = () => {
+      refreshNode(node, node.preview, 2);
+    };
+    node.refreshPreviewLayout();
+  }
+
+  onExecute(this: PreviewAwareNode & SobelToolNode) {
+    const start = performance.now();
+    const input = this.getInputData(0);
+    if (!input) {
+      this.preview = null;
+      this.completeOptimizedExecution(start);
+      this.resetOptimizedCache();
+      this.setOutputData(0, null);
+      this.refreshPreviewLayout();
+      return;
+    }
+
+    const mode = String(this.properties.mode ?? "magnitude") as "magnitude" | "horizontal" | "vertical" | "threshold";
+    const threshold = Number(this.properties.threshold ?? 80);
+    const invert = Boolean(this.properties.invert ?? false);
+    const strength = Number(this.properties.strength ?? 1);
+    const signature = getGraphImageSignature(input);
+    const optionsSignature = `mode:${mode}|thr:${Math.round(threshold)}|inv:${invert ? 1 : 0}|str:${strength.toFixed(2)}`;
+    if (this.canReuseOptimizedResult(signature, optionsSignature)) {
+      this.setOutputData(0, this.preview);
+      this.refreshPreviewLayout();
+      return;
+    }
+
+    this.preview = sobelGraphImage(input, { mode, threshold, invert, strength });
+    this.completeOptimizedExecution(start, signature, optionsSignature);
+    this.setOutputData(0, this.preview);
+    this.refreshPreviewLayout();
+  }
+
+  onDrawBackground(this: PreviewAwareNode & SobelToolNode, context: CanvasRenderingContext2D) {
+    const layout = drawImagePreview(context, this, this.preview, { footerLines: 2 });
+    context.save();
+    context.fillStyle = "rgba(255,255,255,0.65)";
+    context.font = "12px sans-serif";
+    const mode = String(this.properties.mode ?? "magnitude");
+    const threshold = Math.round(Number(this.properties.threshold ?? 80));
+    context.fillText(`mode:${mode} | thr:${threshold}`, 10, layout.footerTop + 12);
+    context.fillText(formatExecutionInfo(this.executionMs), 10, layout.footerTop + 30);
+    context.restore();
+  }
+}
+
+class ScaleToolNode extends OptimizedToolNode {
+  size: [number, number] = [280, 320];
+  preview: GraphImage | null = null;
+
+  constructor() {
+    super();
     const node = this as unknown as PreviewAwareNode & ScaleToolNode;
     node.title = createToolTitle("Scale");
     node.properties = { percent: 100 };
@@ -3951,9 +4268,8 @@ class ScaleToolNode {
     const percent = Number(this.properties.percent ?? 100);
     if (!input) {
       this.preview = null;
-      this.executionMs = performance.now() - start;
-      this.lastSignature = "";
-      this.lastOptionsSignature = "";
+      this.completeOptimizedExecution(start);
+      this.resetOptimizedCache();
       this.setOutputData(0, null);
       this.refreshPreviewLayout();
       return;
@@ -3961,22 +4277,14 @@ class ScaleToolNode {
     const signature = getGraphImageSignature(input);
     const optionsSignature = `percent:${Math.round(percent)}`;
     if (
-      shouldReuseCachedToolResult(
-        this.executionMs,
-        this.lastSignature,
-        this.lastOptionsSignature,
-        signature,
-        optionsSignature,
-      )
+      this.canReuseOptimizedResult(signature, optionsSignature)
     ) {
       this.setOutputData(0, this.preview);
       this.refreshPreviewLayout();
       return;
     }
     this.preview = scaleGraphImage(input, percent);
-    this.executionMs = performance.now() - start;
-    this.lastSignature = signature;
-    this.lastOptionsSignature = optionsSignature;
+    this.completeOptimizedExecution(start, signature, optionsSignature);
     this.setOutputData(0, this.preview);
     this.refreshPreviewLayout();
   }
@@ -3996,14 +4304,12 @@ class ScaleToolNode {
   }
 }
 
-class RotateToolNode {
+class RotateToolNode extends OptimizedToolNode {
   size: [number, number] = [280, 320];
   preview: GraphImage | null = null;
-  executionMs: number | null = null;
-  lastSignature = "";
-  lastOptionsSignature = "";
 
   constructor() {
+    super();
     const node = this as unknown as PreviewAwareNode & RotateToolNode;
     node.title = createToolTitle("Rotate");
     node.properties = { angle: 0 };
@@ -4032,9 +4338,8 @@ class RotateToolNode {
     const angle = Number(this.properties.angle ?? 0);
     if (!input) {
       this.preview = null;
-      this.executionMs = performance.now() - start;
-      this.lastSignature = "";
-      this.lastOptionsSignature = "";
+      this.completeOptimizedExecution(start);
+      this.resetOptimizedCache();
       this.setOutputData(0, null);
       this.refreshPreviewLayout();
       return;
@@ -4042,22 +4347,14 @@ class RotateToolNode {
     const signature = getGraphImageSignature(input);
     const optionsSignature = `angle:${Math.round(angle)}`;
     if (
-      shouldReuseCachedToolResult(
-        this.executionMs,
-        this.lastSignature,
-        this.lastOptionsSignature,
-        signature,
-        optionsSignature,
-      )
+      this.canReuseOptimizedResult(signature, optionsSignature)
     ) {
       this.setOutputData(0, this.preview);
       this.refreshPreviewLayout();
       return;
     }
     this.preview = rotateGraphImage(input, angle);
-    this.executionMs = performance.now() - start;
-    this.lastSignature = signature;
-    this.lastOptionsSignature = optionsSignature;
+    this.completeOptimizedExecution(start, signature, optionsSignature);
     this.setOutputData(0, this.preview);
     this.refreshPreviewLayout();
   }
@@ -4073,14 +4370,222 @@ class RotateToolNode {
   }
 }
 
-class BrightnessContrastToolNode {
-  size: [number, number] = [280, 360];
+class RotatePanZoomToolNode extends OptimizedToolNode {
+  size: [number, number] = [280, 440];
   preview: GraphImage | null = null;
-  executionMs: number | null = null;
-  lastSignature = "";
-  lastOptionsSignature = "";
+  birdEyeImage: GraphImage | null = null;
+  cropRect: CropRect | null = null;
 
   constructor() {
+    super();
+    const node = this as unknown as PreviewAwareNode & RotatePanZoomToolNode;
+    node.title = createToolTitle("RotatePanZoom");
+    node.properties = {
+      rotation: 0,
+      zoom: 1,
+      panX: 0,
+      panY: 0,
+      cropPercent: 70,
+    };
+    node.addInput("image", "image");
+    node.addOutput("image", "image");
+    node.addWidget(
+      "slider",
+      "Rotation",
+      0,
+      (value) => {
+        node.properties.rotation = Number(value);
+        notifyGraphStateChange(node);
+      },
+      { min: -180, max: 180, step: 1 },
+    );
+    node.addWidget(
+      "slider",
+      "Zoom",
+      1,
+      (value) => {
+        node.properties.zoom = Number(value);
+        notifyGraphStateChange(node);
+      },
+      { min: 0.2, max: 5, step: 0.05, precision: 2 },
+    );
+    node.addWidget(
+      "slider",
+      "Pan X",
+      0,
+      (value) => {
+        node.properties.panX = Number(value);
+        notifyGraphStateChange(node);
+      },
+      { min: -100, max: 100, step: 1 },
+    );
+    node.addWidget(
+      "slider",
+      "Pan Y",
+      0,
+      (value) => {
+        node.properties.panY = Number(value);
+        notifyGraphStateChange(node);
+      },
+      { min: -100, max: 100, step: 1 },
+    );
+    node.addWidget(
+      "slider",
+      "Crop %",
+      70,
+      (value) => {
+        node.properties.cropPercent = Number(value);
+        notifyGraphStateChange(node);
+      },
+      { min: 10, max: 100, step: 1 },
+    );
+    node.refreshPreviewLayout = () => {
+      refreshNode(node, node.preview, 3);
+    };
+    node.refreshPreviewLayout();
+  }
+
+  onExecute(this: PreviewAwareNode & RotatePanZoomToolNode) {
+    const start = performance.now();
+    const input = this.getInputData(0);
+    if (!input) {
+      this.preview = null;
+      this.birdEyeImage = null;
+      this.cropRect = null;
+      this.completeOptimizedExecution(start);
+      this.resetOptimizedCache();
+      this.setOutputData(0, null);
+      this.refreshPreviewLayout();
+      return;
+    }
+
+    const rotation = Number(this.properties.rotation ?? 0);
+    const zoom = clamp(Number(this.properties.zoom ?? 1), 0.2, 5);
+    const panX = clamp(Number(this.properties.panX ?? 0), -100, 100);
+    const panY = clamp(Number(this.properties.panY ?? 0), -100, 100);
+    const cropPercent = clamp(Number(this.properties.cropPercent ?? 70), 10, 100);
+    const signature = getGraphImageSignature(input);
+    const optionsSignature = JSON.stringify({
+      rotation: Math.round(rotation),
+      zoom: Number(zoom.toFixed(3)),
+      panX: Math.round(panX),
+      panY: Math.round(panY),
+      cropPercent: Math.round(cropPercent),
+    });
+    if (this.canReuseOptimizedResult(signature, optionsSignature)) {
+      this.setOutputData(0, this.preview);
+      this.refreshPreviewLayout();
+      return;
+    }
+
+    const width = input.width;
+    const height = input.height;
+    const transformed = document.createElement("canvas");
+    transformed.width = width;
+    transformed.height = height;
+    const transformedContext = transformed.getContext("2d");
+    if (!transformedContext) {
+      this.preview = null;
+      this.birdEyeImage = null;
+      this.cropRect = null;
+      this.completeOptimizedExecution(start);
+      this.resetOptimizedCache();
+      this.setOutputData(0, null);
+      this.refreshPreviewLayout();
+      return;
+    }
+
+    transformedContext.save();
+    transformedContext.translate(width / 2, height / 2);
+    transformedContext.rotate((rotation * Math.PI) / 180);
+    transformedContext.scale(zoom, zoom);
+    transformedContext.drawImage(input, -width / 2, -height / 2, width, height);
+    transformedContext.restore();
+
+    const cropWidth = clamp(Math.round(width * (cropPercent / 100)), 1, width);
+    const cropHeight = clamp(Math.round(height * (cropPercent / 100)), 1, height);
+    const maxOffsetX = Math.max(0, (width - cropWidth) / 2);
+    const maxOffsetY = Math.max(0, (height - cropHeight) / 2);
+    const centerX = width / 2 + (panX / 100) * maxOffsetX;
+    const centerY = height / 2 + (panY / 100) * maxOffsetY;
+    const cropX = clamp(Math.round(centerX - cropWidth / 2), 0, width - cropWidth);
+    const cropY = clamp(Math.round(centerY - cropHeight / 2), 0, height - cropHeight);
+
+    const cropped = document.createElement("canvas");
+    cropped.width = cropWidth;
+    cropped.height = cropHeight;
+    const croppedContext = cropped.getContext("2d");
+    if (!croppedContext) {
+      this.preview = null;
+      this.birdEyeImage = null;
+      this.cropRect = null;
+      this.completeOptimizedExecution(start);
+      this.resetOptimizedCache();
+      this.setOutputData(0, null);
+      this.refreshPreviewLayout();
+      return;
+    }
+    croppedContext.drawImage(transformed, cropX, cropY, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight);
+
+    this.preview = cropped;
+    this.birdEyeImage = transformed;
+    this.cropRect = { x: cropX, y: cropY, width: cropWidth, height: cropHeight };
+    this.completeOptimizedExecution(start, signature, optionsSignature);
+    this.setOutputData(0, this.preview);
+    this.refreshPreviewLayout();
+  }
+
+  onDrawBackground(this: PreviewAwareNode & RotatePanZoomToolNode, context: CanvasRenderingContext2D) {
+    const layout = drawImagePreview(context, this, this.preview, { footerLines: 3 });
+    if (this.birdEyeImage && this.cropRect) {
+      const panelWidth = Math.max(60, Math.min(110, layout.previewWidth * 0.34));
+      const panelHeight = Math.max(60, Math.min(110, layout.previewHeight * 0.34));
+      const panelX = layout.padding + layout.previewWidth - panelWidth - 8;
+      const panelY = layout.previewTop + 8;
+      context.save();
+      context.fillStyle = "rgba(10,10,10,0.72)";
+      context.fillRect(panelX, panelY, panelWidth, panelHeight);
+      context.drawImage(this.birdEyeImage, panelX, panelY, panelWidth, panelHeight);
+      context.strokeStyle = "rgba(255,255,255,0.2)";
+      context.strokeRect(panelX + 0.5, panelY + 0.5, panelWidth - 1, panelHeight - 1);
+
+      const scaleX = panelWidth / this.birdEyeImage.width;
+      const scaleY = panelHeight / this.birdEyeImage.height;
+      context.strokeStyle = "rgba(255, 173, 92, 0.96)";
+      context.lineWidth = 1.2;
+      context.strokeRect(
+        panelX + this.cropRect.x * scaleX + 0.5,
+        panelY + this.cropRect.y * scaleY + 0.5,
+        Math.max(1, this.cropRect.width * scaleX - 1),
+        Math.max(1, this.cropRect.height * scaleY - 1),
+      );
+      context.restore();
+    }
+
+    context.save();
+    context.fillStyle = "rgba(255,255,255,0.65)";
+    context.font = "12px sans-serif";
+    const rotation = Math.round(Number(this.properties.rotation ?? 0));
+    const zoom = Number(this.properties.zoom ?? 1);
+    const panX = Math.round(Number(this.properties.panX ?? 0));
+    const panY = Math.round(Number(this.properties.panY ?? 0));
+    context.fillText(`rot:${rotation}deg | zoom:${zoom.toFixed(2)} | pan:${panX},${panY}`, 10, layout.footerTop + 12);
+    context.fillText(
+      this.preview ? `crop:${this.preview.width}x${this.preview.height}` : "no output",
+      10,
+      layout.footerTop + 30,
+    );
+    context.fillText(formatExecutionInfo(this.executionMs), 10, layout.footerTop + 48);
+    context.restore();
+  }
+}
+
+class BrightnessContrastToolNode extends OptimizedToolNode {
+  size: [number, number] = [280, 360];
+  preview: GraphImage | null = null;
+
+  constructor() {
+    super();
     const node = this as unknown as PreviewAwareNode & BrightnessContrastToolNode;
     node.title = createToolTitle("Brightness/Contrast");
     node.properties = { brightness: 0, contrast: 0, saturation: 0 };
@@ -4133,9 +4638,8 @@ class BrightnessContrastToolNode {
     const saturation = Number(this.properties.saturation ?? 0);
     if (!input) {
       this.preview = null;
-      this.executionMs = performance.now() - start;
-      this.lastSignature = "";
-      this.lastOptionsSignature = "";
+      this.completeOptimizedExecution(start);
+      this.resetOptimizedCache();
       this.setOutputData(0, null);
       this.refreshPreviewLayout();
       return;
@@ -4143,22 +4647,14 @@ class BrightnessContrastToolNode {
     const signature = getGraphImageSignature(input);
     const optionsSignature = `b:${Math.round(brightness)}|c:${Math.round(contrast)}|s:${Math.round(saturation)}`;
     if (
-      shouldReuseCachedToolResult(
-        this.executionMs,
-        this.lastSignature,
-        this.lastOptionsSignature,
-        signature,
-        optionsSignature,
-      )
+      this.canReuseOptimizedResult(signature, optionsSignature)
     ) {
       this.setOutputData(0, this.preview);
       this.refreshPreviewLayout();
       return;
     }
     this.preview = brightnessContrastGraphImage(input, brightness, contrast, saturation);
-    this.executionMs = performance.now() - start;
-    this.lastSignature = signature;
-    this.lastOptionsSignature = optionsSignature;
+    this.completeOptimizedExecution(start, signature, optionsSignature);
     this.setOutputData(0, this.preview);
     this.refreshPreviewLayout();
   }
@@ -4178,17 +4674,15 @@ class BrightnessContrastToolNode {
   }
 }
 
-class HistogramToolNode {
+class HistogramToolNode extends OptimizedToolNode {
   size: [number, number] = [280, 360];
   preview: GraphImage | null = null;
-  executionMs: number | null = null;
   channels: HistogramChannel[] = [];
   maxCount = 0;
   pixelCount = 0;
-  lastSignature = "";
-  lastOptionsSignature = "";
 
   constructor() {
+    super();
     const node = this as unknown as PreviewAwareNode & HistogramToolNode;
     node.title = createToolTitle("Histogram");
     node.properties = { mode: "rgb" as HistogramMode };
@@ -4221,9 +4715,8 @@ class HistogramToolNode {
       this.channels = [];
       this.maxCount = 0;
       this.pixelCount = 0;
-      this.executionMs = performance.now() - start;
-      this.lastSignature = "";
-      this.lastOptionsSignature = "";
+      this.completeOptimizedExecution(start);
+      this.resetOptimizedCache();
       this.refreshPreviewLayout();
       return;
     }
@@ -4232,13 +4725,7 @@ class HistogramToolNode {
     const signature = getGraphImageSignature(input);
     const optionsSignature = `mode:${mode}`;
     if (
-      shouldReuseCachedToolResult(
-        this.executionMs,
-        this.lastSignature,
-        this.lastOptionsSignature,
-        signature,
-        optionsSignature,
-      )
+      this.canReuseOptimizedResult(signature, optionsSignature)
     ) {
       this.refreshPreviewLayout();
       return;
@@ -4247,9 +4734,7 @@ class HistogramToolNode {
     this.channels = histogram.channels;
     this.maxCount = histogram.maxCount;
     this.pixelCount = histogram.pixelCount;
-    this.executionMs = performance.now() - start;
-    this.lastSignature = signature;
-    this.lastOptionsSignature = optionsSignature;
+    this.completeOptimizedExecution(start, signature, optionsSignature);
     this.refreshPreviewLayout();
   }
 
@@ -4297,14 +4782,12 @@ class HistogramToolNode {
   }
 }
 
-class LevelsToolNode {
+class LevelsToolNode extends OptimizedToolNode {
   size: [number, number] = [280, 430];
   preview: GraphImage | null = null;
-  executionMs: number | null = null;
-  lastSignature = "";
-  lastOptionsSignature = "";
 
   constructor() {
+    super();
     const node = this as unknown as PreviewAwareNode & LevelsToolNode;
     node.title = createToolTitle("Levels");
     node.properties = {
@@ -4388,9 +4871,8 @@ class LevelsToolNode {
     const input = this.getInputData(0);
     if (!input) {
       this.preview = null;
-      this.executionMs = performance.now() - start;
-      this.lastSignature = "";
-      this.lastOptionsSignature = "";
+      this.completeOptimizedExecution(start);
+      this.resetOptimizedCache();
       this.setOutputData(0, null);
       this.refreshPreviewLayout();
       return;
@@ -4412,13 +4894,7 @@ class LevelsToolNode {
       outWhite: Math.round(outWhite),
     });
     if (
-      shouldReuseCachedToolResult(
-        this.executionMs,
-        this.lastSignature,
-        this.lastOptionsSignature,
-        signature,
-        optionsSignature,
-      )
+      this.canReuseOptimizedResult(signature, optionsSignature)
     ) {
       this.setOutputData(0, this.preview);
       this.refreshPreviewLayout();
@@ -4428,7 +4904,7 @@ class LevelsToolNode {
     const sourceContext = input.getContext("2d", { willReadFrequently: true });
     if (!sourceContext) {
       this.preview = null;
-      this.executionMs = performance.now() - start;
+      this.completeOptimizedExecution(start);
       this.setOutputData(0, null);
       this.refreshPreviewLayout();
       return;
@@ -4471,7 +4947,7 @@ class LevelsToolNode {
     const outputContext = output.getContext("2d");
     if (!outputContext) {
       this.preview = null;
-      this.executionMs = performance.now() - start;
+      this.completeOptimizedExecution(start);
       this.setOutputData(0, null);
       this.refreshPreviewLayout();
       return;
@@ -4479,9 +4955,7 @@ class LevelsToolNode {
 
     outputContext.putImageData(imageData, 0, 0);
     this.preview = output;
-    this.executionMs = performance.now() - start;
-    this.lastSignature = signature;
-    this.lastOptionsSignature = optionsSignature;
+    this.completeOptimizedExecution(start, signature, optionsSignature);
     this.setOutputData(0, this.preview);
     this.refreshPreviewLayout();
   }
@@ -4505,17 +4979,15 @@ class LevelsToolNode {
   }
 }
 
-class RgbSplitToolNode {
+class RgbSplitToolNode extends OptimizedToolNode {
   size: [number, number] = [280, 340];
   preview: GraphImage | null = null;
   r: GraphImage | null = null;
   g: GraphImage | null = null;
   b: GraphImage | null = null;
-  executionMs: number | null = null;
-  lastSignature = "";
-  lastOptionsSignature = "";
 
   constructor() {
+    super();
     const node = this as unknown as PreviewAwareNode & RgbSplitToolNode;
     node.title = createToolTitle("RGB Split");
     node.properties = {};
@@ -4537,9 +5009,8 @@ class RgbSplitToolNode {
       this.r = null;
       this.g = null;
       this.b = null;
-      this.executionMs = performance.now() - start;
-      this.lastSignature = "";
-      this.lastOptionsSignature = "";
+      this.completeOptimizedExecution(start);
+      this.resetOptimizedCache();
       this.setOutputData(0, null);
       this.setOutputData(1, null);
       this.setOutputData(2, null);
@@ -4549,13 +5020,7 @@ class RgbSplitToolNode {
     const signature = getGraphImageSignature(input);
     const optionsSignature = "rgb-split";
     if (
-      shouldReuseCachedToolResult(
-        this.executionMs,
-        this.lastSignature,
-        this.lastOptionsSignature,
-        signature,
-        optionsSignature,
-      )
+      this.canReuseOptimizedResult(signature, optionsSignature)
     ) {
       this.setOutputData(0, this.r);
       this.setOutputData(1, this.g);
@@ -4569,9 +5034,7 @@ class RgbSplitToolNode {
     this.g = result.g;
     this.b = result.b;
     this.preview = result.r;
-    this.executionMs = performance.now() - start;
-    this.lastSignature = signature;
-    this.lastOptionsSignature = optionsSignature;
+    this.completeOptimizedExecution(start, signature, optionsSignature);
     this.setOutputData(0, this.r);
     this.setOutputData(1, this.g);
     this.setOutputData(2, this.b);
@@ -4589,18 +5052,16 @@ class RgbSplitToolNode {
   }
 }
 
-class CmykSplitToolNode {
+class CmykSplitToolNode extends OptimizedToolNode {
   size: [number, number] = [280, 340];
   preview: GraphImage | null = null;
   c: GraphImage | null = null;
   m: GraphImage | null = null;
   y: GraphImage | null = null;
   k: GraphImage | null = null;
-  executionMs: number | null = null;
-  lastSignature = "";
-  lastOptionsSignature = "";
 
   constructor() {
+    super();
     const node = this as unknown as PreviewAwareNode & CmykSplitToolNode;
     node.title = createToolTitle("CMYK Split");
     node.properties = {};
@@ -4624,9 +5085,8 @@ class CmykSplitToolNode {
       this.m = null;
       this.y = null;
       this.k = null;
-      this.executionMs = performance.now() - start;
-      this.lastSignature = "";
-      this.lastOptionsSignature = "";
+      this.completeOptimizedExecution(start);
+      this.resetOptimizedCache();
       this.setOutputData(0, null);
       this.setOutputData(1, null);
       this.setOutputData(2, null);
@@ -4637,13 +5097,7 @@ class CmykSplitToolNode {
     const signature = getGraphImageSignature(input);
     const optionsSignature = "cmyk-split";
     if (
-      shouldReuseCachedToolResult(
-        this.executionMs,
-        this.lastSignature,
-        this.lastOptionsSignature,
-        signature,
-        optionsSignature,
-      )
+      this.canReuseOptimizedResult(signature, optionsSignature)
     ) {
       this.setOutputData(0, this.c);
       this.setOutputData(1, this.m);
@@ -4659,9 +5113,7 @@ class CmykSplitToolNode {
     this.y = result.y;
     this.k = result.k;
     this.preview = result.k;
-    this.executionMs = performance.now() - start;
-    this.lastSignature = signature;
-    this.lastOptionsSignature = optionsSignature;
+    this.completeOptimizedExecution(start, signature, optionsSignature);
     this.setOutputData(0, this.c);
     this.setOutputData(1, this.m);
     this.setOutputData(2, this.y);
@@ -4680,14 +5132,12 @@ class CmykSplitToolNode {
   }
 }
 
-class RgbCombineToolNode {
+class RgbCombineToolNode extends OptimizedToolNode {
   size: [number, number] = [280, 340];
   preview: GraphImage | null = null;
-  executionMs: number | null = null;
-  lastSignature = "";
-  lastOptionsSignature = "";
 
   constructor() {
+    super();
     const node = this as unknown as PreviewAwareNode & RgbCombineToolNode;
     node.title = createToolTitle("RGB Combine");
     node.properties = {};
@@ -4708,9 +5158,8 @@ class RgbCombineToolNode {
     const b = this.getInputData(2);
     if (!r || !g || !b) {
       this.preview = null;
-      this.executionMs = performance.now() - start;
-      this.lastSignature = "";
-      this.lastOptionsSignature = "";
+      this.completeOptimizedExecution(start);
+      this.resetOptimizedCache();
       this.setOutputData(0, null);
       this.refreshPreviewLayout();
       return;
@@ -4718,13 +5167,7 @@ class RgbCombineToolNode {
     const signature = `${getGraphImageSignature(r)}|${getGraphImageSignature(g)}|${getGraphImageSignature(b)}`;
     const optionsSignature = "rgb-combine";
     if (
-      shouldReuseCachedToolResult(
-        this.executionMs,
-        this.lastSignature,
-        this.lastOptionsSignature,
-        signature,
-        optionsSignature,
-      )
+      this.canReuseOptimizedResult(signature, optionsSignature)
     ) {
       this.setOutputData(0, this.preview);
       this.refreshPreviewLayout();
@@ -4732,9 +5175,7 @@ class RgbCombineToolNode {
     }
 
     this.preview = combineRgbChannels(r, g, b);
-    this.executionMs = performance.now() - start;
-    this.lastSignature = signature;
-    this.lastOptionsSignature = optionsSignature;
+    this.completeOptimizedExecution(start, signature, optionsSignature);
     this.setOutputData(0, this.preview);
     this.refreshPreviewLayout();
   }
@@ -4750,14 +5191,12 @@ class RgbCombineToolNode {
   }
 }
 
-class CmykCombineToolNode {
+class CmykCombineToolNode extends OptimizedToolNode {
   size: [number, number] = [280, 340];
   preview: GraphImage | null = null;
-  executionMs: number | null = null;
-  lastSignature = "";
-  lastOptionsSignature = "";
 
   constructor() {
+    super();
     const node = this as unknown as PreviewAwareNode & CmykCombineToolNode;
     node.title = createToolTitle("CMYK Combine");
     node.properties = {};
@@ -4780,9 +5219,8 @@ class CmykCombineToolNode {
     const k = this.getInputData(3);
     if (!c || !m || !y || !k) {
       this.preview = null;
-      this.executionMs = performance.now() - start;
-      this.lastSignature = "";
-      this.lastOptionsSignature = "";
+      this.completeOptimizedExecution(start);
+      this.resetOptimizedCache();
       this.setOutputData(0, null);
       this.refreshPreviewLayout();
       return;
@@ -4790,13 +5228,7 @@ class CmykCombineToolNode {
     const signature = `${getGraphImageSignature(c)}|${getGraphImageSignature(m)}|${getGraphImageSignature(y)}|${getGraphImageSignature(k)}`;
     const optionsSignature = "cmyk-combine";
     if (
-      shouldReuseCachedToolResult(
-        this.executionMs,
-        this.lastSignature,
-        this.lastOptionsSignature,
-        signature,
-        optionsSignature,
-      )
+      this.canReuseOptimizedResult(signature, optionsSignature)
     ) {
       this.setOutputData(0, this.preview);
       this.refreshPreviewLayout();
@@ -4804,9 +5236,7 @@ class CmykCombineToolNode {
     }
 
     this.preview = combineCmykChannels(c, m, y, k);
-    this.executionMs = performance.now() - start;
-    this.lastSignature = signature;
-    this.lastOptionsSignature = optionsSignature;
+    this.completeOptimizedExecution(start, signature, optionsSignature);
     this.setOutputData(0, this.preview);
     this.refreshPreviewLayout();
   }
@@ -4989,14 +5419,12 @@ class QuantizeToolNode {
   }
 }
 
-class BlendToolNode {
+class BlendToolNode extends OptimizedToolNode {
   size: [number, number] = [280, 420];
   preview: GraphImage | null = null;
-  executionMs: number | null = null;
-  lastSignature = "";
-  lastOptionsSignature = "";
 
   constructor() {
+    super();
     const node = this as unknown as PreviewAwareNode & BlendToolNode;
     node.title = createToolTitle("Blend");
     node.properties = {
@@ -5074,9 +5502,8 @@ class BlendToolNode {
 
     if (!baseImage) {
       this.preview = null;
-      this.executionMs = performance.now() - start;
-      this.lastSignature = "";
-      this.lastOptionsSignature = "";
+      this.completeOptimizedExecution(start);
+      this.resetOptimizedCache();
       this.setOutputData(0, null);
       this.refreshPreviewLayout();
       return;
@@ -5099,13 +5526,7 @@ class BlendToolNode {
       scale: Number(this.properties.scale ?? 1).toFixed(3),
     });
     if (
-      shouldReuseCachedToolResult(
-        this.executionMs,
-        this.lastSignature,
-        this.lastOptionsSignature,
-        signature,
-        optionsSignature,
-      )
+      this.canReuseOptimizedResult(signature, optionsSignature)
     ) {
       this.setOutputData(0, this.preview);
       this.refreshPreviewLayout();
@@ -5119,9 +5540,7 @@ class BlendToolNode {
       offsetY: Number(this.properties.offsetY ?? 0),
       scale: Number(this.properties.scale ?? 1),
     });
-    this.executionMs = performance.now() - start;
-    this.lastSignature = signature;
-    this.lastOptionsSignature = optionsSignature;
+    this.completeOptimizedExecution(start, signature, optionsSignature);
     this.setOutputData(0, this.preview);
     this.refreshPreviewLayout();
   }
@@ -5136,14 +5555,152 @@ class BlendToolNode {
   }
 }
 
-class OilToolNode {
-  size: [number, number] = [280, 360];
+class LayersToolNode extends OptimizedToolNode {
+  size: [number, number] = [280, 500];
   preview: GraphImage | null = null;
-  executionMs: number | null = null;
-  lastSignature = "";
-  lastOptionsSignature = "";
+  static MAX_LAYERS = 6;
 
   constructor() {
+    super();
+    const node = this as unknown as PreviewAwareNode & LayersToolNode;
+    node.title = createToolTitle("Layers");
+    const layerDefaults: Record<string, unknown> = {};
+    for (let index = 0; index < LayersToolNode.MAX_LAYERS; index += 1) {
+      const layer = index + 1;
+      layerDefaults[`layer${layer}Mode`] = "normal";
+      layerDefaults[`layer${layer}Alpha`] = 1;
+    }
+    node.properties = {
+      layerCount: 3,
+      ...layerDefaults,
+    };
+    for (let index = 0; index < LayersToolNode.MAX_LAYERS; index += 1) {
+      node.addInput(`L${index + 1}`, "image");
+    }
+    node.addOutput("image", "image");
+    node.addWidget(
+      "slider",
+      "Layers",
+      3,
+      (value) => {
+        node.properties.layerCount = Number(value);
+        notifyGraphStateChange(node);
+      },
+      { min: 1, max: LayersToolNode.MAX_LAYERS, step: 1 },
+    );
+    for (let index = 0; index < LayersToolNode.MAX_LAYERS; index += 1) {
+      const layer = index + 1;
+      node.addWidget(
+        "combo",
+        `L${layer} Mode`,
+        "normal",
+        (value) => {
+          node.properties[`layer${layer}Mode`] = String(value);
+          notifyGraphStateChange(node);
+        },
+        { values: ["normal", "multiply", "screen", "overlay", "darken", "lighten", "difference"] },
+      );
+      node.addWidget(
+        "slider",
+        `L${layer} Alpha`,
+        1,
+        (value) => {
+          node.properties[`layer${layer}Alpha`] = Number(value);
+          notifyGraphStateChange(node);
+        },
+        { min: 0, max: 1, step: 0.05, precision: 2 },
+      );
+    }
+    node.refreshPreviewLayout = () => {
+      refreshNode(node, node.preview, 2);
+    };
+    node.refreshPreviewLayout();
+  }
+
+  onExecute(this: PreviewAwareNode & LayersToolNode) {
+    const start = performance.now();
+    const layerCount = clamp(Math.round(Number(this.properties.layerCount ?? 3)), 1, LayersToolNode.MAX_LAYERS);
+    const layers = Array.from({ length: layerCount }).map((_, index) => this.getInputData(index));
+    const signatures = layers.map((image) => getGraphImageSignature(image ?? null));
+    const optionsSignature = JSON.stringify({
+      layerCount,
+      layers: Array.from({ length: layerCount }).map((_, index) => ({
+        mode: String(this.properties[`layer${index + 1}Mode`] ?? "normal"),
+        alpha: Number(this.properties[`layer${index + 1}Alpha`] ?? 1).toFixed(3),
+      })),
+    });
+    const signature = signatures.join("|");
+
+    if (this.canReuseOptimizedResult(signature, optionsSignature)) {
+      this.setOutputData(0, this.preview);
+      this.refreshPreviewLayout();
+      return;
+    }
+
+    const availableLayers = layers.filter((image): image is GraphImage => Boolean(image));
+    if (!availableLayers.length) {
+      this.preview = null;
+      this.completeOptimizedExecution(start);
+      this.resetOptimizedCache();
+      this.setOutputData(0, null);
+      this.refreshPreviewLayout();
+      return;
+    }
+
+    const width = Math.max(...availableLayers.map((image) => image.width));
+    const height = Math.max(...availableLayers.map((image) => image.height));
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d");
+    if (!context) {
+      this.preview = null;
+      this.completeOptimizedExecution(start);
+      this.resetOptimizedCache();
+      this.setOutputData(0, null);
+      this.refreshPreviewLayout();
+      return;
+    }
+    context.clearRect(0, 0, width, height);
+
+    for (let index = 0; index < layerCount; index += 1) {
+      const image = layers[index];
+      if (!image) {
+        continue;
+      }
+      const mode = String(this.properties[`layer${index + 1}Mode`] ?? "normal") as BlendMode;
+      const alpha = clamp(Number(this.properties[`layer${index + 1}Alpha`] ?? 1), 0, 1);
+      context.save();
+      context.globalCompositeOperation = blendModeToCompositeOperation[mode] ?? "source-over";
+      context.globalAlpha = alpha;
+      context.drawImage(image, 0, 0, width, height);
+      context.restore();
+    }
+
+    this.preview = canvas;
+    this.completeOptimizedExecution(start, signature, optionsSignature);
+    this.setOutputData(0, this.preview);
+    this.refreshPreviewLayout();
+  }
+
+  onDrawBackground(this: PreviewAwareNode & LayersToolNode, context: CanvasRenderingContext2D) {
+    const layout = drawImagePreview(context, this, this.preview, { footerLines: 2 });
+    context.save();
+    context.fillStyle = "rgba(255,255,255,0.65)";
+    context.font = "12px sans-serif";
+    const layerCount = clamp(Math.round(Number(this.properties.layerCount ?? 3)), 1, LayersToolNode.MAX_LAYERS);
+    context.fillText(`layers:${layerCount} | blend stack`, 10, layout.footerTop + 12);
+    context.fillText(formatExecutionInfo(this.executionMs), 10, layout.footerTop + 30);
+    context.restore();
+  }
+}
+
+class OilToolNode extends OptimizedToolNode {
+  size: [number, number] = [280, 360];
+  preview: GraphImage | null = null;
+
+  constructor() {
+    super();
     const node = this as unknown as PreviewAwareNode & OilToolNode;
     node.title = createToolTitle("Oil");
     node.properties = {
@@ -5183,9 +5740,8 @@ class OilToolNode {
     const input = this.getInputData(0);
     if (!input) {
       this.preview = null;
-      this.executionMs = performance.now() - start;
-      this.lastSignature = "";
-      this.lastOptionsSignature = "";
+      this.completeOptimizedExecution(start);
+      this.resetOptimizedCache();
       this.setOutputData(0, null);
       this.refreshPreviewLayout();
       return;
@@ -5196,22 +5752,14 @@ class OilToolNode {
     const signature = getGraphImageSignature(input);
     const optionsSignature = `radius:${Math.round(radius)}|intensity:${Math.round(intensity)}`;
     if (
-      shouldReuseCachedToolResult(
-        this.executionMs,
-        this.lastSignature,
-        this.lastOptionsSignature,
-        signature,
-        optionsSignature,
-      )
+      this.canReuseOptimizedResult(signature, optionsSignature)
     ) {
       this.setOutputData(0, this.preview);
       this.refreshPreviewLayout();
       return;
     }
     this.preview = oilPaintGraphImage(input, radius, intensity);
-    this.executionMs = performance.now() - start;
-    this.lastSignature = signature;
-    this.lastOptionsSignature = optionsSignature;
+    this.completeOptimizedExecution(start, signature, optionsSignature);
     this.setOutputData(0, this.preview);
     this.refreshPreviewLayout();
   }
@@ -8047,6 +8595,9 @@ export function registerImageNodes() {
   });
   registerBasicToolNodes(registerNodeType, {
     BlurToolNode: BlurToolNode as unknown as NodeCtor,
+    SharpenToolNode: SharpenToolNode as unknown as NodeCtor,
+    SobelToolNode: SobelToolNode as unknown as NodeCtor,
+    RotatePanZoomToolNode: RotatePanZoomToolNode as unknown as NodeCtor,
     ScaleToolNode: ScaleToolNode as unknown as NodeCtor,
     RotateToolNode: RotateToolNode as unknown as NodeCtor,
     BrightnessContrastToolNode: BrightnessContrastToolNode as unknown as NodeCtor,
@@ -8063,6 +8614,7 @@ export function registerImageNodes() {
     CmykCombineToolNode: CmykCombineToolNode as unknown as NodeCtor,
     QuantizeToolNode: QuantizeToolNode as unknown as NodeCtor,
     BlendToolNode: BlendToolNode as unknown as NodeCtor,
+    LayersToolNode: LayersToolNode as unknown as NodeCtor,
   });
   registerArtToolNodes(registerNodeType, {
     OilToolNode: OilToolNode as unknown as NodeCtor,

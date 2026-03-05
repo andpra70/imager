@@ -12,6 +12,7 @@ interface ColorToolNodeCtors {
   CmykCombineToolNode: NodeCtor;
   QuantizeToolNode: NodeCtor;
   BlendToolNode: NodeCtor;
+  LayersToolNode: NodeCtor;
 }
 
 export function registerColorToolNodes(registerNodeType: RegisterNodeTypeFn, ctors: ColorToolNodeCtors) {
@@ -28,4 +29,5 @@ export function registerColorToolNodes(registerNodeType: RegisterNodeTypeFn, cto
   registerNodeType("tools/colors/cymk-combine", ctors.CmykCombineToolNode);
   registerNodeType("tools/colors/quantize", ctors.QuantizeToolNode);
   registerNodeType("tools/colors/blend", ctors.BlendToolNode);
+  registerNodeType("tools/colors/layers", ctors.LayersToolNode);
 }
