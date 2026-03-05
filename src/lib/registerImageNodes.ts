@@ -1475,6 +1475,7 @@ interface CropRect {
 
 type HistogramMode = "rgb" | "hsv" | "grayscale";
 type LevelsMode = "rgb" | "hsv" | "gray" | "alpha";
+type HalftoningMode = "ordered4x4" | "floydSteinberg" | "atkinson" | "density4x4";
 
 function rgbToHsv255(r: number, g: number, b: number) {
   const rr = r / 255;
@@ -1641,6 +1642,247 @@ function buildHistogram(image: GraphImage, mode: HistogramMode) {
   });
 
   return { channels, maxCount, pixelCount };
+}
+
+const BAYER_4X4_PATTERN = new Uint8Array([
+  0, 8, 2, 10,
+  12, 4, 14, 6,
+  3, 11, 1, 9,
+  15, 7, 13, 5,
+]);
+
+const DENSITY_PATTERN_ORDER_4X4 = new Uint8Array([10, 2, 8, 5, 15, 7, 13, 1, 11, 3, 9, 4, 6, 14, 12, 0]);
+const DENSITY_PATTERN_RANK_4X4 = (() => {
+  const ranks = new Uint8Array(16);
+  for (let index = 0; index < DENSITY_PATTERN_ORDER_4X4.length; index += 1) {
+    ranks[DENSITY_PATTERN_ORDER_4X4[index]] = index;
+  }
+  return ranks;
+})();
+
+interface HalftoningOptions {
+  mode: HalftoningMode;
+  threshold: number;
+  bias: number;
+  densityScale: number;
+  invert: boolean;
+}
+
+function buildLumaBuffer(imageData: ImageData) {
+  const pixels = imageData.data;
+  const luma = new Uint8Array(imageData.width * imageData.height);
+  const alpha = new Uint8Array(imageData.width * imageData.height);
+  for (let offset = 0, index = 0; offset < pixels.length; offset += 4, index += 1) {
+    const r = pixels[offset];
+    const g = pixels[offset + 1];
+    const b = pixels[offset + 2];
+    const a = pixels[offset + 3];
+    luma[index] = Math.round(0.299 * r + 0.587 * g + 0.114 * b);
+    alpha[index] = a;
+  }
+  return { luma, alpha };
+}
+
+function writeBinaryPixel(pixels: Uint8ClampedArray, index: number, value: 0 | 255, alpha: number, invert: boolean) {
+  const mono = invert ? (value === 255 ? 0 : 255) : value;
+  pixels[index] = mono;
+  pixels[index + 1] = mono;
+  pixels[index + 2] = mono;
+  pixels[index + 3] = alpha;
+}
+
+function halftoneOrdered4x4(width: number, height: number, luma: Uint8Array, alpha: Uint8Array, options: HalftoningOptions) {
+  const threshold = clamp(Math.round(options.threshold), 0, 255);
+  const bias = clamp(Math.round(options.bias), -255, 255);
+  const output = new Uint8ClampedArray(width * height * 4);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const pixelIndex = y * width + x;
+      const a = alpha[pixelIndex];
+      const outIndex = pixelIndex * 4;
+      if (a === 0) {
+        output[outIndex] = 0;
+        output[outIndex + 1] = 0;
+        output[outIndex + 2] = 0;
+        output[outIndex + 3] = 0;
+        continue;
+      }
+      const adjusted = clamp(luma[pixelIndex] + bias, 0, 255);
+      const patternIndex = (y & 3) * 4 + (x & 3);
+      const localThreshold = clamp(BAYER_4X4_PATTERN[patternIndex] * 16 + threshold - 127, 0, 255);
+      const value: 0 | 255 = adjusted >= localThreshold ? 255 : 0;
+      writeBinaryPixel(output, outIndex, value, a, options.invert);
+    }
+  }
+  return new ImageData(output, width, height);
+}
+
+function halftoneFloydSteinberg(
+  width: number,
+  height: number,
+  luma: Uint8Array,
+  alpha: Uint8Array,
+  options: HalftoningOptions,
+) {
+  const threshold = clamp(Math.round(options.threshold), 0, 255);
+  const bias = clamp(Math.round(options.bias), -255, 255);
+  const working = new Float32Array(width * height);
+  for (let index = 0; index < working.length; index += 1) {
+    working[index] = clamp(luma[index] + bias, 0, 255);
+  }
+
+  const output = new Uint8ClampedArray(width * height * 4);
+  for (let y = 0; y < height; y += 1) {
+    const direction = y % 2 === 0 ? 1 : -1;
+    const startX = direction > 0 ? 0 : width - 1;
+    const endX = direction > 0 ? width : -1;
+    for (let x = startX; x !== endX; x += direction) {
+      const pixelIndex = y * width + x;
+      const a = alpha[pixelIndex];
+      const outIndex = pixelIndex * 4;
+      if (a === 0) {
+        output[outIndex] = 0;
+        output[outIndex + 1] = 0;
+        output[outIndex + 2] = 0;
+        output[outIndex + 3] = 0;
+        continue;
+      }
+
+      const current = clamp(Math.round(working[pixelIndex]), 0, 255);
+      const quantized: 0 | 255 = current >= threshold ? 255 : 0;
+      const error = current - quantized;
+      writeBinaryPixel(output, outIndex, quantized, a, options.invert);
+
+      const rightX = x + direction;
+      const leftX = x - direction;
+      if (rightX >= 0 && rightX < width) {
+        working[pixelIndex + direction] += (error * 7) / 16;
+      }
+      if (y + 1 < height) {
+        working[pixelIndex + width] += (error * 5) / 16;
+        if (leftX >= 0 && leftX < width) {
+          working[pixelIndex + width - direction] += (error * 3) / 16;
+        }
+        if (rightX >= 0 && rightX < width) {
+          working[pixelIndex + width + direction] += error / 16;
+        }
+      }
+    }
+  }
+  return new ImageData(output, width, height);
+}
+
+function halftoneAtkinson(width: number, height: number, luma: Uint8Array, alpha: Uint8Array, options: HalftoningOptions) {
+  const threshold = clamp(Math.round(options.threshold), 0, 255);
+  const bias = clamp(Math.round(options.bias), -255, 255);
+  const working = new Float32Array(width * height);
+  for (let index = 0; index < working.length; index += 1) {
+    working[index] = clamp(luma[index] + bias, 0, 255);
+  }
+
+  const output = new Uint8ClampedArray(width * height * 4);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const pixelIndex = y * width + x;
+      const a = alpha[pixelIndex];
+      const outIndex = pixelIndex * 4;
+      if (a === 0) {
+        output[outIndex] = 0;
+        output[outIndex + 1] = 0;
+        output[outIndex + 2] = 0;
+        output[outIndex + 3] = 0;
+        continue;
+      }
+
+      const current = clamp(Math.round(working[pixelIndex]), 0, 255);
+      const quantized: 0 | 255 = current >= threshold ? 255 : 0;
+      const error = (current - quantized) / 8;
+      writeBinaryPixel(output, outIndex, quantized, a, options.invert);
+
+      if (x + 1 < width) {
+        working[pixelIndex + 1] += error;
+      }
+      if (x + 2 < width) {
+        working[pixelIndex + 2] += error;
+      }
+      if (y + 1 < height) {
+        if (x - 1 >= 0) {
+          working[pixelIndex + width - 1] += error;
+        }
+        working[pixelIndex + width] += error;
+        if (x + 1 < width) {
+          working[pixelIndex + width + 1] += error;
+        }
+      }
+      if (y + 2 < height) {
+        working[pixelIndex + width * 2] += error;
+      }
+    }
+  }
+  return new ImageData(output, width, height);
+}
+
+function halftoneDensity4x4(width: number, height: number, luma: Uint8Array, alpha: Uint8Array, options: HalftoningOptions) {
+  const threshold = clamp(Math.round(options.threshold), 0, 255);
+  const bias = clamp(Math.round(options.bias), -255, 255);
+  const scale = clamp(Math.round(options.densityScale), 2, 8);
+  const outputWidth = width * scale;
+  const outputHeight = height * scale;
+  const output = new Uint8ClampedArray(outputWidth * outputHeight * 4);
+
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const pixelIndex = y * width + x;
+      const a = alpha[pixelIndex];
+      if (a === 0) {
+        continue;
+      }
+
+      const adjusted = clamp(luma[pixelIndex] + bias + (threshold - 127), 0, 255);
+      const fillCount = clamp(Math.round((adjusted / 255) * 16), 0, 16);
+
+      for (let py = 0; py < scale; py += 1) {
+        for (let px = 0; px < scale; px += 1) {
+          const patternX = Math.floor((px / scale) * 4);
+          const patternY = Math.floor((py / scale) * 4);
+          const patternIndex = patternY * 4 + patternX;
+          const value: 0 | 255 = DENSITY_PATTERN_RANK_4X4[patternIndex] < fillCount ? 255 : 0;
+          const outPixel = ((y * scale + py) * outputWidth + (x * scale + px)) * 4;
+          writeBinaryPixel(output, outPixel, value, 255, options.invert);
+        }
+      }
+    }
+  }
+  return new ImageData(output, outputWidth, outputHeight);
+}
+
+function halftoneGraphImage(source: GraphImage, options: HalftoningOptions) {
+  const context = source.getContext("2d", { willReadFrequently: true });
+  if (!context) {
+    throw new Error("2D context not available.");
+  }
+  const imageData = context.getImageData(0, 0, source.width, source.height);
+  const { luma, alpha } = buildLumaBuffer(imageData);
+
+  const mode = options.mode;
+  const outputData =
+    mode === "floydSteinberg"
+      ? halftoneFloydSteinberg(source.width, source.height, luma, alpha, options)
+      : mode === "atkinson"
+        ? halftoneAtkinson(source.width, source.height, luma, alpha, options)
+        : mode === "density4x4"
+          ? halftoneDensity4x4(source.width, source.height, luma, alpha, options)
+          : halftoneOrdered4x4(source.width, source.height, luma, alpha, options);
+
+  const output = document.createElement("canvas");
+  output.width = outputData.width;
+  output.height = outputData.height;
+  const outputContext = output.getContext("2d");
+  if (!outputContext) {
+    throw new Error("2D context not available.");
+  }
+  outputContext.putImageData(outputData, 0, 0);
+  return output;
 }
 
 function shouldReuseCachedToolResult(
@@ -2874,6 +3116,498 @@ interface MatitaResult {
   height: number;
 }
 
+interface StipplePoint {
+  x: number;
+  y: number;
+  spacing: number;
+  darkness: number;
+}
+
+interface StippleResult {
+  svg: GraphSvg;
+  preview: GraphImage;
+  dotCount: number;
+  width: number;
+  height: number;
+}
+
+interface GridDotResult {
+  svg: GraphSvg;
+  preview: GraphImage;
+  dotCount: number;
+  width: number;
+  height: number;
+  cols: number;
+  rows: number;
+}
+
+function sampleCellGray(
+  grayMap: Uint8Array,
+  width: number,
+  height: number,
+  left: number,
+  top: number,
+  right: number,
+  bottom: number,
+  samplesPerCell: number,
+) {
+  const sampleCount = clamp(Math.round(samplesPerCell), 1, 36);
+  const side = Math.max(1, Math.round(Math.sqrt(sampleCount)));
+  let sum = 0;
+  let count = 0;
+  for (let sy = 0; sy < side; sy += 1) {
+    const ty = (sy + 0.5) / side;
+    const py = clamp(Math.floor(top + (bottom - top) * ty), 0, height - 1);
+    for (let sx = 0; sx < side; sx += 1) {
+      const tx = (sx + 0.5) / side;
+      const px = clamp(Math.floor(left + (right - left) * tx), 0, width - 1);
+      sum += grayMap[py * width + px];
+      count += 1;
+    }
+  }
+  return count > 0 ? sum / count : 255;
+}
+
+async function generateGridDotSvg(
+  input: GraphImage,
+  options: {
+    maxWidth: number;
+    gridCells: number;
+    samplesPerCell: number;
+    radiusMin: number;
+    radiusMax: number;
+    gamma: number;
+    invert: boolean;
+    dotColor: string;
+    dotOpacity: number;
+    backgroundMode: "transparent" | "color";
+    backgroundColor: string;
+  },
+  shouldCancel?: () => boolean,
+  onProgress?: (progress: number, status: string) => void,
+): Promise<GridDotResult | null> {
+  const source = fitSourceToMaxWidthCanvas(input, options.maxWidth);
+  const width = source.width;
+  const height = source.height;
+  const context = source.getContext("2d", { willReadFrequently: true });
+  if (!context) {
+    throw new Error("2D context not available.");
+  }
+  const imageData = context.getImageData(0, 0, width, height);
+  const grayMap = createGrayMapFromImageData(imageData);
+
+  const cols = clamp(Math.round(options.gridCells), 8, 1000);
+  const rows = Math.max(1, Math.round((height / width) * cols));
+  const cellWidth = width / cols;
+  const cellHeight = height / rows;
+  const maxCellRadius = Math.max(0.05, Math.min(cellWidth, cellHeight) * 0.5);
+  const radiusMin = clamp(options.radiusMin, 0, maxCellRadius);
+  const radiusMax = clamp(options.radiusMax, radiusMin, maxCellRadius);
+  const gamma = clamp(options.gamma, 0.2, 4);
+  const samplesPerCell = clamp(Math.round(options.samplesPerCell), 1, 36);
+  const dotColor = normalizeHexColor(options.dotColor);
+  const dotOpacity = clamp(options.dotOpacity, 0, 1);
+  const backgroundColor = normalizeHexColor(options.backgroundColor);
+
+  const circles: string[] = [];
+  const preview = document.createElement("canvas");
+  preview.width = width;
+  preview.height = height;
+  const previewContext = preview.getContext("2d");
+  if (!previewContext) {
+    throw new Error("2D context not available.");
+  }
+  if (options.backgroundMode === "color") {
+    previewContext.fillStyle = backgroundColor;
+    previewContext.fillRect(0, 0, width, height);
+  } else {
+    previewContext.clearRect(0, 0, width, height);
+  }
+  previewContext.save();
+  previewContext.fillStyle = dotColor;
+  previewContext.globalAlpha = dotOpacity;
+
+  let dotCount = 0;
+  let lastYieldTime = performance.now();
+  for (let row = 0; row < rows; row += 1) {
+    const top = row * cellHeight;
+    const bottom = (row + 1) * cellHeight;
+    for (let col = 0; col < cols; col += 1) {
+      const left = col * cellWidth;
+      const right = (col + 1) * cellWidth;
+      const gray = sampleCellGray(grayMap, width, height, left, top, right, bottom, samplesPerCell);
+      let tone = gray / 255;
+      if (options.invert) {
+        tone = 1 - tone;
+      }
+      const radius = radiusMin + (tone ** gamma) * (radiusMax - radiusMin);
+      if (radius <= 0.01) {
+        continue;
+      }
+
+      const centerX = left + cellWidth * 0.5;
+      const centerY = top + cellHeight * 0.5;
+      previewContext.beginPath();
+      previewContext.arc(centerX, centerY, radius, 0, Math.PI * 2);
+      previewContext.fill();
+      circles.push(
+        `<circle cx="${centerX.toFixed(2)}" cy="${centerY.toFixed(2)}" r="${radius.toFixed(2)}"/>`,
+      );
+      dotCount += 1;
+    }
+
+    onProgress?.((row + 1) / rows, `row ${row + 1}/${rows}`);
+    if (performance.now() - lastYieldTime > 12) {
+      await yieldToUi();
+      lastYieldTime = performance.now();
+      if (shouldCancel?.()) {
+        return null;
+      }
+    }
+  }
+  previewContext.restore();
+
+  const backgroundRect =
+    options.backgroundMode === "color"
+      ? `<rect width="100%" height="100%" fill="${backgroundColor}"/>`
+      : "";
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">${backgroundRect}<g fill="${dotColor}" fill-opacity="${dotOpacity.toFixed(4)}">${circles.join("")}</g></svg>`;
+  return { svg, preview, dotCount, width, height, cols, rows };
+}
+
+function createSeededRandom(seed: number) {
+  let state = (Math.floor(seed) >>> 0) || 1;
+  return () => {
+    state = (state + 0x6d2b79f5) >>> 0;
+    let t = state;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function sampleGrayNormalized(grayMap: Uint8Array, width: number, height: number, x: number, y: number) {
+  const px = clamp(x, 0, width - 1);
+  const py = clamp(y, 0, height - 1);
+  const x0 = Math.floor(px);
+  const y0 = Math.floor(py);
+  const x1 = Math.min(width - 1, x0 + 1);
+  const y1 = Math.min(height - 1, y0 + 1);
+  const tx = px - x0;
+  const ty = py - y0;
+  const i00 = grayMap[y0 * width + x0] / 255;
+  const i10 = grayMap[y0 * width + x1] / 255;
+  const i01 = grayMap[y1 * width + x0] / 255;
+  const i11 = grayMap[y1 * width + x1] / 255;
+  const ix0 = i00 + (i10 - i00) * tx;
+  const ix1 = i01 + (i11 - i01) * tx;
+  return clamp(ix0 + (ix1 - ix0) * ty, 0, 1);
+}
+
+function findCdfIndex(cdf: Float64Array, value: number) {
+  let low = 0;
+  let high = cdf.length - 1;
+  while (low < high) {
+    const middle = (low + high) >> 1;
+    if (value <= cdf[middle]) {
+      high = middle;
+    } else {
+      low = middle + 1;
+    }
+  }
+  return low;
+}
+
+async function generateStippleSvg(
+  input: GraphImage,
+  options: {
+    maxWidth: number;
+    pointCount: number;
+    darknessGamma: number;
+    minSpacing: number;
+    maxSpacing: number;
+    relaxIterations: number;
+    relaxRadius: number;
+    attraction: number;
+    repulsion: number;
+    jitter: number;
+    dotMinRadius: number;
+    dotMaxRadius: number;
+    dotGamma: number;
+    dotColor: string;
+    dotOpacity: number;
+    backgroundMode: "transparent" | "color";
+    backgroundColor: string;
+    seed: number;
+  },
+  shouldCancel?: () => boolean,
+  onProgress?: (progress: number, status: string) => void,
+): Promise<StippleResult | null> {
+  const source = fitSourceToMaxWidthCanvas(input, options.maxWidth);
+  const width = source.width;
+  const height = source.height;
+  const context = source.getContext("2d", { willReadFrequently: true });
+  if (!context) {
+    throw new Error("2D context not available.");
+  }
+  const imageData = context.getImageData(0, 0, width, height);
+  const grayMap = createGrayMapFromImageData(imageData);
+  const rng = createSeededRandom(options.seed);
+
+  const pointCount = clamp(Math.round(options.pointCount), 50, 20000);
+  const gamma = clamp(options.darknessGamma, 0.2, 4);
+  const minSpacing = clamp(options.minSpacing, 0.25, 32);
+  const maxSpacing = clamp(options.maxSpacing, minSpacing, 96);
+  const relaxIterations = clamp(Math.round(options.relaxIterations), 0, 24);
+  const relaxRadius = clamp(Math.round(options.relaxRadius), 1, 32);
+  const attraction = clamp(options.attraction, 0, 1);
+  const repulsion = clamp(options.repulsion, 0, 2);
+  const jitter = clamp(options.jitter, 0, 3);
+  const dotMinRadius = clamp(options.dotMinRadius, 0.1, 20);
+  const dotMaxRadius = clamp(options.dotMaxRadius, dotMinRadius, 24);
+  const dotGamma = clamp(options.dotGamma, 0.2, 3);
+  const dotColor = normalizeHexColor(options.dotColor);
+  const dotOpacity = clamp(options.dotOpacity, 0, 1);
+  const backgroundColor = normalizeHexColor(options.backgroundColor);
+
+  const weights = new Float64Array(width * height);
+  const cdf = new Float64Array(width * height);
+  let totalWeight = 0;
+  for (let i = 0; i < grayMap.length; i += 1) {
+    const darkness = clamp(1 - grayMap[i] / 255, 0, 1) ** gamma;
+    const w = Math.max(1e-5, darkness);
+    weights[i] = w;
+    totalWeight += w;
+    cdf[i] = totalWeight;
+  }
+  if (totalWeight <= 0) {
+    return null;
+  }
+
+  const points: StipplePoint[] = [];
+  const cellSize = Math.max(0.5, minSpacing);
+  const gridCols = Math.max(1, Math.ceil(width / cellSize));
+  const gridRows = Math.max(1, Math.ceil(height / cellSize));
+  const grid: number[][] = Array.from({ length: gridCols * gridRows }, () => []);
+  const cellIndexOf = (x: number, y: number) => {
+    const gx = clamp(Math.floor(x / cellSize), 0, gridCols - 1);
+    const gy = clamp(Math.floor(y / cellSize), 0, gridRows - 1);
+    return gy * gridCols + gx;
+  };
+  const resetGrid = () => {
+    grid.forEach((bucket) => {
+      bucket.length = 0;
+    });
+    points.forEach((point, index) => {
+      grid[cellIndexOf(point.x, point.y)].push(index);
+    });
+  };
+
+  let attempts = 0;
+  const maxAttempts = pointCount * 40;
+  while (points.length < pointCount && attempts < maxAttempts) {
+    attempts += 1;
+    if (attempts % 2000 === 0) {
+      if (shouldCancel?.()) {
+        return null;
+      }
+      onProgress?.(Math.min(0.45, points.length / Math.max(1, pointCount) * 0.45), "sampling points");
+      await yieldToUi();
+    }
+
+    const target = rng() * totalWeight;
+    const pixelIndex = findCdfIndex(cdf, target);
+    const baseX = pixelIndex % width;
+    const baseY = Math.floor(pixelIndex / width);
+    const x = clamp(baseX + (rng() - 0.5) * 1.8, 0, width - 1);
+    const y = clamp(baseY + (rng() - 0.5) * 1.8, 0, height - 1);
+    const darkness = clamp(1 - sampleGrayNormalized(grayMap, width, height, x, y), 0, 1);
+    const spacing = maxSpacing - darkness * (maxSpacing - minSpacing);
+
+    const gx = clamp(Math.floor(x / cellSize), 0, gridCols - 1);
+    const gy = clamp(Math.floor(y / cellSize), 0, gridRows - 1);
+    const range = Math.max(1, Math.ceil(maxSpacing / cellSize));
+    let collides = false;
+    for (let yy = Math.max(0, gy - range); yy <= Math.min(gridRows - 1, gy + range); yy += 1) {
+      for (let xx = Math.max(0, gx - range); xx <= Math.min(gridCols - 1, gx + range); xx += 1) {
+        const bucket = grid[yy * gridCols + xx];
+        for (let i = 0; i < bucket.length; i += 1) {
+          const other = points[bucket[i]];
+          const minAllowed = Math.min(spacing, other.spacing) * 0.9;
+          const dx = other.x - x;
+          const dy = other.y - y;
+          if (dx * dx + dy * dy < minAllowed * minAllowed) {
+            collides = true;
+            break;
+          }
+        }
+        if (collides) {
+          break;
+        }
+      }
+      if (collides) {
+        break;
+      }
+    }
+    if (collides) {
+      continue;
+    }
+    points.push({ x, y, spacing, darkness });
+    grid[cellIndexOf(x, y)].push(points.length - 1);
+  }
+
+  onProgress?.(0.5, `sampled ${points.length} points`);
+  await yieldToUi();
+
+  let lastYieldTime = performance.now();
+  for (let iteration = 0; iteration < relaxIterations; iteration += 1) {
+    if (shouldCancel?.()) {
+      return null;
+    }
+    resetGrid();
+    const nextPoints: StipplePoint[] = new Array(points.length);
+    for (let index = 0; index < points.length; index += 1) {
+      const point = points[index];
+      const gx = clamp(Math.floor(point.x / cellSize), 0, gridCols - 1);
+      const gy = clamp(Math.floor(point.y / cellSize), 0, gridRows - 1);
+      const range = Math.max(1, Math.ceil((point.spacing * 1.8) / cellSize));
+      let pushX = 0;
+      let pushY = 0;
+
+      for (let yy = Math.max(0, gy - range); yy <= Math.min(gridRows - 1, gy + range); yy += 1) {
+        for (let xx = Math.max(0, gx - range); xx <= Math.min(gridCols - 1, gx + range); xx += 1) {
+          const bucket = grid[yy * gridCols + xx];
+          for (let i = 0; i < bucket.length; i += 1) {
+            const otherIndex = bucket[i];
+            if (otherIndex === index) {
+              continue;
+            }
+            const other = points[otherIndex];
+            const dx = point.x - other.x;
+            const dy = point.y - other.y;
+            const distSq = dx * dx + dy * dy;
+            if (distSq < 1e-6) {
+              continue;
+            }
+            const dist = Math.sqrt(distSq);
+            const desired = Math.min(point.spacing, other.spacing);
+            if (dist < desired * 1.25) {
+              const force = ((desired * 1.25 - dist) / (desired * 1.25)) * repulsion;
+              pushX += (dx / dist) * force;
+              pushY += (dy / dist) * force;
+            }
+          }
+        }
+      }
+
+      let weightSum = 0;
+      let centroidX = 0;
+      let centroidY = 0;
+      const minX = Math.max(0, Math.floor(point.x - relaxRadius));
+      const maxX = Math.min(width - 1, Math.ceil(point.x + relaxRadius));
+      const minY = Math.max(0, Math.floor(point.y - relaxRadius));
+      const maxY = Math.min(height - 1, Math.ceil(point.y + relaxRadius));
+      for (let y = minY; y <= maxY; y += 1) {
+        for (let x = minX; x <= maxX; x += 1) {
+          const dx = x + 0.5 - point.x;
+          const dy = y + 0.5 - point.y;
+          if (dx * dx + dy * dy > relaxRadius * relaxRadius) {
+            continue;
+          }
+          const darkness = clamp(1 - grayMap[y * width + x] / 255, 0, 1) ** gamma;
+          const w = Math.max(0, darkness);
+          weightSum += w;
+          centroidX += (x + 0.5) * w;
+          centroidY += (y + 0.5) * w;
+        }
+      }
+
+      const targetX = weightSum > 1e-6 ? centroidX / weightSum : point.x;
+      const targetY = weightSum > 1e-6 ? centroidY / weightSum : point.y;
+      const nextX = clamp(
+        point.x +
+          (targetX - point.x) * attraction +
+          pushX +
+          (rng() - 0.5) * jitter,
+        0,
+        width - 1,
+      );
+      const nextY = clamp(
+        point.y +
+          (targetY - point.y) * attraction +
+          pushY +
+          (rng() - 0.5) * jitter,
+        0,
+        height - 1,
+      );
+      const darkness = clamp(1 - sampleGrayNormalized(grayMap, width, height, nextX, nextY), 0, 1);
+      const spacing = maxSpacing - darkness * (maxSpacing - minSpacing);
+      nextPoints[index] = { x: nextX, y: nextY, spacing, darkness };
+
+      if (performance.now() - lastYieldTime > 14) {
+        await yieldToUi();
+        lastYieldTime = performance.now();
+        if (shouldCancel?.()) {
+          return null;
+        }
+      }
+    }
+
+    for (let index = 0; index < points.length; index += 1) {
+      points[index] = nextPoints[index];
+    }
+    onProgress?.(0.5 + ((iteration + 1) / Math.max(1, relaxIterations)) * 0.35, `relax ${iteration + 1}/${relaxIterations}`);
+    await yieldToUi();
+  }
+
+  points.sort((a, b) => a.y - b.y || a.x - b.x);
+  const preview = document.createElement("canvas");
+  preview.width = width;
+  preview.height = height;
+  const previewContext = preview.getContext("2d");
+  if (!previewContext) {
+    throw new Error("2D context not available.");
+  }
+
+  if (options.backgroundMode === "color") {
+    previewContext.fillStyle = backgroundColor;
+    previewContext.fillRect(0, 0, width, height);
+  } else {
+    previewContext.clearRect(0, 0, width, height);
+  }
+
+  previewContext.save();
+  previewContext.fillStyle = dotColor;
+  previewContext.globalAlpha = dotOpacity;
+  const circles: string[] = [];
+  for (let index = 0; index < points.length; index += 1) {
+    const point = points[index];
+    const radius = dotMinRadius + (point.darkness ** dotGamma) * (dotMaxRadius - dotMinRadius);
+    const safeRadius = Math.max(0.05, radius);
+    previewContext.beginPath();
+    previewContext.arc(point.x, point.y, safeRadius, 0, Math.PI * 2);
+    previewContext.fill();
+    circles.push(
+      `<circle cx="${point.x.toFixed(2)}" cy="${point.y.toFixed(2)}" r="${safeRadius.toFixed(2)}"/>`,
+    );
+  }
+  previewContext.restore();
+
+  const backgroundRect =
+    options.backgroundMode === "color"
+      ? `<rect width="100%" height="100%" fill="${backgroundColor}"/>`
+      : "";
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">${backgroundRect}<g fill="${dotColor}" fill-opacity="${dotOpacity.toFixed(4)}">${circles.join("")}</g></svg>`;
+  onProgress?.(1, "ready");
+  return {
+    svg,
+    preview,
+    dotCount: points.length,
+    width,
+    height,
+  };
+}
+
 function appendSvgCrosshatchLine(
   lines: string[],
   x1: number,
@@ -3979,6 +4713,138 @@ class ThresholdToolNode extends OptimizedToolNode {
     context.fillStyle = "rgba(255,255,255,0.65)";
     context.font = "12px sans-serif";
     context.fillText(formatExecutionInfo(this.executionMs), 10, layout.footerTop + 12);
+    context.restore();
+  }
+}
+
+class HalftoningToolNode extends OptimizedToolNode {
+  size: [number, number] = [280, 405];
+  preview: GraphImage | null = null;
+
+  constructor() {
+    super();
+    const node = this as unknown as PreviewAwareNode & HalftoningToolNode;
+    node.title = createToolTitle("Halftoning");
+    node.properties = {
+      mode: "ordered4x4" as HalftoningMode,
+      threshold: 127,
+      bias: 0,
+      densityScale: 4,
+      invert: false,
+    };
+    node.addInput("image", "image");
+    node.addOutput("image", "image");
+    node.addWidget(
+      "combo",
+      "Type",
+      "ordered4x4",
+      (value) => {
+        node.properties.mode = String(value) as HalftoningMode;
+        node.setDirtyCanvas(true, true);
+        notifyGraphStateChange(node);
+      },
+      { values: ["ordered4x4", "floydSteinberg", "atkinson", "density4x4"] },
+    );
+    node.addWidget(
+      "slider",
+      "Threshold",
+      127,
+      (value) => {
+        node.properties.threshold = Number(value);
+        node.setDirtyCanvas(true, true);
+        notifyGraphStateChange(node);
+      },
+      { min: 0, max: 255, step: 1 },
+    );
+    node.addWidget(
+      "slider",
+      "Bias",
+      0,
+      (value) => {
+        node.properties.bias = Number(value);
+        node.setDirtyCanvas(true, true);
+        notifyGraphStateChange(node);
+      },
+      { min: -128, max: 128, step: 1 },
+    );
+    node.addWidget(
+      "slider",
+      "Density Scale",
+      4,
+      (value) => {
+        node.properties.densityScale = Number(value);
+        node.setDirtyCanvas(true, true);
+        notifyGraphStateChange(node);
+      },
+      { min: 2, max: 8, step: 1 },
+    );
+    node.addWidget(
+      "toggle",
+      "Invert",
+      false,
+      (value) => {
+        node.properties.invert = Boolean(value);
+        node.setDirtyCanvas(true, true);
+        notifyGraphStateChange(node);
+      },
+      {},
+    );
+    node.refreshPreviewLayout = () => {
+      refreshNode(node, node.preview, 2);
+    };
+    node.refreshPreviewLayout();
+  }
+
+  onExecute(this: PreviewAwareNode & HalftoningToolNode) {
+    const start = performance.now();
+    const input = this.getInputData(0);
+    if (!input) {
+      this.preview = null;
+      this.completeOptimizedExecution(start);
+      this.resetOptimizedCache();
+      this.setOutputData(0, null);
+      this.refreshPreviewLayout();
+      return;
+    }
+
+    const options: HalftoningOptions = {
+      mode: String(this.properties.mode ?? "ordered4x4") as HalftoningMode,
+      threshold: Number(this.properties.threshold ?? 127),
+      bias: Number(this.properties.bias ?? 0),
+      densityScale: Number(this.properties.densityScale ?? 4),
+      invert: Boolean(this.properties.invert ?? false),
+    };
+    const signature = getGraphImageSignature(input);
+    const optionsSignature = JSON.stringify({
+      mode: options.mode,
+      threshold: Math.round(options.threshold),
+      bias: Math.round(options.bias),
+      densityScale: Math.round(options.densityScale),
+      invert: options.invert,
+    });
+    if (this.canReuseOptimizedResult(signature, optionsSignature)) {
+      this.setOutputData(0, this.preview);
+      this.refreshPreviewLayout();
+      return;
+    }
+
+    this.preview = halftoneGraphImage(input, options);
+    this.completeOptimizedExecution(start, signature, optionsSignature);
+    this.setOutputData(0, this.preview);
+    this.refreshPreviewLayout();
+  }
+
+  onDrawBackground(this: PreviewAwareNode & HalftoningToolNode, context: CanvasRenderingContext2D) {
+    const layout = drawImagePreview(context, this, this.preview, { footerLines: 2 });
+    context.save();
+    context.fillStyle = "rgba(255,255,255,0.65)";
+    context.font = "12px sans-serif";
+    const mode = String(this.properties.mode ?? "ordered4x4");
+    const threshold = Math.round(Number(this.properties.threshold ?? 127));
+    const bias = Math.round(Number(this.properties.bias ?? 0));
+    const densityScale = Math.round(Number(this.properties.densityScale ?? 4));
+    context.fillText(`mode:${mode} | thr:${threshold} | bias:${bias}`, 10, layout.footerTop + 12);
+    context.fillText(`density:${densityScale} | ${formatExecutionInfo(this.executionMs)}`, 10, layout.footerTop + 30);
     context.restore();
   }
 }
@@ -7295,6 +8161,525 @@ class SeargeantToolNode {
   }
 }
 
+class GridDotToolNode {
+  size: [number, number] = [280, 560];
+  properties!: Record<string, unknown>;
+  preview: GraphImage | null = null;
+  svg: GraphSvg | null = null;
+  status = "idle";
+  progress = 0;
+  dotCount = 0;
+  gridInfo = "-";
+  isRendering = false;
+  executionMs: number | null = null;
+  lastSignature = "";
+  lastOptionsSignature = "";
+  renderToken = 0;
+
+  setWidgetValue(this: GridDotToolNode, name: string, value: unknown) {
+    const widgets = (this as unknown as LiteNode).widgets;
+    if (!widgets?.length) {
+      return;
+    }
+    const widget = widgets.find((item) => {
+      if (!item || typeof item !== "object") {
+        return false;
+      }
+      return (item as { name?: unknown }).name === name;
+    }) as { value?: unknown } | undefined;
+    if (widget) {
+      widget.value = value;
+    }
+  }
+
+  applyPreset(
+    this: PreviewAwareNode & GridDotToolNode,
+    preset: "fast" | "normal" | "slow",
+    notify = true,
+  ) {
+    const values =
+      preset === "fast"
+        ? {
+            gridCells: 80,
+            samplesPerCell: 1,
+            radiusMin: 0,
+            radiusMax: 2.6,
+            gamma: 1,
+          }
+        : preset === "slow"
+          ? {
+              gridCells: 220,
+              samplesPerCell: 9,
+              radiusMin: 0,
+              radiusMax: 1.15,
+              gamma: 1.1,
+            }
+          : {
+              gridCells: 140,
+              samplesPerCell: 4,
+              radiusMin: 0,
+              radiusMax: 1.7,
+              gamma: 1.05,
+            };
+    Object.assign(this.properties, values, { preset });
+    this.setWidgetValue("Preset", preset);
+    this.setWidgetValue("Grid cells", values.gridCells);
+    this.setWidgetValue("Samples", values.samplesPerCell);
+    this.setWidgetValue("R min", values.radiusMin);
+    this.setWidgetValue("R max", values.radiusMax);
+    this.setWidgetValue("Gamma", values.gamma);
+    this.setDirtyCanvas(true, true);
+    if (notify) {
+      notifyGraphStateChange(this);
+    }
+  }
+
+  markCustom(this: PreviewAwareNode & GridDotToolNode) {
+    if (String(this.properties.preset ?? "normal") !== "custom") {
+      this.properties.preset = "custom";
+      this.setWidgetValue("Preset", "custom");
+    }
+  }
+
+  constructor() {
+    const node = this as unknown as PreviewAwareNode & GridDotToolNode;
+    node.title = createToolTitle("GridDot");
+    node.properties = {
+      preset: "normal",
+      maxWidth: 1200,
+      gridCells: 140,
+      samplesPerCell: 4,
+      radiusMin: 0,
+      radiusMax: 1.7,
+      gamma: 1.05,
+      invert: false,
+      dotColor: "#000000",
+      dotOpacity: 1,
+      backgroundMode: "color",
+      backgroundColor: "#FFFFFF",
+    };
+    node.addInput("image", "image");
+    node.addOutput("image", "image");
+    node.addOutput("svg", "svg");
+    node.addWidget("combo", "Preset", "normal", (value) => {
+      const preset = String(value);
+      if (preset === "fast" || preset === "normal" || preset === "slow") {
+        node.applyPreset(preset, true);
+      } else {
+        node.properties.preset = "custom";
+        node.setDirtyCanvas(true, true);
+        notifyGraphStateChange(node);
+      }
+    }, { values: ["fast", "normal", "slow", "custom"] });
+    node.addWidget("slider", "Max width", 1200, (value) => {
+      node.properties.maxWidth = Math.round(Number(value));
+      notifyGraphStateChange(node);
+    }, { min: 128, max: 2400, step: 8 });
+    node.addWidget("slider", "Grid cells", 140, (value) => {
+      node.properties.gridCells = Math.round(Number(value));
+      node.markCustom();
+      notifyGraphStateChange(node);
+    }, { min: 8, max: 1000, step: 1 });
+    node.addWidget("slider", "Samples", 4, (value) => {
+      node.properties.samplesPerCell = Math.round(Number(value));
+      node.markCustom();
+      notifyGraphStateChange(node);
+    }, { min: 1, max: 36, step: 1 });
+    node.addWidget("slider", "R min", 0, (value) => {
+      node.properties.radiusMin = Number(value);
+      node.markCustom();
+      notifyGraphStateChange(node);
+    }, { min: 0, max: 12, step: 0.05, precision: 2 });
+    node.addWidget("slider", "R max", 1.7, (value) => {
+      node.properties.radiusMax = Number(value);
+      node.markCustom();
+      notifyGraphStateChange(node);
+    }, { min: 0.05, max: 12, step: 0.05, precision: 2 });
+    node.addWidget("slider", "Gamma", 1.05, (value) => {
+      node.properties.gamma = Number(value);
+      node.markCustom();
+      notifyGraphStateChange(node);
+    }, { min: 0.2, max: 4, step: 0.01, precision: 2 });
+    node.addWidget("toggle", "Invert", false, (value) => {
+      node.properties.invert = Boolean(value);
+      notifyGraphStateChange(node);
+    });
+    node.addWidget("text", "Dot color", "#000000", (value) => {
+      node.properties.dotColor = normalizeHexColor(String(value));
+      notifyGraphStateChange(node);
+    });
+    node.addWidget("slider", "Dot alpha", 1, (value) => {
+      node.properties.dotOpacity = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0, max: 1, step: 0.01, precision: 2 });
+    node.addWidget("combo", "BG mode", "color", (value) => {
+      node.properties.backgroundMode = String(value) === "transparent" ? "transparent" : "color";
+      notifyGraphStateChange(node);
+    }, { values: ["color", "transparent"] });
+    node.addWidget("text", "BG color", "#FFFFFF", (value) => {
+      node.properties.backgroundColor = normalizeHexColor(String(value));
+      notifyGraphStateChange(node);
+    });
+    node.refreshPreviewLayout = () => {
+      refreshNode(node, node.preview, 4);
+    };
+    node.applyPreset("normal", false);
+    node.refreshPreviewLayout();
+  }
+
+  onExecute(this: PreviewAwareNode & GridDotToolNode) {
+    const inputValue = this.getInputData(0);
+    const input = isGraphImageReady(inputValue) ? inputValue : null;
+    if (!input) {
+      this.preview = null;
+      this.svg = null;
+      this.status = "waiting valid image";
+      this.progress = 0;
+      this.dotCount = 0;
+      this.gridInfo = "-";
+      this.executionMs = null;
+      this.isRendering = false;
+      this.lastSignature = "";
+      this.lastOptionsSignature = "";
+      this.setOutputData(0, null);
+      this.setOutputData(1, null);
+      this.refreshPreviewLayout();
+      return;
+    }
+
+    const backgroundMode: "transparent" | "color" =
+      String(this.properties.backgroundMode ?? "color") === "transparent"
+        ? "transparent"
+        : "color";
+    const options = {
+      maxWidth: clamp(Math.round(Number(this.properties.maxWidth ?? 1200)), 128, 2400),
+      gridCells: clamp(Math.round(Number(this.properties.gridCells ?? 140)), 8, 1000),
+      samplesPerCell: clamp(Math.round(Number(this.properties.samplesPerCell ?? 4)), 1, 36),
+      radiusMin: clamp(Number(this.properties.radiusMin ?? 0), 0, 12),
+      radiusMax: clamp(Number(this.properties.radiusMax ?? 1.7), 0.05, 12),
+      gamma: clamp(Number(this.properties.gamma ?? 1.05), 0.2, 4),
+      invert: Boolean(this.properties.invert ?? false),
+      dotColor: normalizeHexColor(String(this.properties.dotColor ?? "#000000")),
+      dotOpacity: clamp(Number(this.properties.dotOpacity ?? 1), 0, 1),
+      backgroundMode,
+      backgroundColor: normalizeHexColor(String(this.properties.backgroundColor ?? "#FFFFFF")),
+    };
+    const signature = getGraphImageSignature(input);
+    const optionsSignature = JSON.stringify(options);
+    if (signature !== this.lastSignature || optionsSignature !== this.lastOptionsSignature) {
+      this.lastSignature = signature;
+      this.lastOptionsSignature = optionsSignature;
+      const renderToken = ++this.renderToken;
+      const start = performance.now();
+      this.isRendering = true;
+      this.progress = 0;
+      this.status = "generating griddot...";
+      this.setDirtyCanvas(true, true);
+
+      const shouldCancel = () => renderToken !== this.renderToken;
+      const updateProgress = (value: number, status?: string) => {
+        this.progress = clamp(value, 0, 1);
+        if (status) {
+          this.status = status;
+        }
+        this.setDirtyCanvas(true, true);
+      };
+
+      void generateGridDotSvg(input, options, shouldCancel, updateProgress)
+        .then((result) => {
+          if (renderToken !== this.renderToken || !result) {
+            return;
+          }
+          this.svg = result.svg;
+          this.preview = result.preview;
+          this.dotCount = result.dotCount;
+          this.gridInfo = `${result.cols}x${result.rows}`;
+          this.progress = 1;
+          this.status = "ready";
+          this.executionMs = performance.now() - start;
+          this.isRendering = false;
+          this.setDirtyCanvas(true, true);
+        })
+        .catch((error) => {
+          if (renderToken !== this.renderToken) {
+            return;
+          }
+          this.preview = input;
+          this.svg = null;
+          this.dotCount = 0;
+          this.gridInfo = "-";
+          this.progress = 0;
+          this.status = error instanceof Error ? error.message : "griddot error";
+          this.executionMs = null;
+          this.isRendering = false;
+          this.setDirtyCanvas(true, true);
+        });
+    }
+
+    this.setOutputData(0, this.preview ?? input);
+    this.setOutputData(1, this.svg);
+    this.refreshPreviewLayout();
+  }
+
+  onDrawBackground(this: PreviewAwareNode & GridDotToolNode, context: CanvasRenderingContext2D) {
+    const layout = drawImagePreview(context, this, this.preview, { footerLines: 4 });
+    context.save();
+    context.fillStyle = "rgba(255,255,255,0.65)";
+    context.font = "12px sans-serif";
+    context.fillText(`${this.status}${this.isRendering ? "..." : ""}`, 10, layout.footerTop + 12);
+    context.fillText(
+      `progress ${Math.round(this.progress * 100)}% | dots ${this.dotCount}`,
+      10,
+      layout.footerTop + 30,
+    );
+    context.fillText(`grid ${this.gridInfo}`, 10, layout.footerTop + 48);
+    context.fillText(formatExecutionInfo(this.executionMs), 10, layout.footerTop + 66);
+    context.restore();
+  }
+}
+
+class StippleToolNode {
+  size: [number, number] = [280, 680];
+  properties!: Record<string, unknown>;
+  preview: GraphImage | null = null;
+  svg: GraphSvg | null = null;
+  status = "idle";
+  progress = 0;
+  dotCount = 0;
+  outputWidth = 0;
+  outputHeight = 0;
+  isRendering = false;
+  executionMs: number | null = null;
+  lastSignature = "";
+  lastOptionsSignature = "";
+  renderToken = 0;
+
+  constructor() {
+    const node = this as unknown as PreviewAwareNode & StippleToolNode;
+    node.title = createToolTitle("Stipple");
+    node.properties = {
+      maxWidth: 900,
+      pointCount: 2200,
+      darknessGamma: 1.25,
+      minSpacing: 1.8,
+      maxSpacing: 9.5,
+      relaxIterations: 4,
+      relaxRadius: 5,
+      attraction: 0.48,
+      repulsion: 0.62,
+      jitter: 0.4,
+      dotMinRadius: 0.3,
+      dotMaxRadius: 1.6,
+      dotGamma: 1,
+      dotColor: "#000000",
+      dotOpacity: 1,
+      backgroundMode: "color",
+      backgroundColor: "#FFFFFF",
+      seed: 1337,
+    };
+    node.addInput("image", "image");
+    node.addOutput("image", "image");
+    node.addOutput("svg", "svg");
+    node.addWidget("slider", "Max width", 900, (value) => {
+      node.properties.maxWidth = Math.round(Number(value));
+      notifyGraphStateChange(node);
+    }, { min: 128, max: 2400, step: 8 });
+    node.addWidget("slider", "Points", 2200, (value) => {
+      node.properties.pointCount = Math.round(Number(value));
+      notifyGraphStateChange(node);
+    }, { min: 50, max: 20000, step: 10 });
+    node.addWidget("slider", "Dark gamma", 1.25, (value) => {
+      node.properties.darknessGamma = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0.2, max: 4, step: 0.01, precision: 2 });
+    node.addWidget("slider", "Min spacing", 1.8, (value) => {
+      node.properties.minSpacing = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0.25, max: 32, step: 0.05, precision: 2 });
+    node.addWidget("slider", "Max spacing", 9.5, (value) => {
+      node.properties.maxSpacing = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0.25, max: 96, step: 0.1, precision: 1 });
+    node.addWidget("slider", "Relax iter", 4, (value) => {
+      node.properties.relaxIterations = Math.round(Number(value));
+      notifyGraphStateChange(node);
+    }, { min: 0, max: 24, step: 1 });
+    node.addWidget("slider", "Relax radius", 5, (value) => {
+      node.properties.relaxRadius = Math.round(Number(value));
+      notifyGraphStateChange(node);
+    }, { min: 1, max: 32, step: 1 });
+    node.addWidget("slider", "Attraction", 0.48, (value) => {
+      node.properties.attraction = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0, max: 1, step: 0.01, precision: 2 });
+    node.addWidget("slider", "Repulsion", 0.62, (value) => {
+      node.properties.repulsion = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0, max: 2, step: 0.01, precision: 2 });
+    node.addWidget("slider", "Jitter", 0.4, (value) => {
+      node.properties.jitter = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0, max: 3, step: 0.01, precision: 2 });
+    node.addWidget("slider", "Dot min", 0.3, (value) => {
+      node.properties.dotMinRadius = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0.1, max: 20, step: 0.05, precision: 2 });
+    node.addWidget("slider", "Dot max", 1.6, (value) => {
+      node.properties.dotMaxRadius = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0.1, max: 24, step: 0.05, precision: 2 });
+    node.addWidget("slider", "Dot gamma", 1, (value) => {
+      node.properties.dotGamma = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0.2, max: 3, step: 0.01, precision: 2 });
+    node.addWidget("text", "Dot color", "#000000", (value) => {
+      node.properties.dotColor = normalizeHexColor(String(value));
+      notifyGraphStateChange(node);
+    });
+    node.addWidget("slider", "Dot alpha", 1, (value) => {
+      node.properties.dotOpacity = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0, max: 1, step: 0.01, precision: 2 });
+    node.addWidget("combo", "BG mode", "color", (value) => {
+      node.properties.backgroundMode = String(value) === "transparent" ? "transparent" : "color";
+      notifyGraphStateChange(node);
+    }, { values: ["color", "transparent"] });
+    node.addWidget("text", "BG color", "#FFFFFF", (value) => {
+      node.properties.backgroundColor = normalizeHexColor(String(value));
+      notifyGraphStateChange(node);
+    });
+    node.addWidget("number", "Seed", 1337, (value) => {
+      node.properties.seed = Math.round(Number(value));
+      notifyGraphStateChange(node);
+    }, { step: 1 });
+    node.refreshPreviewLayout = () => {
+      refreshNode(node, node.preview, 4);
+    };
+    node.refreshPreviewLayout();
+  }
+
+  onExecute(this: PreviewAwareNode & StippleToolNode) {
+    const inputValue = this.getInputData(0);
+    const input = isGraphImageReady(inputValue) ? inputValue : null;
+    if (!input) {
+      this.preview = null;
+      this.svg = null;
+      this.status = "waiting valid image";
+      this.progress = 0;
+      this.dotCount = 0;
+      this.outputWidth = 0;
+      this.outputHeight = 0;
+      this.executionMs = null;
+      this.isRendering = false;
+      this.lastSignature = "";
+      this.lastOptionsSignature = "";
+      this.setOutputData(0, null);
+      this.setOutputData(1, null);
+      this.refreshPreviewLayout();
+      return;
+    }
+
+    const backgroundMode: "transparent" | "color" =
+      String(this.properties.backgroundMode ?? "color") === "transparent"
+        ? "transparent"
+        : "color";
+    const options = {
+      maxWidth: clamp(Math.round(Number(this.properties.maxWidth ?? 900)), 128, 2400),
+      pointCount: clamp(Math.round(Number(this.properties.pointCount ?? 2200)), 50, 20000),
+      darknessGamma: clamp(Number(this.properties.darknessGamma ?? 1.25), 0.2, 4),
+      minSpacing: clamp(Number(this.properties.minSpacing ?? 1.8), 0.25, 32),
+      maxSpacing: clamp(Number(this.properties.maxSpacing ?? 9.5), 0.25, 96),
+      relaxIterations: clamp(Math.round(Number(this.properties.relaxIterations ?? 4)), 0, 24),
+      relaxRadius: clamp(Math.round(Number(this.properties.relaxRadius ?? 5)), 1, 32),
+      attraction: clamp(Number(this.properties.attraction ?? 0.48), 0, 1),
+      repulsion: clamp(Number(this.properties.repulsion ?? 0.62), 0, 2),
+      jitter: clamp(Number(this.properties.jitter ?? 0.4), 0, 3),
+      dotMinRadius: clamp(Number(this.properties.dotMinRadius ?? 0.3), 0.1, 20),
+      dotMaxRadius: clamp(Number(this.properties.dotMaxRadius ?? 1.6), 0.1, 24),
+      dotGamma: clamp(Number(this.properties.dotGamma ?? 1), 0.2, 3),
+      dotColor: normalizeHexColor(String(this.properties.dotColor ?? "#000000")),
+      dotOpacity: clamp(Number(this.properties.dotOpacity ?? 1), 0, 1),
+      backgroundMode,
+      backgroundColor: normalizeHexColor(String(this.properties.backgroundColor ?? "#FFFFFF")),
+      seed: Math.round(Number(this.properties.seed ?? 1337)),
+    };
+    const signature = getGraphImageSignature(input);
+    const optionsSignature = JSON.stringify(options);
+
+    if (signature !== this.lastSignature || optionsSignature !== this.lastOptionsSignature) {
+      this.lastSignature = signature;
+      this.lastOptionsSignature = optionsSignature;
+      const renderToken = ++this.renderToken;
+      const start = performance.now();
+      this.isRendering = true;
+      this.progress = 0;
+      this.status = "generating stipple...";
+      this.setDirtyCanvas(true, true);
+
+      const shouldCancel = () => renderToken !== this.renderToken;
+      const updateProgress = (value: number, status?: string) => {
+        this.progress = clamp(value, 0, 1);
+        if (status) {
+          this.status = status;
+        }
+        this.setDirtyCanvas(true, true);
+      };
+
+      void generateStippleSvg(input, options, shouldCancel, updateProgress)
+        .then((result) => {
+          if (renderToken !== this.renderToken || !result) {
+            return;
+          }
+          this.svg = result.svg;
+          this.preview = result.preview;
+          this.dotCount = result.dotCount;
+          this.outputWidth = result.width;
+          this.outputHeight = result.height;
+          this.progress = 1;
+          this.executionMs = performance.now() - start;
+          this.status = "ready";
+          this.isRendering = false;
+          this.setDirtyCanvas(true, true);
+        })
+        .catch((error) => {
+          if (renderToken !== this.renderToken) {
+            return;
+          }
+          this.preview = input;
+          this.svg = null;
+          this.dotCount = 0;
+          this.outputWidth = 0;
+          this.outputHeight = 0;
+          this.progress = 0;
+          this.status = error instanceof Error ? error.message : "stipple error";
+          this.executionMs = null;
+          this.isRendering = false;
+          this.setDirtyCanvas(true, true);
+        });
+    }
+
+    this.setOutputData(0, this.preview ?? input);
+    this.setOutputData(1, this.svg);
+    this.refreshPreviewLayout();
+  }
+
+  onDrawBackground(this: PreviewAwareNode & StippleToolNode, context: CanvasRenderingContext2D) {
+    const layout = drawImagePreview(context, this, this.preview, { footerLines: 4 });
+    context.save();
+    context.fillStyle = "rgba(255,255,255,0.65)";
+    context.font = "12px sans-serif";
+    context.fillText(`${this.status}${this.isRendering ? "..." : ""}`, 10, layout.footerTop + 12);
+    context.fillText(
+      `progress ${Math.round(this.progress * 100)}% | dots ${this.dotCount}`,
+      10,
+      layout.footerTop + 30,
+    );
+    context.fillText(`out ${this.outputWidth || "-"}x${this.outputHeight || "-"}`, 10, layout.footerTop + 48);
+    context.fillText(formatExecutionInfo(this.executionMs), 10, layout.footerTop + 66);
+    context.restore();
+  }
+}
+
 class CrosshatchBnToolNode {
   size: [number, number] = [280, 520];
   properties!: Record<string, unknown>;
@@ -8608,6 +9993,7 @@ export function registerImageNodes() {
     InvertToolNode: InvertToolNode as unknown as NodeCtor,
     GrayscaleToolNode: GrayscaleToolNode as unknown as NodeCtor,
     ThresholdToolNode: ThresholdToolNode as unknown as NodeCtor,
+    HalftoningToolNode: HalftoningToolNode as unknown as NodeCtor,
     HistogramToolNode: HistogramToolNode as unknown as NodeCtor,
     LevelsToolNode: LevelsToolNode as unknown as NodeCtor,
     RgbSplitToolNode: RgbSplitToolNode as unknown as NodeCtor,
@@ -8621,6 +10007,8 @@ export function registerImageNodes() {
   });
   registerArtToolNodes(registerNodeType, {
     OilToolNode: OilToolNode as unknown as NodeCtor,
+    GridDotToolNode: GridDotToolNode as unknown as NodeCtor,
+    StippleToolNode: StippleToolNode as unknown as NodeCtor,
     VectorizeToolNode: VectorizeToolNode as unknown as NodeCtor,
     MarchingToolNode: MarchingToolNode as unknown as NodeCtor,
     BoldiniToolNode: BoldiniToolNode as unknown as NodeCtor,

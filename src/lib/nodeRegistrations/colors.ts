@@ -4,6 +4,7 @@ interface ColorToolNodeCtors {
   InvertToolNode: NodeCtor;
   GrayscaleToolNode: NodeCtor;
   ThresholdToolNode: NodeCtor;
+  HalftoningToolNode: NodeCtor;
   HistogramToolNode: NodeCtor;
   LevelsToolNode: NodeCtor;
   RgbSplitToolNode: NodeCtor;
@@ -20,6 +21,7 @@ export function registerColorToolNodes(registerNodeType: RegisterNodeTypeFn, cto
   registerNodeType("tools/colors/invert", ctors.InvertToolNode);
   registerNodeType("tools/colors/grayscale", ctors.GrayscaleToolNode);
   registerNodeType("tools/colors/threshold", ctors.ThresholdToolNode);
+  registerNodeType("tools/colors/halftoning", ctors.HalftoningToolNode);
   registerNodeType("tools/colors/histogram", ctors.HistogramToolNode);
   registerNodeType("tools/colors/levels", ctors.LevelsToolNode);
   registerNodeType("tools/colors/rgb-split", ctors.RgbSplitToolNode);

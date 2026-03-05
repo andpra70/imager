@@ -2,6 +2,8 @@ import type { NodeCtor, RegisterNodeTypeFn } from "./types";
 
 interface ArtToolNodeCtors {
   OilToolNode: NodeCtor;
+  GridDotToolNode: NodeCtor;
+  StippleToolNode: NodeCtor;
   VectorizeToolNode: NodeCtor;
   MarchingToolNode: NodeCtor;
   BoldiniToolNode: NodeCtor;
@@ -13,6 +15,8 @@ interface ArtToolNodeCtors {
 
 export function registerArtToolNodes(registerNodeType: RegisterNodeTypeFn, ctors: ArtToolNodeCtors) {
   registerNodeType("tools/art/oil", ctors.OilToolNode);
+  registerNodeType("tools/art/griddot", ctors.GridDotToolNode);
+  registerNodeType("tools/art/stipple", ctors.StippleToolNode);
   registerNodeType("tools/art/vectorize", ctors.VectorizeToolNode);
   registerNodeType("tools/art/marching", ctors.MarchingToolNode);
   registerNodeType("tools/art/boldini", ctors.BoldiniToolNode);
