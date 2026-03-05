@@ -2,6 +2,9 @@ import type { NodeCtor, RegisterNodeTypeFn } from "./types";
 
 interface ArtToolNodeCtors {
   OilToolNode: NodeCtor;
+  DelanoyToolNode: NodeCtor;
+  LinefyToolNode: NodeCtor;
+  Linefy2ToolNode: NodeCtor;
   GridDotToolNode: NodeCtor;
   StippleToolNode: NodeCtor;
   VectorizeToolNode: NodeCtor;
@@ -15,6 +18,9 @@ interface ArtToolNodeCtors {
 
 export function registerArtToolNodes(registerNodeType: RegisterNodeTypeFn, ctors: ArtToolNodeCtors) {
   registerNodeType("tools/art/oil", ctors.OilToolNode);
+  registerNodeType("tools/art/delanoy", ctors.DelanoyToolNode);
+  registerNodeType("tools/art/linefy", ctors.LinefyToolNode);
+  registerNodeType("tools/art/linefy2", ctors.Linefy2ToolNode);
   registerNodeType("tools/art/griddot", ctors.GridDotToolNode);
   registerNodeType("tools/art/stipple", ctors.StippleToolNode);
   registerNodeType("tools/art/vectorize", ctors.VectorizeToolNode);

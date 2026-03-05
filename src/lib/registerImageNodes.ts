@@ -2,6 +2,7 @@ import "../vendor/bluenoise.js";
 import "../vendor/ml5.js";
 import "../vendor/pnnquant.js";
 import "../vendor/simplify.js";
+import "../vendor/c2.js";
 import type { ImageTracerOptions } from "../vendor/imagetracer.1.2.6.js";
 import type { PnnQuantOptions, PnnQuantResult } from "../vendor/pnnquant.js";
 import imagetracerRuntime, { type ImageTracerApi } from "../vendor/imagetracer-runtime";
@@ -127,6 +128,26 @@ interface MarchingResult {
   pathCount: number;
   sampledWidth: number;
   sampledHeight: number;
+}
+
+interface C2PointLike {
+  x: number;
+  y: number;
+}
+
+interface C2LineLike {
+  p1: C2PointLike;
+  p2: C2PointLike;
+}
+
+interface C2DelaunayInstance {
+  edges?: C2LineLike[];
+  triangles?: Array<{ p1: C2PointLike; p2: C2PointLike; p3: C2PointLike }>;
+  compute: (points: C2PointLike[]) => void;
+}
+
+interface C2DelaunayCtor {
+  new (): C2DelaunayInstance;
 }
 
 interface Ml5ModelLike {
@@ -1341,6 +1362,19 @@ function getMarchingSquares() {
   return marchingSquaresRuntime as MarchingSquaresFn;
 }
 
+function getC2DelaunayCtor() {
+  const runtime = globalThis as {
+    c2?: {
+      Delaunay?: C2DelaunayCtor;
+    };
+  };
+  const ctor = runtime.c2?.Delaunay;
+  if (!ctor) {
+    throw new Error("c2 Delaunay runtime is not available.");
+  }
+  return ctor;
+}
+
 function yieldToUi() {
   return new Promise<void>((resolve) => {
     window.setTimeout(resolve, 0);
@@ -1456,8 +1490,77 @@ function formatExecutionInfo(executionMs: number | null) {
   return `[${executionMs.toFixed(2)} ms]`;
 }
 
+function formatImageErrorMetrics(mse: number | null, psnr: number | null) {
+  if (mse === null || psnr === null || !Number.isFinite(mse) || !Number.isFinite(psnr)) {
+    return "mse: -- | psnr: -- dB";
+  }
+  return `mse: ${mse.toFixed(1)} | psnr: ${psnr.toFixed(2)} dB`;
+}
+
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
+}
+
+function computeImageErrorMetrics(
+  source: GraphImage | null,
+  candidate: GraphImage | null,
+  maxSampleSide = 256,
+) {
+  if (!source || !candidate) {
+    return { mse: null, psnr: null } as { mse: number | null; psnr: number | null };
+  }
+
+  const width = Math.max(1, Math.min(source.width, candidate.width));
+  const height = Math.max(1, Math.min(source.height, candidate.height));
+  const scale = Math.min(1, maxSampleSide / Math.max(width, height));
+  const sampleWidth = Math.max(1, Math.round(width * scale));
+  const sampleHeight = Math.max(1, Math.round(height * scale));
+
+  const sourceSample = document.createElement("canvas");
+  sourceSample.width = sampleWidth;
+  sourceSample.height = sampleHeight;
+  const sourceContext = sourceSample.getContext("2d", { willReadFrequently: true });
+  if (!sourceContext) {
+    return { mse: null, psnr: null };
+  }
+  sourceContext.drawImage(source, 0, 0, source.width, source.height, 0, 0, sampleWidth, sampleHeight);
+  const sourcePixels = sourceContext.getImageData(0, 0, sampleWidth, sampleHeight).data;
+
+  const candidateSample = document.createElement("canvas");
+  candidateSample.width = sampleWidth;
+  candidateSample.height = sampleHeight;
+  const candidateContext = candidateSample.getContext("2d", { willReadFrequently: true });
+  if (!candidateContext) {
+    return { mse: null, psnr: null };
+  }
+  candidateContext.drawImage(
+    candidate,
+    0,
+    0,
+    candidate.width,
+    candidate.height,
+    0,
+    0,
+    sampleWidth,
+    sampleHeight,
+  );
+  const candidatePixels = candidateContext.getImageData(0, 0, sampleWidth, sampleHeight).data;
+
+  let squaredErrorSum = 0;
+  let count = 0;
+  for (let offset = 0; offset < sourcePixels.length; offset += 4) {
+    const dr = sourcePixels[offset] - candidatePixels[offset];
+    const dg = sourcePixels[offset + 1] - candidatePixels[offset + 1];
+    const db = sourcePixels[offset + 2] - candidatePixels[offset + 2];
+    squaredErrorSum += dr * dr + dg * dg + db * db;
+    count += 3;
+  }
+  if (count <= 0) {
+    return { mse: null, psnr: null };
+  }
+  const mse = squaredErrorSum / count;
+  const psnr = mse <= 1e-8 ? 99 : 10 * Math.log10((255 * 255) / mse);
+  return { mse, psnr };
 }
 
 interface HistogramChannel {
@@ -3114,6 +3217,788 @@ interface MatitaResult {
   pathCount: number;
   width: number;
   height: number;
+}
+
+interface LinefyLine {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  alpha: number;
+}
+
+interface LinefyResult {
+  svg: GraphSvg;
+  preview: GraphImage;
+  lineCount: number;
+  width: number;
+  height: number;
+}
+
+interface Linefy2Result {
+  svg: GraphSvg;
+  preview: GraphImage;
+  lineCount: number;
+  width: number;
+  height: number;
+}
+
+interface DelanoyResult {
+  svg: GraphSvg;
+  preview: GraphImage;
+  edgeCount: number;
+  pointCount: number;
+  width: number;
+  height: number;
+}
+
+function clipInfiniteLineToRect(
+  anchorX: number,
+  anchorY: number,
+  dx: number,
+  dy: number,
+  width: number,
+  height: number,
+) {
+  const eps = 1e-8;
+  let tMin = Number.NEGATIVE_INFINITY;
+  let tMax = Number.POSITIVE_INFINITY;
+
+  if (Math.abs(dx) < eps) {
+    if (anchorX < 0 || anchorX > width - 1) {
+      return null;
+    }
+  } else {
+    const tx1 = (0 - anchorX) / dx;
+    const tx2 = (width - 1 - anchorX) / dx;
+    tMin = Math.max(tMin, Math.min(tx1, tx2));
+    tMax = Math.min(tMax, Math.max(tx1, tx2));
+  }
+
+  if (Math.abs(dy) < eps) {
+    if (anchorY < 0 || anchorY > height - 1) {
+      return null;
+    }
+  } else {
+    const ty1 = (0 - anchorY) / dy;
+    const ty2 = (height - 1 - anchorY) / dy;
+    tMin = Math.max(tMin, Math.min(ty1, ty2));
+    tMax = Math.min(tMax, Math.max(ty1, ty2));
+  }
+
+  if (!Number.isFinite(tMin) || !Number.isFinite(tMax) || tMin > tMax) {
+    return null;
+  }
+
+  const x1 = clamp(Math.round(anchorX + tMin * dx), 0, width - 1);
+  const y1 = clamp(Math.round(anchorY + tMin * dy), 0, height - 1);
+  const x2 = clamp(Math.round(anchorX + tMax * dx), 0, width - 1);
+  const y2 = clamp(Math.round(anchorY + tMax * dy), 0, height - 1);
+  if (x1 === x2 && y1 === y2) {
+    return null;
+  }
+  return { x1, y1, x2, y2 };
+}
+
+function walkLineBresenham(
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  width: number,
+  height: number,
+  visitor: (pixelIndex: number) => void,
+) {
+  let x = x1;
+  let y = y1;
+  const dx = Math.abs(x2 - x1);
+  const dy = Math.abs(y2 - y1);
+  const sx = x1 < x2 ? 1 : -1;
+  const sy = y1 < y2 ? 1 : -1;
+  let err = dx - dy;
+
+  while (true) {
+    if (x >= 0 && x < width && y >= 0 && y < height) {
+      visitor(y * width + x);
+    }
+    if (x === x2 && y === y2) {
+      break;
+    }
+    const e2 = err * 2;
+    if (e2 > -dy) {
+      err -= dy;
+      x += sx;
+    }
+    if (e2 < dx) {
+      err += dx;
+      y += sy;
+    }
+  }
+}
+
+async function generateLinefySvg(
+  input: GraphImage,
+  options: {
+    maxWidth: number;
+    colorMode: "grayscale" | "color";
+    mixing: "additive" | "subtractive";
+    numLines: number;
+    lineStep: number;
+    testLines: number;
+    anchorSamples: number;
+    lineWidth: number;
+    seed: number;
+  },
+  shouldCancel?: () => boolean,
+  onProgress?: (progress: number, status: string) => void,
+  onPreview?: (preview: GraphImage) => void,
+): Promise<LinefyResult | null> {
+  const source = fitSourceToMaxWidthCanvas(input, options.maxWidth);
+  const width = source.width;
+  const height = source.height;
+  const context = source.getContext("2d", { willReadFrequently: true });
+  if (!context) {
+    throw new Error("2D context not available.");
+  }
+  const imageData = context.getImageData(0, 0, width, height);
+  const pixels = imageData.data;
+  const pixelCount = width * height;
+  const rng = createSeededRandom(options.seed);
+  const lineStep = clamp(Math.round(options.lineStep), 1, 255);
+  const totalLines = clamp(Math.round(options.numLines), 1, 12000);
+  const testLines = clamp(Math.round(options.testLines), 4, 4096);
+  const anchorSamples = clamp(Math.round(options.anchorSamples), 32, 65536);
+
+  const channels =
+    options.colorMode === "color"
+      ? ["r", "g", "b"] as const
+      : ["gray"] as const;
+
+  type ChannelId = (typeof channels)[number];
+  const residualByChannel: Record<ChannelId, Float32Array> = channels.reduce((acc, channel) => {
+    acc[channel] = new Float32Array(pixelCount);
+    return acc;
+  }, {} as Record<ChannelId, Float32Array>);
+  const linesByChannel: Record<ChannelId, LinefyLine[]> = channels.reduce((acc, channel) => {
+    acc[channel] = [];
+    return acc;
+  }, {} as Record<ChannelId, LinefyLine[]>);
+  const totals: Record<ChannelId, number> = channels.reduce((acc, channel) => {
+    acc[channel] = 0;
+    return acc;
+  }, {} as Record<ChannelId, number>);
+
+  for (let index = 0; index < pixelCount; index += 1) {
+    const offset = index * 4;
+    const r = pixels[offset];
+    const g = pixels[offset + 1];
+    const b = pixels[offset + 2];
+    if (options.colorMode === "color") {
+      const rr = options.mixing === "subtractive" ? 255 - r : r;
+      const gg = options.mixing === "subtractive" ? 255 - g : g;
+      const bb = options.mixing === "subtractive" ? 255 - b : b;
+      residualByChannel.r[index] = rr;
+      residualByChannel.g[index] = gg;
+      residualByChannel.b[index] = bb;
+      totals.r += rr;
+      totals.g += gg;
+      totals.b += bb;
+    } else {
+      const gray = Math.round(0.21 * r + 0.72 * g + 0.07 * b);
+      const value = options.mixing === "subtractive" ? 255 - gray : gray;
+      residualByChannel.gray[index] = value;
+      totals.gray += value;
+    }
+  }
+
+  const totalEnergy = channels.reduce((acc, channel) => acc + totals[channel], 0);
+  const lineBudgetByChannel: Record<ChannelId, number> = channels.reduce((acc, channel, index) => {
+    const ratio = totalEnergy > 0 ? totals[channel] / totalEnergy : 1 / channels.length;
+    const proposed = Math.max(1, Math.round(totalLines * ratio));
+    acc[channel] = proposed;
+    if (index === channels.length - 1) {
+      const current = channels.reduce((sum, c) => sum + acc[c], 0);
+      acc[channel] += totalLines - current;
+    }
+    return acc;
+  }, {} as Record<ChannelId, number>);
+
+  let processedLines = 0;
+  const totalBudget = Math.max(1, channels.reduce((acc, channel) => acc + lineBudgetByChannel[channel], 0));
+  const previewEveryLines = Math.max(20, Math.floor(totalBudget / 40));
+  let lastYieldTime = performance.now();
+
+  const strokeColors: Record<ChannelId, string> = channels.reduce((acc, channel) => {
+    if (channel === "gray") {
+      acc[channel] = options.mixing === "additive" ? "#FFFFFF" : "#000000";
+      return acc;
+    }
+    if (options.mixing === "subtractive") {
+      acc.r = "#00FFFF";
+      acc.g = "#FF00FF";
+      acc.b = "#FFFF00";
+    } else {
+      acc.r = "#FF0000";
+      acc.g = "#00FF00";
+      acc.b = "#0000FF";
+    }
+    return acc;
+  }, {} as Record<ChannelId, string>);
+  const preview = document.createElement("canvas");
+  preview.width = width;
+  preview.height = height;
+  const previewContext = preview.getContext("2d");
+  if (!previewContext) {
+    throw new Error("2D context not available.");
+  }
+  previewContext.fillStyle = options.mixing === "additive" ? "#000000" : "#FFFFFF";
+  previewContext.fillRect(0, 0, width, height);
+  previewContext.lineWidth = Math.max(0.1, options.lineWidth);
+  previewContext.lineCap = "round";
+  previewContext.globalAlpha = 1;
+
+  for (let c = 0; c < channels.length; c += 1) {
+    const channel = channels[c];
+    const residual = residualByChannel[channel];
+    const budget = lineBudgetByChannel[channel];
+    const outLines = linesByChannel[channel];
+
+    for (let lineIndex = 0; lineIndex < budget; lineIndex += 1) {
+      if (shouldCancel?.()) {
+        return null;
+      }
+
+      let bestAnchorIndex = 0;
+      let bestAnchorValue = -1;
+      for (let sample = 0; sample < anchorSamples; sample += 1) {
+        const idx = Math.floor(rng() * pixelCount);
+        const value = residual[idx];
+        if (value > bestAnchorValue) {
+          bestAnchorValue = value;
+          bestAnchorIndex = idx;
+        }
+      }
+      if (bestAnchorValue <= 0.5) {
+        processedLines += budget - lineIndex;
+        break;
+      }
+
+      const anchorX = bestAnchorIndex % width;
+      const anchorY = Math.floor(bestAnchorIndex / width);
+      let bestLine: LinefyLine | null = null;
+      let bestLineScore = -1;
+      let bestLineDelta = lineStep;
+
+      for (let test = 0; test < testLines; test += 1) {
+        const angle = rng() * Math.PI;
+        const dx = Math.cos(angle);
+        const dy = Math.sin(angle);
+        const clipped = clipInfiniteLineToRect(anchorX, anchorY, dx, dy, width, height);
+        if (!clipped) {
+          continue;
+        }
+        const candidate: LinefyLine = { ...clipped, alpha: 1 };
+        const evaluated = evaluateLineCandidateFromResidual(
+          residual,
+          width,
+          height,
+          candidate,
+          lineStep,
+          32,
+        );
+        if (evaluated.score > bestLineScore) {
+          bestLineScore = evaluated.score;
+          bestLine = candidate;
+          bestLineDelta = evaluated.adaptiveDelta;
+        }
+      }
+
+      if (!bestLine) {
+        processedLines += 1;
+        continue;
+      }
+
+      walkLineBresenham(bestLine.x1, bestLine.y1, bestLine.x2, bestLine.y2, width, height, (pixelIndex) => {
+        residual[pixelIndex] = Math.max(0, residual[pixelIndex] - bestLineDelta);
+      });
+      bestLine.alpha = clamp(bestLineDelta / 255, 0.01, 1);
+      outLines.push(bestLine);
+      previewContext.strokeStyle = strokeColors[channel];
+      previewContext.globalAlpha = bestLine.alpha;
+      previewContext.beginPath();
+      previewContext.moveTo(bestLine.x1 + 0.5, bestLine.y1 + 0.5);
+      previewContext.lineTo(bestLine.x2 + 0.5, bestLine.y2 + 0.5);
+      previewContext.stroke();
+      processedLines += 1;
+
+      const progress = processedLines / totalBudget;
+      onProgress?.(progress, `line ${processedLines}/${totalBudget}`);
+      if (processedLines % previewEveryLines === 0 || processedLines === totalBudget) {
+        onPreview?.(preview);
+      }
+      if (performance.now() - lastYieldTime > 12) {
+        await yieldToUi();
+        lastYieldTime = performance.now();
+      }
+    }
+  }
+
+  const svgGroups: string[] = [];
+  channels.forEach((channel) => {
+    const lines = linesByChannel[channel];
+    const color = strokeColors[channel];
+    if (!lines.length) {
+      return;
+    }
+    let group = `<g stroke="${color}" stroke-width="${Math.max(0.1, options.lineWidth)}" stroke-linecap="round">`;
+    lines.forEach((line) => {
+      group += `<line x1="${line.x1}" y1="${line.y1}" x2="${line.x2}" y2="${line.y2}" stroke-opacity="${line.alpha.toFixed(4)}"/>`;
+    });
+    group += "</g>";
+    svgGroups.push(group);
+  });
+
+  const lineCount = channels.reduce((acc, channel) => acc + linesByChannel[channel].length, 0);
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><rect width="100%" height="100%" fill="${options.mixing === "additive" ? "#000000" : "#FFFFFF"}"/>${svgGroups.join("")}</svg>`;
+  return { svg, preview, lineCount, width, height };
+}
+
+function evaluateLineCandidateFromResidual(
+  residual: Float32Array,
+  width: number,
+  height: number,
+  line: LinefyLine,
+  maxDelta: number,
+  samples: number,
+) {
+  const safeSamples = clamp(Math.round(samples), 4, 256);
+  let score = 0;
+  let avgResidual = 0;
+  let count = 0;
+  for (let i = 0; i < safeSamples; i += 1) {
+    const t = safeSamples <= 1 ? 0.5 : i / (safeSamples - 1);
+    const x = clamp(Math.round(line.x1 + (line.x2 - line.x1) * t), 0, width - 1);
+    const y = clamp(Math.round(line.y1 + (line.y2 - line.y1) * t), 0, height - 1);
+    const r = Math.max(0, residual[y * width + x]);
+    if (r <= 0) {
+      continue;
+    }
+    const d = Math.min(r, maxDelta);
+    // Improvement in squared error: r^2 - (r-d)^2
+    score += r * r - (r - d) * (r - d);
+    avgResidual += r;
+    count += 1;
+  }
+  const meanResidual = count > 0 ? avgResidual / count : 0;
+  const adaptiveDelta = clamp(meanResidual * 1.1, 1, maxDelta);
+  return { score, adaptiveDelta };
+}
+
+function rebuildResidualFromCanvas(
+  target: Float32Array,
+  channelCanvas: GraphImage,
+  width: number,
+  height: number,
+  residual: Float32Array,
+) {
+  const context = channelCanvas.getContext("2d", { willReadFrequently: true });
+  if (!context) {
+    return;
+  }
+  const painted = context.getImageData(0, 0, width, height).data;
+  for (let i = 0; i < residual.length; i += 1) {
+    const paintedValue = painted[i * 4];
+    residual[i] = Math.max(0, target[i] - paintedValue);
+  }
+}
+
+async function generateLinefy2Svg(
+  input: GraphImage,
+  options: {
+    maxWidth: number;
+    colorMode: "grayscale" | "color";
+    mixing: "additive" | "subtractive";
+    numLines: number;
+    lineStep: number;
+    testLines: number;
+    anchorSamples: number;
+    scoreSamples: number;
+    refreshEvery: number;
+    lineWidth: number;
+    seed: number;
+  },
+  shouldCancel?: () => boolean,
+  onProgress?: (progress: number, status: string) => void,
+  onPreview?: (preview: GraphImage) => void,
+): Promise<Linefy2Result | null> {
+  const source = fitSourceToMaxWidthCanvas(input, options.maxWidth);
+  const width = source.width;
+  const height = source.height;
+  const context = source.getContext("2d", { willReadFrequently: true });
+  if (!context) {
+    throw new Error("2D context not available.");
+  }
+  const imageData = context.getImageData(0, 0, width, height);
+  const pixels = imageData.data;
+  const pixelCount = width * height;
+  const rng = createSeededRandom(options.seed);
+  const lineStep = clamp(Math.round(options.lineStep), 1, 255);
+  const totalLines = clamp(Math.round(options.numLines), 1, 20000);
+  const testLines = clamp(Math.round(options.testLines), 4, 4096);
+  const anchorSamples = clamp(Math.round(options.anchorSamples), 32, 65536);
+  const scoreSamples = clamp(Math.round(options.scoreSamples), 4, 256);
+  const refreshEvery = clamp(Math.round(options.refreshEvery), 4, 256);
+
+  const channels =
+    options.colorMode === "color"
+      ? ["r", "g", "b"] as const
+      : ["gray"] as const;
+  type ChannelId = (typeof channels)[number];
+
+  const targetByChannel: Record<ChannelId, Float32Array> = channels.reduce((acc, channel) => {
+    acc[channel] = new Float32Array(pixelCount);
+    return acc;
+  }, {} as Record<ChannelId, Float32Array>);
+  const residualByChannel: Record<ChannelId, Float32Array> = channels.reduce((acc, channel) => {
+    acc[channel] = new Float32Array(pixelCount);
+    return acc;
+  }, {} as Record<ChannelId, Float32Array>);
+  const linesByChannel: Record<ChannelId, LinefyLine[]> = channels.reduce((acc, channel) => {
+    acc[channel] = [];
+    return acc;
+  }, {} as Record<ChannelId, LinefyLine[]>);
+  const channelCanvasByChannel: Record<ChannelId, GraphImage> = channels.reduce((acc, channel) => {
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    acc[channel] = canvas;
+    return acc;
+  }, {} as Record<ChannelId, GraphImage>);
+  const channelContextByChannel: Record<ChannelId, CanvasRenderingContext2D> = channels.reduce((acc, channel) => {
+    const ctx = channelCanvasByChannel[channel].getContext("2d");
+    if (!ctx) {
+      throw new Error("2D context not available.");
+    }
+    acc[channel] = ctx;
+    return acc;
+  }, {} as Record<ChannelId, CanvasRenderingContext2D>);
+  const totals: Record<ChannelId, number> = channels.reduce((acc, channel) => {
+    acc[channel] = 0;
+    return acc;
+  }, {} as Record<ChannelId, number>);
+
+  for (let index = 0; index < pixelCount; index += 1) {
+    const offset = index * 4;
+    const r = pixels[offset];
+    const g = pixels[offset + 1];
+    const b = pixels[offset + 2];
+    if (options.colorMode === "color") {
+      const rr = options.mixing === "subtractive" ? 255 - r : r;
+      const gg = options.mixing === "subtractive" ? 255 - g : g;
+      const bb = options.mixing === "subtractive" ? 255 - b : b;
+      targetByChannel.r[index] = rr;
+      targetByChannel.g[index] = gg;
+      targetByChannel.b[index] = bb;
+      residualByChannel.r[index] = rr;
+      residualByChannel.g[index] = gg;
+      residualByChannel.b[index] = bb;
+      totals.r += rr;
+      totals.g += gg;
+      totals.b += bb;
+    } else {
+      const gray = Math.round(0.21 * r + 0.72 * g + 0.07 * b);
+      const value = options.mixing === "subtractive" ? 255 - gray : gray;
+      targetByChannel.gray[index] = value;
+      residualByChannel.gray[index] = value;
+      totals.gray += value;
+    }
+  }
+
+  channels.forEach((channel) => {
+    const ctx = channelContextByChannel[channel];
+    ctx.clearRect(0, 0, width, height);
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.strokeStyle = "rgb(255 255 255)";
+    ctx.globalCompositeOperation = "source-over";
+    ctx.globalAlpha = 1;
+    ctx.lineWidth = Math.max(0.1, options.lineWidth);
+  });
+
+  const totalEnergy = channels.reduce((acc, channel) => acc + totals[channel], 0);
+  const lineBudgetByChannel: Record<ChannelId, number> = channels.reduce((acc, channel, index) => {
+    const ratio = totalEnergy > 0 ? totals[channel] / totalEnergy : 1 / channels.length;
+    const proposed = Math.max(1, Math.round(totalLines * ratio));
+    acc[channel] = proposed;
+    if (index === channels.length - 1) {
+      const current = channels.reduce((sum, c) => sum + acc[c], 0);
+      acc[channel] += totalLines - current;
+    }
+    return acc;
+  }, {} as Record<ChannelId, number>);
+
+  let processedLines = 0;
+  const totalBudget = Math.max(1, channels.reduce((acc, channel) => acc + lineBudgetByChannel[channel], 0));
+  const previewEveryLines = Math.max(20, Math.floor(totalBudget / 40));
+  let lastYieldTime = performance.now();
+
+  const strokeColors: Record<ChannelId, string> = channels.reduce((acc, channel) => {
+    if (channel === "gray") {
+      acc[channel] = options.mixing === "additive" ? "#FFFFFF" : "#000000";
+      return acc;
+    }
+    if (options.mixing === "subtractive") {
+      acc.r = "#00FFFF";
+      acc.g = "#FF00FF";
+      acc.b = "#FFFF00";
+    } else {
+      acc.r = "#FF0000";
+      acc.g = "#00FF00";
+      acc.b = "#0000FF";
+    }
+    return acc;
+  }, {} as Record<ChannelId, string>);
+  const preview = document.createElement("canvas");
+  preview.width = width;
+  preview.height = height;
+  const previewContext = preview.getContext("2d");
+  if (!previewContext) {
+    throw new Error("2D context not available.");
+  }
+  previewContext.fillStyle = options.mixing === "additive" ? "#000000" : "#FFFFFF";
+  previewContext.fillRect(0, 0, width, height);
+  previewContext.lineWidth = Math.max(0.1, options.lineWidth);
+  previewContext.lineCap = "round";
+  previewContext.globalAlpha = 1;
+
+  for (let c = 0; c < channels.length; c += 1) {
+    const channel = channels[c];
+    const residual = residualByChannel[channel];
+    const target = targetByChannel[channel];
+    const lines = linesByChannel[channel];
+    const channelCtx = channelContextByChannel[channel];
+    const budget = lineBudgetByChannel[channel];
+    let linesFromLastRefresh = 0;
+
+    for (let lineIndex = 0; lineIndex < budget; lineIndex += 1) {
+      if (shouldCancel?.()) {
+        return null;
+      }
+
+      if (linesFromLastRefresh >= refreshEvery) {
+        rebuildResidualFromCanvas(target, channelCanvasByChannel[channel], width, height, residual);
+        linesFromLastRefresh = 0;
+      }
+
+      let bestAnchor = 0;
+      let bestAnchorValue = -1;
+      for (let sample = 0; sample < anchorSamples; sample += 1) {
+        const idx = Math.floor(rng() * pixelCount);
+        const value = residual[idx];
+        if (value > bestAnchorValue) {
+          bestAnchorValue = value;
+          bestAnchor = idx;
+        }
+      }
+      if (bestAnchorValue <= 0.5) {
+        processedLines += budget - lineIndex;
+        break;
+      }
+
+      const anchorX = bestAnchor % width;
+      const anchorY = Math.floor(bestAnchor / width);
+      let bestLine: LinefyLine | null = null;
+      let bestScore = -1;
+      let bestDelta = lineStep;
+
+      for (let test = 0; test < testLines; test += 1) {
+        const angle = rng() * Math.PI;
+        const dx = Math.cos(angle);
+        const dy = Math.sin(angle);
+        const clipped = clipInfiniteLineToRect(anchorX, anchorY, dx, dy, width, height);
+        if (!clipped) {
+          continue;
+        }
+        const candidate: LinefyLine = { ...clipped, alpha: 1 };
+        const evaluated = evaluateLineCandidateFromResidual(
+          residual,
+          width,
+          height,
+          candidate,
+          lineStep,
+          scoreSamples,
+        );
+        if (evaluated.score > bestScore) {
+          bestScore = evaluated.score;
+          bestLine = candidate;
+          bestDelta = evaluated.adaptiveDelta;
+        }
+      }
+
+      if (!bestLine) {
+        processedLines += 1;
+        continue;
+      }
+
+      bestLine.alpha = clamp(bestDelta / 255, 0.01, 1);
+      channelCtx.globalAlpha = bestLine.alpha;
+      channelCtx.beginPath();
+      channelCtx.moveTo(bestLine.x1 + 0.5, bestLine.y1 + 0.5);
+      channelCtx.lineTo(bestLine.x2 + 0.5, bestLine.y2 + 0.5);
+      channelCtx.stroke();
+      lines.push(bestLine);
+      previewContext.strokeStyle = strokeColors[channel];
+      previewContext.globalAlpha = bestLine.alpha;
+      previewContext.beginPath();
+      previewContext.moveTo(bestLine.x1 + 0.5, bestLine.y1 + 0.5);
+      previewContext.lineTo(bestLine.x2 + 0.5, bestLine.y2 + 0.5);
+      previewContext.stroke();
+      linesFromLastRefresh += 1;
+      processedLines += 1;
+
+      if (processedLines % refreshEvery === 0 || processedLines === totalBudget) {
+        const progress = processedLines / totalBudget;
+        onProgress?.(progress, `line ${processedLines}/${totalBudget}`);
+      }
+      if (processedLines % previewEveryLines === 0 || processedLines === totalBudget) {
+        onPreview?.(preview);
+      }
+      if (performance.now() - lastYieldTime > 10) {
+        await yieldToUi();
+        lastYieldTime = performance.now();
+      }
+    }
+
+    rebuildResidualFromCanvas(target, channelCanvasByChannel[channel], width, height, residual);
+  }
+
+  const svgGroups: string[] = [];
+  channels.forEach((channel) => {
+    const lines = linesByChannel[channel];
+    const color = strokeColors[channel];
+    if (!lines.length) {
+      return;
+    }
+    let group = `<g stroke="${color}" stroke-width="${Math.max(0.1, options.lineWidth)}" stroke-linecap="round">`;
+    for (let index = 0; index < lines.length; index += 1) {
+      const line = lines[index];
+      group += `<line x1="${line.x1}" y1="${line.y1}" x2="${line.x2}" y2="${line.y2}" stroke-opacity="${line.alpha.toFixed(4)}"/>`;
+    }
+    group += "</g>";
+    svgGroups.push(group);
+  });
+
+  const lineCount = channels.reduce((acc, channel) => acc + linesByChannel[channel].length, 0);
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><rect width="100%" height="100%" fill="${options.mixing === "additive" ? "#000000" : "#FFFFFF"}"/>${svgGroups.join("")}</svg>`;
+  return { svg, preview, lineCount, width, height };
+}
+
+async function generateDelanoySvg(
+  input: GraphImage,
+  options: {
+    maxWidth: number;
+    gridCells: number;
+    jitter: number;
+    scale: number;
+    lineWidth: number;
+    lineColor: string;
+    backgroundColor: string;
+  },
+  shouldCancel?: () => boolean,
+  onProgress?: (progress: number, status: string) => void,
+  onPreview?: (preview: GraphImage) => void,
+): Promise<DelanoyResult | null> {
+  const source = fitSourceToMaxWidthCanvas(input, options.maxWidth);
+  const width = source.width;
+  const height = source.height;
+  const gridCells = clamp(Math.round(options.gridCells), 8, 320);
+  const cellWidth = width / gridCells;
+  const rows = Math.max(8, Math.round(height / cellWidth));
+  const cellHeight = height / rows;
+  const jitter = clamp(options.jitter, 0, 1);
+  const rng = createSeededRandom(1337 + width * 31 + height * 17 + gridCells * 13);
+
+  const points: C2PointLike[] = [];
+  for (let y = 0; y < rows; y += 1) {
+    const baseY = y * cellHeight;
+    for (let x = 0; x < gridCells; x += 1) {
+      const baseX = x * cellWidth;
+      const px = clamp(baseX + (rng() - 0.5) * cellWidth * jitter, 0, width - 1);
+      const py = clamp(baseY + (rng() - 0.5) * cellHeight * jitter, 0, height - 1);
+      points.push({ x: px, y: py });
+    }
+    if (y % 8 === 0) {
+      onProgress?.((y + 1) / (rows + 4), "sampling points");
+      await yieldToUi();
+      if (shouldCancel?.()) {
+        return null;
+      }
+    }
+  }
+
+  const DelaunayCtor = getC2DelaunayCtor();
+  const delaunay = new DelaunayCtor();
+  delaunay.compute(points);
+  if (shouldCancel?.()) {
+    return null;
+  }
+
+  const edges = delaunay.edges ?? [];
+  const scale = clamp(options.scale, 1, 8);
+  const outWidth = Math.max(1, Math.round(width * scale));
+  const outHeight = Math.max(1, Math.round(height * scale));
+  const lineWidth = Math.max(0.1, options.lineWidth);
+  const lineColor = normalizeHexColor(options.lineColor);
+  const backgroundColor = normalizeHexColor(options.backgroundColor);
+
+  const preview = document.createElement("canvas");
+  preview.width = outWidth;
+  preview.height = outHeight;
+  const previewContext = preview.getContext("2d");
+  if (!previewContext) {
+    throw new Error("2D context not available.");
+  }
+  previewContext.fillStyle = backgroundColor;
+  previewContext.fillRect(0, 0, outWidth, outHeight);
+  previewContext.strokeStyle = lineColor;
+  previewContext.lineWidth = lineWidth;
+  previewContext.lineCap = "round";
+  previewContext.lineJoin = "round";
+
+  const svgLines: string[] = [];
+  for (let index = 0; index < edges.length; index += 1) {
+    const edge = edges[index];
+    const x1 = clamp(edge.p1.x * scale, 0, outWidth - 1);
+    const y1 = clamp(edge.p1.y * scale, 0, outHeight - 1);
+    const x2 = clamp(edge.p2.x * scale, 0, outWidth - 1);
+    const y2 = clamp(edge.p2.y * scale, 0, outHeight - 1);
+    previewContext.beginPath();
+    previewContext.moveTo(x1, y1);
+    previewContext.lineTo(x2, y2);
+    previewContext.stroke();
+    svgLines.push(
+      `<line x1="${x1.toFixed(2)}" y1="${y1.toFixed(2)}" x2="${x2.toFixed(2)}" y2="${y2.toFixed(2)}"/>`,
+    );
+
+    if (index % 1500 === 0 || index === edges.length - 1) {
+      onProgress?.((rows + 1 + (index + 1) / Math.max(1, edges.length) * 3) / (rows + 4), "drawing edges");
+      onPreview?.(preview);
+      await yieldToUi();
+      if (shouldCancel?.()) {
+        return null;
+      }
+    }
+  }
+
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${outWidth}" height="${outHeight}" viewBox="0 0 ${outWidth} ${outHeight}"><rect width="100%" height="100%" fill="${backgroundColor}"/><g stroke="${lineColor}" stroke-width="${lineWidth}" stroke-linecap="round" stroke-linejoin="round">${svgLines.join("")}</g></svg>`;
+  return {
+    svg,
+    preview,
+    edgeCount: edges.length,
+    pointCount: points.length,
+    width: outWidth,
+    height: outHeight,
+  };
 }
 
 interface StipplePoint {
@@ -8161,6 +9046,797 @@ class SeargeantToolNode {
   }
 }
 
+class DelanoyToolNode {
+  size: [number, number] = [280, 500];
+  properties!: Record<string, unknown>;
+  preview: GraphImage | null = null;
+  svg: GraphSvg | null = null;
+  status = "idle";
+  progress = 0;
+  pointCount = 0;
+  edgeCount = 0;
+  outputWidth = 0;
+  outputHeight = 0;
+  isRendering = false;
+  executionMs: number | null = null;
+  lastSignature = "";
+  lastOptionsSignature = "";
+  renderToken = 0;
+
+  constructor() {
+    const node = this as unknown as PreviewAwareNode & DelanoyToolNode;
+    node.title = createToolTitle("Delanoy");
+    node.properties = {
+      maxWidth: 768,
+      gridCells: 96,
+      jitter: 0,
+      scale: 3,
+      lineWidth: 1,
+      lineColor: "#000000",
+      backgroundColor: "#FFFFFF",
+    };
+    node.addInput("image", "image");
+    node.addOutput("image", "image");
+    node.addOutput("svg", "svg");
+    node.addWidget("slider", "Max width", 768, (value) => {
+      node.properties.maxWidth = Math.round(Number(value));
+      notifyGraphStateChange(node);
+    }, { min: 128, max: 2400, step: 8 });
+    node.addWidget("slider", "Grid cells", 96, (value) => {
+      node.properties.gridCells = Math.round(Number(value));
+      notifyGraphStateChange(node);
+    }, { min: 8, max: 320, step: 1 });
+    node.addWidget("slider", "Jitter", 0, (value) => {
+      node.properties.jitter = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0, max: 1, step: 0.01, precision: 2 });
+    node.addWidget("slider", "Scale", 3, (value) => {
+      node.properties.scale = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 1, max: 8, step: 0.1, precision: 1 });
+    node.addWidget("slider", "Line width", 1, (value) => {
+      node.properties.lineWidth = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0.1, max: 8, step: 0.1, precision: 1 });
+    node.addWidget("text", "Line color", "#000000", (value) => {
+      node.properties.lineColor = normalizeHexColor(String(value));
+      notifyGraphStateChange(node);
+    });
+    node.addWidget("text", "BG color", "#FFFFFF", (value) => {
+      node.properties.backgroundColor = normalizeHexColor(String(value));
+      notifyGraphStateChange(node);
+    });
+    node.refreshPreviewLayout = () => {
+      refreshNode(node, node.preview, 4);
+    };
+    node.refreshPreviewLayout();
+  }
+
+  onExecute(this: PreviewAwareNode & DelanoyToolNode) {
+    const inputValue = this.getInputData(0);
+    const input = isGraphImageReady(inputValue) ? inputValue : null;
+    if (!input) {
+      this.preview = null;
+      this.svg = null;
+      this.status = "waiting valid image";
+      this.progress = 0;
+      this.pointCount = 0;
+      this.edgeCount = 0;
+      this.outputWidth = 0;
+      this.outputHeight = 0;
+      this.executionMs = null;
+      this.isRendering = false;
+      this.lastSignature = "";
+      this.lastOptionsSignature = "";
+      this.setOutputData(0, null);
+      this.setOutputData(1, null);
+      this.refreshPreviewLayout();
+      return;
+    }
+
+    const options = {
+      maxWidth: clamp(Math.round(Number(this.properties.maxWidth ?? 768)), 128, 2400),
+      gridCells: clamp(Math.round(Number(this.properties.gridCells ?? 96)), 8, 320),
+      jitter: clamp(Number(this.properties.jitter ?? 0), 0, 1),
+      scale: clamp(Number(this.properties.scale ?? 3), 1, 8),
+      lineWidth: clamp(Number(this.properties.lineWidth ?? 1), 0.1, 8),
+      lineColor: normalizeHexColor(String(this.properties.lineColor ?? "#000000")),
+      backgroundColor: normalizeHexColor(String(this.properties.backgroundColor ?? "#FFFFFF")),
+    };
+    const signature = getGraphImageSignature(input);
+    const optionsSignature = JSON.stringify(options);
+    if (signature !== this.lastSignature || optionsSignature !== this.lastOptionsSignature) {
+      this.lastSignature = signature;
+      this.lastOptionsSignature = optionsSignature;
+      const renderToken = ++this.renderToken;
+      const start = performance.now();
+      this.isRendering = true;
+      this.progress = 0;
+      this.status = "generating delanoy...";
+      this.setDirtyCanvas(true, true);
+
+      const shouldCancel = () => renderToken !== this.renderToken;
+      const updateProgress = (value: number, status?: string) => {
+        this.progress = clamp(value, 0, 1);
+        if (status) {
+          this.status = status;
+        }
+        this.setDirtyCanvas(true, true);
+      };
+
+      void generateDelanoySvg(
+        input,
+        options,
+        shouldCancel,
+        updateProgress,
+        (partialPreview) => {
+          if (shouldCancel()) {
+            return;
+          }
+          this.preview = partialPreview;
+          this.setDirtyCanvas(true, true);
+        },
+      )
+        .then((result) => {
+          if (renderToken !== this.renderToken || !result) {
+            return;
+          }
+          this.preview = result.preview;
+          this.svg = result.svg;
+          this.edgeCount = result.edgeCount;
+          this.pointCount = result.pointCount;
+          this.outputWidth = result.width;
+          this.outputHeight = result.height;
+          this.progress = 1;
+          this.status = "ready";
+          this.executionMs = performance.now() - start;
+          this.isRendering = false;
+          this.setDirtyCanvas(true, true);
+        })
+        .catch((error) => {
+          if (renderToken !== this.renderToken) {
+            return;
+          }
+          this.preview = input;
+          this.svg = null;
+          this.edgeCount = 0;
+          this.pointCount = 0;
+          this.outputWidth = 0;
+          this.outputHeight = 0;
+          this.progress = 0;
+          this.status = error instanceof Error ? error.message : "delanoy error";
+          this.executionMs = null;
+          this.isRendering = false;
+          this.setDirtyCanvas(true, true);
+        });
+    }
+
+    this.setOutputData(0, this.preview ?? input);
+    this.setOutputData(1, this.svg);
+    this.refreshPreviewLayout();
+  }
+
+  onDrawBackground(this: PreviewAwareNode & DelanoyToolNode, context: CanvasRenderingContext2D) {
+    const layout = drawImagePreview(context, this, this.preview, { footerLines: 4 });
+    context.save();
+    context.fillStyle = "rgba(255,255,255,0.65)";
+    context.font = "12px sans-serif";
+    context.fillText(`${this.status}${this.isRendering ? "..." : ""}`, 10, layout.footerTop + 12);
+    context.fillText(
+      `progress ${Math.round(this.progress * 100)}% | points ${this.pointCount} | edges ${this.edgeCount}`,
+      10,
+      layout.footerTop + 30,
+    );
+    context.fillText(`out ${this.outputWidth || "-"}x${this.outputHeight || "-"}`, 10, layout.footerTop + 48);
+    context.fillText(formatExecutionInfo(this.executionMs), 10, layout.footerTop + 66);
+    context.restore();
+  }
+}
+
+class LinefyToolNode {
+  size: [number, number] = [280, 600];
+  properties!: Record<string, unknown>;
+  preview: GraphImage | null = null;
+  svg: GraphSvg | null = null;
+  status = "idle";
+  progress = 0;
+  lineCount = 0;
+  outputWidth = 0;
+  outputHeight = 0;
+  isRendering = false;
+  executionMs: number | null = null;
+  mse: number | null = null;
+  psnr: number | null = null;
+  lastSignature = "";
+  lastOptionsSignature = "";
+  renderToken = 0;
+
+  setWidgetValue(this: LinefyToolNode, name: string, value: unknown) {
+    const widgets = (this as unknown as LiteNode).widgets;
+    if (!widgets?.length) {
+      return;
+    }
+    const widget = widgets.find((item) => {
+      if (!item || typeof item !== "object") {
+        return false;
+      }
+      return (item as { name?: unknown }).name === name;
+    }) as { value?: unknown } | undefined;
+    if (widget) {
+      widget.value = value;
+    }
+  }
+
+  applyPreset(
+    this: PreviewAwareNode & LinefyToolNode,
+    preset: "fast" | "normal" | "slow",
+    notify = true,
+  ) {
+    const values =
+      preset === "fast"
+        ? {
+            maxWidth: 480,
+            numLines: 700,
+            testLines: 24,
+            anchorSamples: 256,
+          }
+        : preset === "slow"
+          ? {
+              maxWidth: 960,
+              numLines: 3200,
+              testLines: 160,
+              anchorSamples: 2048,
+            }
+          : {
+              maxWidth: 640,
+              numLines: 1600,
+              testLines: 64,
+              anchorSamples: 768,
+            };
+    Object.assign(this.properties, values, { preset });
+    this.setWidgetValue("Preset", preset);
+    this.setWidgetValue("Max width", values.maxWidth);
+    this.setWidgetValue("Num lines", values.numLines);
+    this.setWidgetValue("Test lines", values.testLines);
+    this.setWidgetValue("Anchor samples", values.anchorSamples);
+    this.setDirtyCanvas(true, true);
+    if (notify) {
+      notifyGraphStateChange(this);
+    }
+  }
+
+  markCustom(this: PreviewAwareNode & LinefyToolNode) {
+    if (String(this.properties.preset ?? "normal") !== "custom") {
+      this.properties.preset = "custom";
+      this.setWidgetValue("Preset", "custom");
+    }
+  }
+
+  constructor() {
+    const node = this as unknown as PreviewAwareNode & LinefyToolNode;
+    node.title = createToolTitle("Linefy");
+    node.properties = {
+      preset: "normal",
+      maxWidth: 640,
+      colorMode: "color",
+      mixing: "subtractive",
+      numLines: 1600,
+      lineStep: 16,
+      testLines: 64,
+      anchorSamples: 768,
+      lineWidth: 1,
+      seed: 1337,
+    };
+    node.addInput("image", "image");
+    node.addOutput("image", "image");
+    node.addOutput("svg", "svg");
+    node.addWidget("combo", "Preset", "normal", (value) => {
+      const preset = String(value);
+      if (preset === "fast" || preset === "normal" || preset === "slow") {
+        node.applyPreset(preset, true);
+      } else {
+        node.properties.preset = "custom";
+        node.setDirtyCanvas(true, true);
+        notifyGraphStateChange(node);
+      }
+    }, { values: ["fast", "normal", "slow", "custom"] });
+    node.addWidget("combo", "Color mode", "color", (value) => {
+      node.properties.colorMode = String(value) === "grayscale" ? "grayscale" : "color";
+      notifyGraphStateChange(node);
+    }, { values: ["color", "grayscale"] });
+    node.addWidget("combo", "Mixing", "subtractive", (value) => {
+      node.properties.mixing = String(value) === "additive" ? "additive" : "subtractive";
+      notifyGraphStateChange(node);
+    }, { values: ["subtractive", "additive"] });
+    node.addWidget("slider", "Max width", 640, (value) => {
+      node.properties.maxWidth = Math.round(Number(value));
+      node.markCustom();
+      notifyGraphStateChange(node);
+    }, { min: 128, max: 2400, step: 8 });
+    node.addWidget("slider", "Num lines", 1600, (value) => {
+      node.properties.numLines = Math.round(Number(value));
+      node.markCustom();
+      notifyGraphStateChange(node);
+    }, { min: 1, max: 12000, step: 1 });
+    node.addWidget("slider", "Line heaviness", 16, (value) => {
+      node.properties.lineStep = Math.round(Number(value));
+      notifyGraphStateChange(node);
+    }, { min: 1, max: 255, step: 1 });
+    node.addWidget("slider", "Test lines", 64, (value) => {
+      node.properties.testLines = Math.round(Number(value));
+      node.markCustom();
+      notifyGraphStateChange(node);
+    }, { min: 4, max: 4096, step: 1 });
+    node.addWidget("slider", "Anchor samples", 768, (value) => {
+      node.properties.anchorSamples = Math.round(Number(value));
+      node.markCustom();
+      notifyGraphStateChange(node);
+    }, { min: 32, max: 65536, step: 32 });
+    node.addWidget("slider", "Line width", 1, (value) => {
+      node.properties.lineWidth = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0.1, max: 8, step: 0.1, precision: 1 });
+    node.addWidget("number", "Seed", 1337, (value) => {
+      node.properties.seed = Math.round(Number(value));
+      notifyGraphStateChange(node);
+    }, { step: 1 });
+    node.refreshPreviewLayout = () => {
+      refreshNode(node, node.preview, 4);
+    };
+    node.applyPreset("normal", false);
+    node.refreshPreviewLayout();
+  }
+
+  onExecute(this: PreviewAwareNode & LinefyToolNode) {
+    const inputValue = this.getInputData(0);
+    const input = isGraphImageReady(inputValue) ? inputValue : null;
+    if (!input) {
+      this.preview = null;
+      this.svg = null;
+      this.status = "waiting valid image";
+      this.progress = 0;
+      this.lineCount = 0;
+      this.outputWidth = 0;
+      this.outputHeight = 0;
+      this.executionMs = null;
+      this.mse = null;
+      this.psnr = null;
+      this.isRendering = false;
+      this.lastSignature = "";
+      this.lastOptionsSignature = "";
+      this.setOutputData(0, null);
+      this.setOutputData(1, null);
+      this.refreshPreviewLayout();
+      return;
+    }
+
+    const options = {
+      maxWidth: clamp(Math.round(Number(this.properties.maxWidth ?? 640)), 128, 2400),
+      colorMode: String(this.properties.colorMode ?? "color") === "grayscale" ? "grayscale" as const : "color" as const,
+      mixing: String(this.properties.mixing ?? "subtractive") === "additive" ? "additive" as const : "subtractive" as const,
+      numLines: clamp(Math.round(Number(this.properties.numLines ?? 1600)), 1, 12000),
+      lineStep: clamp(Math.round(Number(this.properties.lineStep ?? 16)), 1, 255),
+      testLines: clamp(Math.round(Number(this.properties.testLines ?? 64)), 4, 4096),
+      anchorSamples: clamp(Math.round(Number(this.properties.anchorSamples ?? 768)), 32, 65536),
+      lineWidth: clamp(Number(this.properties.lineWidth ?? 1), 0.1, 8),
+      seed: Math.round(Number(this.properties.seed ?? 1337)),
+    };
+    const signature = getGraphImageSignature(input);
+    const optionsSignature = JSON.stringify(options);
+    if (signature !== this.lastSignature || optionsSignature !== this.lastOptionsSignature) {
+      this.lastSignature = signature;
+      this.lastOptionsSignature = optionsSignature;
+      const renderToken = ++this.renderToken;
+      const start = performance.now();
+      this.isRendering = true;
+      this.progress = 0;
+      this.status = "generating linefy...";
+      this.mse = null;
+      this.psnr = null;
+      this.setDirtyCanvas(true, true);
+
+      const shouldCancel = () => renderToken !== this.renderToken;
+      const updateProgress = (value: number, status?: string) => {
+        this.progress = clamp(value, 0, 1);
+        if (status) {
+          this.status = status;
+        }
+        this.setDirtyCanvas(true, true);
+      };
+
+      void generateLinefySvg(
+        input,
+        options,
+        shouldCancel,
+        updateProgress,
+        (partialPreview) => {
+          if (shouldCancel()) {
+            return;
+          }
+          this.preview = partialPreview;
+          const metrics = computeImageErrorMetrics(input, partialPreview);
+          this.mse = metrics.mse;
+          this.psnr = metrics.psnr;
+          this.setDirtyCanvas(true, true);
+        },
+      )
+        .then((result) => {
+          if (renderToken !== this.renderToken || !result) {
+            return;
+          }
+          this.preview = result.preview;
+          this.svg = result.svg;
+          this.lineCount = result.lineCount;
+          this.outputWidth = result.width;
+          this.outputHeight = result.height;
+          this.progress = 1;
+          this.status = "ready";
+          this.executionMs = performance.now() - start;
+          const metrics = computeImageErrorMetrics(input, result.preview);
+          this.mse = metrics.mse;
+          this.psnr = metrics.psnr;
+          this.isRendering = false;
+          this.setDirtyCanvas(true, true);
+        })
+        .catch((error) => {
+          if (renderToken !== this.renderToken) {
+            return;
+          }
+          this.preview = input;
+          this.svg = null;
+          this.lineCount = 0;
+          this.outputWidth = 0;
+          this.outputHeight = 0;
+          this.progress = 0;
+          this.status = error instanceof Error ? error.message : "linefy error";
+          this.executionMs = null;
+          this.mse = null;
+          this.psnr = null;
+          this.isRendering = false;
+          this.setDirtyCanvas(true, true);
+        });
+    }
+
+    this.setOutputData(0, this.preview ?? input);
+    this.setOutputData(1, this.svg);
+    this.refreshPreviewLayout();
+  }
+
+  onDrawBackground(this: PreviewAwareNode & LinefyToolNode, context: CanvasRenderingContext2D) {
+    const layout = drawImagePreview(context, this, this.preview, { footerLines: 5 });
+    context.save();
+    context.fillStyle = "rgba(255,255,255,0.65)";
+    context.font = "12px sans-serif";
+    context.fillText(`${this.status}${this.isRendering ? "..." : ""}`, 10, layout.footerTop + 12);
+    context.fillText(
+      `progress ${Math.round(this.progress * 100)}% | lines ${this.lineCount}`,
+      10,
+      layout.footerTop + 30,
+    );
+    context.fillText(
+      `out ${this.outputWidth || "-"}x${this.outputHeight || "-"}`,
+      10,
+      layout.footerTop + 48,
+    );
+    context.fillText(formatExecutionInfo(this.executionMs), 10, layout.footerTop + 66);
+    context.fillText(formatImageErrorMetrics(this.mse, this.psnr), 10, layout.footerTop + 84);
+    context.restore();
+  }
+}
+
+class Linefy2ToolNode {
+  size: [number, number] = [280, 620];
+  properties!: Record<string, unknown>;
+  preview: GraphImage | null = null;
+  svg: GraphSvg | null = null;
+  status = "idle";
+  progress = 0;
+  lineCount = 0;
+  outputWidth = 0;
+  outputHeight = 0;
+  isRendering = false;
+  executionMs: number | null = null;
+  mse: number | null = null;
+  psnr: number | null = null;
+  lastSignature = "";
+  lastOptionsSignature = "";
+  renderToken = 0;
+
+  setWidgetValue(this: Linefy2ToolNode, name: string, value: unknown) {
+    const widgets = (this as unknown as LiteNode).widgets;
+    if (!widgets?.length) {
+      return;
+    }
+    const widget = widgets.find((item) => {
+      if (!item || typeof item !== "object") {
+        return false;
+      }
+      return (item as { name?: unknown }).name === name;
+    }) as { value?: unknown } | undefined;
+    if (widget) {
+      widget.value = value;
+    }
+  }
+
+  applyPreset(
+    this: PreviewAwareNode & Linefy2ToolNode,
+    preset: "fast" | "normal" | "slow",
+    notify = true,
+  ) {
+    const values =
+      preset === "fast"
+        ? {
+            maxWidth: 512,
+            numLines: 800,
+            testLines: 24,
+            anchorSamples: 256,
+            scoreSamples: 16,
+            refreshEvery: 48,
+          }
+        : preset === "slow"
+          ? {
+              maxWidth: 1024,
+              numLines: 3500,
+              testLines: 160,
+              anchorSamples: 2048,
+              scoreSamples: 64,
+              refreshEvery: 16,
+            }
+          : {
+              maxWidth: 768,
+              numLines: 1800,
+              testLines: 64,
+              anchorSamples: 768,
+              scoreSamples: 32,
+              refreshEvery: 24,
+            };
+    Object.assign(this.properties, values, { preset });
+    this.setWidgetValue("Preset", preset);
+    this.setWidgetValue("Max width", values.maxWidth);
+    this.setWidgetValue("Num lines", values.numLines);
+    this.setWidgetValue("Test lines", values.testLines);
+    this.setWidgetValue("Anchor samples", values.anchorSamples);
+    this.setWidgetValue("Score samples", values.scoreSamples);
+    this.setWidgetValue("Refresh", values.refreshEvery);
+    this.setDirtyCanvas(true, true);
+    if (notify) {
+      notifyGraphStateChange(this);
+    }
+  }
+
+  markCustom(this: PreviewAwareNode & Linefy2ToolNode) {
+    if (String(this.properties.preset ?? "normal") !== "custom") {
+      this.properties.preset = "custom";
+      this.setWidgetValue("Preset", "custom");
+    }
+  }
+
+  constructor() {
+    const node = this as unknown as PreviewAwareNode & Linefy2ToolNode;
+    node.title = createToolTitle("Linefy2");
+    node.properties = {
+      preset: "normal",
+      maxWidth: 768,
+      colorMode: "color",
+      mixing: "subtractive",
+      numLines: 1800,
+      lineStep: 16,
+      testLines: 64,
+      anchorSamples: 768,
+      scoreSamples: 32,
+      refreshEvery: 24,
+      lineWidth: 1,
+      seed: 1337,
+    };
+    node.addInput("image", "image");
+    node.addOutput("image", "image");
+    node.addOutput("svg", "svg");
+    node.addWidget("combo", "Preset", "normal", (value) => {
+      const preset = String(value);
+      if (preset === "fast" || preset === "normal" || preset === "slow") {
+        node.applyPreset(preset, true);
+      } else {
+        node.properties.preset = "custom";
+        node.setDirtyCanvas(true, true);
+        notifyGraphStateChange(node);
+      }
+    }, { values: ["fast", "normal", "slow", "custom"] });
+    node.addWidget("combo", "Color mode", "color", (value) => {
+      node.properties.colorMode = String(value) === "grayscale" ? "grayscale" : "color";
+      notifyGraphStateChange(node);
+    }, { values: ["color", "grayscale"] });
+    node.addWidget("combo", "Mixing", "subtractive", (value) => {
+      node.properties.mixing = String(value) === "additive" ? "additive" : "subtractive";
+      notifyGraphStateChange(node);
+    }, { values: ["subtractive", "additive"] });
+    node.addWidget("slider", "Max width", 768, (value) => {
+      node.properties.maxWidth = Math.round(Number(value));
+      node.markCustom();
+      notifyGraphStateChange(node);
+    }, { min: 128, max: 2400, step: 8 });
+    node.addWidget("slider", "Num lines", 1800, (value) => {
+      node.properties.numLines = Math.round(Number(value));
+      node.markCustom();
+      notifyGraphStateChange(node);
+    }, { min: 1, max: 20000, step: 1 });
+    node.addWidget("slider", "Line heaviness", 16, (value) => {
+      node.properties.lineStep = Math.round(Number(value));
+      notifyGraphStateChange(node);
+    }, { min: 1, max: 255, step: 1 });
+    node.addWidget("slider", "Test lines", 64, (value) => {
+      node.properties.testLines = Math.round(Number(value));
+      node.markCustom();
+      notifyGraphStateChange(node);
+    }, { min: 4, max: 4096, step: 1 });
+    node.addWidget("slider", "Anchor samples", 768, (value) => {
+      node.properties.anchorSamples = Math.round(Number(value));
+      node.markCustom();
+      notifyGraphStateChange(node);
+    }, { min: 32, max: 65536, step: 32 });
+    node.addWidget("slider", "Score samples", 32, (value) => {
+      node.properties.scoreSamples = Math.round(Number(value));
+      node.markCustom();
+      notifyGraphStateChange(node);
+    }, { min: 4, max: 256, step: 1 });
+    node.addWidget("slider", "Refresh", 24, (value) => {
+      node.properties.refreshEvery = Math.round(Number(value));
+      node.markCustom();
+      notifyGraphStateChange(node);
+    }, { min: 4, max: 256, step: 1 });
+    node.addWidget("slider", "Line width", 1, (value) => {
+      node.properties.lineWidth = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0.1, max: 8, step: 0.1, precision: 1 });
+    node.addWidget("number", "Seed", 1337, (value) => {
+      node.properties.seed = Math.round(Number(value));
+      notifyGraphStateChange(node);
+    }, { step: 1 });
+    node.refreshPreviewLayout = () => {
+      refreshNode(node, node.preview, 4);
+    };
+    node.applyPreset("normal", false);
+    node.refreshPreviewLayout();
+  }
+
+  onExecute(this: PreviewAwareNode & Linefy2ToolNode) {
+    const inputValue = this.getInputData(0);
+    const input = isGraphImageReady(inputValue) ? inputValue : null;
+    if (!input) {
+      this.preview = null;
+      this.svg = null;
+      this.status = "waiting valid image";
+      this.progress = 0;
+      this.lineCount = 0;
+      this.outputWidth = 0;
+      this.outputHeight = 0;
+      this.executionMs = null;
+      this.mse = null;
+      this.psnr = null;
+      this.isRendering = false;
+      this.lastSignature = "";
+      this.lastOptionsSignature = "";
+      this.setOutputData(0, null);
+      this.setOutputData(1, null);
+      this.refreshPreviewLayout();
+      return;
+    }
+
+    const options = {
+      maxWidth: clamp(Math.round(Number(this.properties.maxWidth ?? 768)), 128, 2400),
+      colorMode: String(this.properties.colorMode ?? "color") === "grayscale" ? "grayscale" as const : "color" as const,
+      mixing: String(this.properties.mixing ?? "subtractive") === "additive" ? "additive" as const : "subtractive" as const,
+      numLines: clamp(Math.round(Number(this.properties.numLines ?? 1800)), 1, 20000),
+      lineStep: clamp(Math.round(Number(this.properties.lineStep ?? 16)), 1, 255),
+      testLines: clamp(Math.round(Number(this.properties.testLines ?? 64)), 4, 4096),
+      anchorSamples: clamp(Math.round(Number(this.properties.anchorSamples ?? 768)), 32, 65536),
+      scoreSamples: clamp(Math.round(Number(this.properties.scoreSamples ?? 32)), 4, 256),
+      refreshEvery: clamp(Math.round(Number(this.properties.refreshEvery ?? 24)), 4, 256),
+      lineWidth: clamp(Number(this.properties.lineWidth ?? 1), 0.1, 8),
+      seed: Math.round(Number(this.properties.seed ?? 1337)),
+    };
+    const signature = getGraphImageSignature(input);
+    const optionsSignature = JSON.stringify(options);
+    if (signature !== this.lastSignature || optionsSignature !== this.lastOptionsSignature) {
+      this.lastSignature = signature;
+      this.lastOptionsSignature = optionsSignature;
+      const renderToken = ++this.renderToken;
+      const start = performance.now();
+      this.isRendering = true;
+      this.progress = 0;
+      this.status = "generating linefy2...";
+      this.mse = null;
+      this.psnr = null;
+      this.setDirtyCanvas(true, true);
+
+      const shouldCancel = () => renderToken !== this.renderToken;
+      const updateProgress = (value: number, status?: string) => {
+        this.progress = clamp(value, 0, 1);
+        if (status) {
+          this.status = status;
+        }
+        this.setDirtyCanvas(true, true);
+      };
+
+      void generateLinefy2Svg(
+        input,
+        options,
+        shouldCancel,
+        updateProgress,
+        (partialPreview) => {
+          if (shouldCancel()) {
+            return;
+          }
+          this.preview = partialPreview;
+          const metrics = computeImageErrorMetrics(input, partialPreview);
+          this.mse = metrics.mse;
+          this.psnr = metrics.psnr;
+          this.setDirtyCanvas(true, true);
+        },
+      )
+        .then((result) => {
+          if (renderToken !== this.renderToken || !result) {
+            return;
+          }
+          this.preview = result.preview;
+          this.svg = result.svg;
+          this.lineCount = result.lineCount;
+          this.outputWidth = result.width;
+          this.outputHeight = result.height;
+          this.progress = 1;
+          this.status = "ready";
+          this.executionMs = performance.now() - start;
+          const metrics = computeImageErrorMetrics(input, result.preview);
+          this.mse = metrics.mse;
+          this.psnr = metrics.psnr;
+          this.isRendering = false;
+          this.setDirtyCanvas(true, true);
+        })
+        .catch((error) => {
+          if (renderToken !== this.renderToken) {
+            return;
+          }
+          this.preview = input;
+          this.svg = null;
+          this.lineCount = 0;
+          this.outputWidth = 0;
+          this.outputHeight = 0;
+          this.progress = 0;
+          this.status = error instanceof Error ? error.message : "linefy2 error";
+          this.executionMs = null;
+          this.mse = null;
+          this.psnr = null;
+          this.isRendering = false;
+          this.setDirtyCanvas(true, true);
+        });
+    }
+
+    this.setOutputData(0, this.preview ?? input);
+    this.setOutputData(1, this.svg);
+    this.refreshPreviewLayout();
+  }
+
+  onDrawBackground(this: PreviewAwareNode & Linefy2ToolNode, context: CanvasRenderingContext2D) {
+    const layout = drawImagePreview(context, this, this.preview, { footerLines: 5 });
+    context.save();
+    context.fillStyle = "rgba(255,255,255,0.65)";
+    context.font = "12px sans-serif";
+    context.fillText(`${this.status}${this.isRendering ? "..." : ""}`, 10, layout.footerTop + 12);
+    context.fillText(
+      `progress ${Math.round(this.progress * 100)}% | lines ${this.lineCount}`,
+      10,
+      layout.footerTop + 30,
+    );
+    context.fillText(
+      `out ${this.outputWidth || "-"}x${this.outputHeight || "-"}`,
+      10,
+      layout.footerTop + 48,
+    );
+    context.fillText(formatExecutionInfo(this.executionMs), 10, layout.footerTop + 66);
+    context.fillText(formatImageErrorMetrics(this.mse, this.psnr), 10, layout.footerTop + 84);
+    context.restore();
+  }
+}
+
 class GridDotToolNode {
   size: [number, number] = [280, 560];
   properties!: Record<string, unknown>;
@@ -10007,6 +11683,9 @@ export function registerImageNodes() {
   });
   registerArtToolNodes(registerNodeType, {
     OilToolNode: OilToolNode as unknown as NodeCtor,
+    DelanoyToolNode: DelanoyToolNode as unknown as NodeCtor,
+    LinefyToolNode: LinefyToolNode as unknown as NodeCtor,
+    Linefy2ToolNode: Linefy2ToolNode as unknown as NodeCtor,
     GridDotToolNode: GridDotToolNode as unknown as NodeCtor,
     StippleToolNode: StippleToolNode as unknown as NodeCtor,
     VectorizeToolNode: VectorizeToolNode as unknown as NodeCtor,
