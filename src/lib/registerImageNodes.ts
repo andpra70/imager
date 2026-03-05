@@ -2419,6 +2419,24 @@ interface CrosshatchBnResult {
   outputHeight: number;
 }
 
+interface MatitaPoint {
+  x: number;
+  y: number;
+}
+
+interface MatitaQuantizedData {
+  map: Uint8Array;
+  width: number;
+  height: number;
+}
+
+interface MatitaResult {
+  svg: GraphSvg;
+  pathCount: number;
+  width: number;
+  height: number;
+}
+
 function appendSvgCrosshatchLine(
   lines: string[],
   x1: number,
@@ -2604,6 +2622,228 @@ async function generateCrosshatchBnSvg(
     outputWidth,
     outputHeight,
   };
+}
+
+function quantizeMatitaImage(imageData: ImageData, numLevels: number): MatitaQuantizedData {
+  const { width, height, data } = imageData;
+  const map = new Uint8Array(width * height);
+  for (let index = 0; index < map.length; index += 1) {
+    const offset = index * 4;
+    const luminosity = (data[offset] + data[offset + 1] + data[offset + 2]) / 3;
+    map[index] = Math.round(numLevels * (1 - luminosity / 255));
+  }
+  return { map, width, height };
+}
+
+function findNearestMatitaPoint(
+  startX: number,
+  startY: number,
+  points: MatitaPoint[],
+  isUsed: boolean[],
+) {
+  let bestIndex = -1;
+  let minSqDistance = Number.POSITIVE_INFINITY;
+  for (let index = 0; index < points.length; index += 1) {
+    if (isUsed[index]) {
+      continue;
+    }
+    const point = points[index];
+    const dx = point.x - startX;
+    const dy = point.y - startY;
+    const sqDistance = dx * dx + dy * dy;
+    if (sqDistance < minSqDistance) {
+      minSqDistance = sqDistance;
+      bestIndex = index;
+    }
+  }
+  return bestIndex;
+}
+
+function runMatitaSinglePass(level: number, quantizedData: MatitaQuantizedData) {
+  const { map, width, height } = quantizedData;
+  const pointsToVisit: MatitaPoint[] = [];
+  const pointMap = new Map<number, number>();
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const id = y * width + x;
+      if (map[id] >= level) {
+        pointMap.set(id, pointsToVisit.length);
+        pointsToVisit.push({ x, y });
+      }
+    }
+  }
+
+  if (!pointsToVisit.length) {
+    return [] as MatitaPoint[][];
+  }
+
+  const isUsed = new Array(pointsToVisit.length).fill(false);
+  const paths: MatitaPoint[][] = [];
+  let pointsUsedCount = 0;
+  let currentPointIndex = 0;
+  const directions = [
+    [1, 0],
+    [0, 1],
+    [-1, 0],
+    [0, -1],
+    [1, 1],
+    [-1, 1],
+    [1, -1],
+    [-1, -1],
+  ];
+
+  while (pointsUsedCount < pointsToVisit.length) {
+    if (isUsed[currentPointIndex]) {
+      currentPointIndex = isUsed.indexOf(false);
+      if (currentPointIndex === -1) {
+        break;
+      }
+    }
+
+    const currentPath: MatitaPoint[] = [];
+    let { x, y } = pointsToVisit[currentPointIndex];
+
+    while (true) {
+      currentPath.push({ x, y });
+      isUsed[currentPointIndex] = true;
+      pointsUsedCount += 1;
+
+      let foundNext = false;
+      for (const [dx, dy] of directions) {
+        const nextX = x + dx;
+        const nextY = y + dy;
+        const nextId = nextY * width + nextX;
+        if (!pointMap.has(nextId)) {
+          continue;
+        }
+        const nextIndex = pointMap.get(nextId);
+        if (nextIndex === undefined || isUsed[nextIndex]) {
+          continue;
+        }
+        x = nextX;
+        y = nextY;
+        currentPointIndex = nextIndex;
+        foundNext = true;
+        break;
+      }
+
+      if (!foundNext) {
+        paths.push(currentPath);
+        currentPointIndex = findNearestMatitaPoint(x, y, pointsToVisit, isUsed);
+        break;
+      }
+    }
+  }
+
+  return paths;
+}
+
+function matitaPerpendicularDistance(point: MatitaPoint, a: MatitaPoint, b: MatitaPoint) {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  if (dx === 0 && dy === 0) {
+    const px = point.x - a.x;
+    const py = point.y - a.y;
+    return Math.sqrt(px * px + py * py);
+  }
+  return Math.abs(dy * point.x - dx * point.y + b.x * a.y - b.y * a.x) / Math.sqrt(dx * dx + dy * dy);
+}
+
+function rdpMatita(points: MatitaPoint[], epsilon: number): MatitaPoint[] {
+  if (points.length < 3) {
+    return points;
+  }
+
+  let dmax = 0;
+  let index = 0;
+  const end = points.length - 1;
+  for (let i = 1; i < end; i += 1) {
+    const distance = matitaPerpendicularDistance(points[i], points[0], points[end]);
+    if (distance > dmax) {
+      index = i;
+      dmax = distance;
+    }
+  }
+
+  if (dmax > epsilon) {
+    const recA = rdpMatita(points.slice(0, index + 1), epsilon);
+    const recB = rdpMatita(points.slice(index, end + 1), epsilon);
+    return recA.slice(0, recA.length - 1).concat(recB);
+  }
+
+  return [points[0], points[end]];
+}
+
+async function generateMatitaSvg(
+  input: GraphImage,
+  options: {
+    maxWidth: number;
+    iterations: number;
+    simplification: number;
+    lineWidth: number;
+    lineColor: string;
+    backgroundMode: "transparent" | "color";
+    backgroundColor: string;
+  },
+  shouldCancel?: () => boolean,
+  onProgress?: (progress: number, status: string) => void,
+): Promise<MatitaResult | null> {
+  const source = fitSourceToMaxWidthCanvas(input, options.maxWidth);
+  const width = source.width;
+  const height = source.height;
+  const context = source.getContext("2d", { willReadFrequently: true });
+  if (!context) {
+    throw new Error("2D context not available.");
+  }
+  const imageData = context.getImageData(0, 0, width, height);
+  const totalIterations = clamp(Math.round(options.iterations), 1, 20);
+  const quantizedData = quantizeMatitaImage(imageData, totalIterations);
+  const allLevelPaths: MatitaPoint[][][] = [];
+  let pathCount = 0;
+
+  for (let level = 1; level <= totalIterations; level += 1) {
+    if (shouldCancel?.()) {
+      return null;
+    }
+    const passPaths = runMatitaSinglePass(level, quantizedData);
+    pathCount += passPaths.length;
+    allLevelPaths.push(passPaths);
+    onProgress?.(level / totalIterations, `livello ${level}/${totalIterations}`);
+    await yieldToUi();
+  }
+
+  const simplification = Math.max(0, options.simplification);
+  const strokeWidth = Math.max(0.1, options.lineWidth);
+  const strokeColor = normalizeHexColor(options.lineColor);
+  const backgroundColor = normalizeHexColor(options.backgroundColor);
+  let svgPaths = "";
+  allLevelPaths.forEach((passPaths) => {
+    const opacity = 1 / totalIterations;
+    let groupPaths = "";
+    passPaths.forEach((path) => {
+      const simplified = simplification > 0 ? rdpMatita(path, simplification) : path;
+      if (simplified.length < 2) {
+        return;
+      }
+      const d =
+        `M${simplified[0].x},${simplified[0].y} ` +
+        simplified
+          .slice(1)
+          .map((point) => `L${point.x},${point.y}`)
+          .join(" ");
+      groupPaths += `<path d="${d}"/>`;
+    });
+    if (groupPaths) {
+      svgPaths += `<g stroke="${strokeColor}" stroke-width="${strokeWidth}" stroke-opacity="${opacity.toFixed(4)}" fill="none" stroke-linecap="round" stroke-linejoin="round">${groupPaths}</g>`;
+    }
+  });
+
+  const backgroundRect =
+    options.backgroundMode === "color"
+      ? `<rect width="100%" height="100%" fill="${backgroundColor}"/>`
+      : "";
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">${backgroundRect}${svgPaths}</svg>`;
+  return { svg, pathCount, width, height };
 }
 
 async function marchingGraphImage(
@@ -5701,6 +5941,192 @@ class CrosshatchBnToolNode {
   }
 }
 
+class MatitaToolNode {
+  size: [number, number] = [280, 470];
+  properties!: Record<string, unknown>;
+  preview: GraphImage | null = null;
+  svg: GraphSvg | null = null;
+  status = "idle";
+  progress = 0;
+  pathCount = 0;
+  outputWidth = 0;
+  outputHeight = 0;
+  isRendering = false;
+  executionMs: number | null = null;
+  lastSignature = "";
+  lastOptionsSignature = "";
+  renderToken = 0;
+
+  constructor() {
+    const node = this as unknown as PreviewAwareNode & MatitaToolNode;
+    node.title = createToolTitle("Matita");
+    node.properties = {
+      maxWidth: 500,
+      iterations: 8,
+      simplification: 1.2,
+      lineWidth: 1,
+      lineColor: "#000000",
+      backgroundMode: "color",
+      backgroundColor: "#FFFFFF",
+    };
+    node.addInput("image", "image");
+    node.addOutput("image", "image");
+    node.addOutput("svg", "svg");
+    node.addWidget("slider", "Max width", 500, (value) => {
+      node.properties.maxWidth = Math.round(Number(value));
+      notifyGraphStateChange(node);
+    }, { min: 128, max: 2400, step: 8 });
+    node.addWidget("slider", "Passes", 8, (value) => {
+      node.properties.iterations = Math.round(Number(value));
+      notifyGraphStateChange(node);
+    }, { min: 1, max: 20, step: 1 });
+    node.addWidget("slider", "Simplify", 1.2, (value) => {
+      node.properties.simplification = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0, max: 5, step: 0.1, precision: 1 });
+    node.addWidget("slider", "Line width", 1, (value) => {
+      node.properties.lineWidth = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0.1, max: 20, step: 0.1, precision: 1 });
+    node.addWidget("text", "Line color", "#000000", (value) => {
+      node.properties.lineColor = normalizeHexColor(String(value));
+      notifyGraphStateChange(node);
+    });
+    node.addWidget("combo", "BG mode", "color", (value) => {
+      node.properties.backgroundMode = String(value) === "transparent" ? "transparent" : "color";
+      notifyGraphStateChange(node);
+    }, { values: ["color", "transparent"] });
+    node.addWidget("text", "BG color", "#FFFFFF", (value) => {
+      node.properties.backgroundColor = normalizeHexColor(String(value));
+      notifyGraphStateChange(node);
+    });
+    node.refreshPreviewLayout = () => {
+      refreshNode(node, node.preview, 4);
+    };
+    node.refreshPreviewLayout();
+  }
+
+  onExecute(this: PreviewAwareNode & MatitaToolNode) {
+    const inputValue = this.getInputData(0);
+    const input = isGraphImageReady(inputValue) ? inputValue : null;
+    if (!input) {
+      this.preview = null;
+      this.svg = null;
+      this.status = "waiting valid image";
+      this.progress = 0;
+      this.pathCount = 0;
+      this.outputWidth = 0;
+      this.outputHeight = 0;
+      this.executionMs = null;
+      this.isRendering = false;
+      this.lastSignature = "";
+      this.lastOptionsSignature = "";
+      this.setOutputData(0, null);
+      this.setOutputData(1, null);
+      this.refreshPreviewLayout();
+      return;
+    }
+
+    const backgroundMode: "transparent" | "color" =
+      String(this.properties.backgroundMode ?? "color") === "transparent"
+        ? "transparent"
+        : "color";
+    const options = {
+      maxWidth: clamp(Math.round(Number(this.properties.maxWidth ?? 500)), 128, 2400),
+      iterations: clamp(Math.round(Number(this.properties.iterations ?? 8)), 1, 20),
+      simplification: clamp(Number(this.properties.simplification ?? 1.2), 0, 5),
+      lineWidth: clamp(Number(this.properties.lineWidth ?? 1), 0.1, 20),
+      lineColor: normalizeHexColor(String(this.properties.lineColor ?? "#000000")),
+      backgroundMode,
+      backgroundColor: normalizeHexColor(String(this.properties.backgroundColor ?? "#FFFFFF")),
+    };
+    const signature = getGraphImageSignature(input);
+    const optionsSignature = JSON.stringify(options);
+    if (signature !== this.lastSignature || optionsSignature !== this.lastOptionsSignature) {
+      this.lastSignature = signature;
+      this.lastOptionsSignature = optionsSignature;
+      const renderToken = ++this.renderToken;
+      const start = performance.now();
+      this.isRendering = true;
+      this.progress = 0;
+      this.status = "generating matita...";
+      this.setDirtyCanvas(true, true);
+
+      const shouldCancel = () => renderToken !== this.renderToken;
+      const updateProgress = (value: number, status?: string) => {
+        this.progress = clamp(value, 0, 1);
+        if (status) {
+          this.status = status;
+        }
+        this.setDirtyCanvas(true, true);
+      };
+
+      void generateMatitaSvg(input, options, shouldCancel, updateProgress)
+        .then((result) => {
+          if (renderToken !== this.renderToken || !result) {
+            return null;
+          }
+          this.svg = result.svg;
+          this.pathCount = result.pathCount;
+          this.outputWidth = result.width;
+          this.outputHeight = result.height;
+          this.status = `paths ${result.pathCount}`;
+          return rasterizeGraphSvg(result.svg);
+        })
+        .then((preview) => {
+          if (renderToken !== this.renderToken) {
+            return;
+          }
+          this.preview = preview ?? null;
+          this.progress = 1;
+          this.executionMs = performance.now() - start;
+          this.status = "ready";
+          this.isRendering = false;
+          this.setDirtyCanvas(true, true);
+        })
+        .catch((error) => {
+          if (renderToken !== this.renderToken) {
+            return;
+          }
+          this.preview = input;
+          this.svg = null;
+          this.pathCount = 0;
+          this.outputWidth = 0;
+          this.outputHeight = 0;
+          this.progress = 0;
+          this.status = error instanceof Error ? error.message : "matita error";
+          this.executionMs = null;
+          this.isRendering = false;
+          this.setDirtyCanvas(true, true);
+        });
+    }
+
+    this.setOutputData(0, this.preview ?? input);
+    this.setOutputData(1, this.svg);
+    this.refreshPreviewLayout();
+  }
+
+  onDrawBackground(this: PreviewAwareNode & MatitaToolNode, context: CanvasRenderingContext2D) {
+    const layout = drawImagePreview(context, this, this.preview, { footerLines: 4 });
+    context.save();
+    context.fillStyle = "rgba(255,255,255,0.65)";
+    context.font = "12px sans-serif";
+    context.fillText(`${this.status}${this.isRendering ? "..." : ""}`, 10, layout.footerTop + 12);
+    context.fillText(
+      `progress ${Math.round(this.progress * 100)}% | paths ${this.pathCount}`,
+      10,
+      layout.footerTop + 30,
+    );
+    context.fillText(
+      `out ${this.outputWidth || "-"}x${this.outputHeight || "-"}`,
+      10,
+      layout.footerTop + 48,
+    );
+    context.fillText(formatExecutionInfo(this.executionMs), 10, layout.footerTop + 66);
+    context.restore();
+  }
+}
+
 class FaceLandmarkerToolNode {
   size: [number, number] = [280, 540];
   properties!: Record<string, unknown>;
@@ -6633,6 +7059,7 @@ export function registerImageNodes() {
   LiteGraph.registerNodeType("tools/seargeant", SeargeantToolNode as unknown as NodeCtor);
   LiteGraph.registerNodeType("tools/carboncino", CarboncinoToolNode as unknown as NodeCtor);
   LiteGraph.registerNodeType("tools/crosshatch-bn", CrosshatchBnToolNode as unknown as NodeCtor);
+  LiteGraph.registerNodeType("tools/matita", MatitaToolNode as unknown as NodeCtor);
   LiteGraph.registerNodeType("tools/pose-detect", PoseDetectToolNode as unknown as NodeCtor);
   LiteGraph.registerNodeType("tools/face-landmarker", FaceLandmarkerToolNode as unknown as NodeCtor);
   LiteGraph.registerNodeType("tools/bg-remove", BgRemoveToolNode as unknown as NodeCtor);
