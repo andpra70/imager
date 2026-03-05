@@ -39,6 +39,12 @@ import {
   thresholdGraphImage,
   uint32ArrayToGraphImage,
 } from "./imageUtils";
+import { registerInputNodes, registerOutputNodes } from "./nodeRegistrations/io";
+import { registerBasicToolNodes } from "./nodeRegistrations/basic";
+import { registerColorToolNodes } from "./nodeRegistrations/colors";
+import { registerArtToolNodes } from "./nodeRegistrations/art";
+import { registerAiToolNodes } from "./nodeRegistrations/ai";
+import { registerSvgToolNodes } from "./nodeRegistrations/svg";
 
 type LiteNode = {
   addInput: (name: string, type?: string) => void;
@@ -368,19 +374,6 @@ function normalizeMl5Result(result: unknown): unknown[] {
     return [];
   }
   return [result];
-}
-
-function isGraphMl5Data(value: unknown): value is GraphMl5Data {
-  if (!value || typeof value !== "object") {
-    return false;
-  }
-  const candidate = value as Record<string, unknown>;
-  return (
-    typeof candidate.task === "string" &&
-    typeof candidate.modelKey === "string" &&
-    typeof candidate.summary === "object" &&
-    candidate.summary !== null
-  );
 }
 
 function collectMl5Landmarks(
@@ -1454,6 +1447,273 @@ function formatExecutionInfo(executionMs: number | null) {
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
+}
+
+interface HistogramChannel {
+  name: string;
+  color: string;
+  values: Uint32Array;
+}
+
+type HistogramMode = "rgb" | "hsv" | "grayscale";
+type LevelsMode = "rgb" | "hsv" | "gray" | "alpha";
+
+function rgbToHsv255(r: number, g: number, b: number) {
+  const rr = r / 255;
+  const gg = g / 255;
+  const bb = b / 255;
+  const max = Math.max(rr, gg, bb);
+  const min = Math.min(rr, gg, bb);
+  const delta = max - min;
+
+  let hue = 0;
+  if (delta !== 0) {
+    if (max === rr) {
+      hue = ((gg - bb) / delta) % 6;
+    } else if (max === gg) {
+      hue = (bb - rr) / delta + 2;
+    } else {
+      hue = (rr - gg) / delta + 4;
+    }
+    hue *= 60;
+    if (hue < 0) {
+      hue += 360;
+    }
+  }
+
+  const saturation = max === 0 ? 0 : delta / max;
+  const value = max;
+
+  return {
+    h: Math.round((hue / 360) * 255),
+    s: Math.round(saturation * 255),
+    v: Math.round(value * 255),
+  };
+}
+
+function hsv255ToRgb(h: number, s: number, v: number) {
+  const hue = (clamp(h, 0, 255) / 255) * 360;
+  const sat = clamp(s, 0, 255) / 255;
+  const val = clamp(v, 0, 255) / 255;
+
+  const chroma = val * sat;
+  const segment = hue / 60;
+  const x = chroma * (1 - Math.abs((segment % 2) - 1));
+  const m = val - chroma;
+
+  let rPrime = 0;
+  let gPrime = 0;
+  let bPrime = 0;
+  if (segment >= 0 && segment < 1) {
+    rPrime = chroma;
+    gPrime = x;
+  } else if (segment < 2) {
+    rPrime = x;
+    gPrime = chroma;
+  } else if (segment < 3) {
+    gPrime = chroma;
+    bPrime = x;
+  } else if (segment < 4) {
+    gPrime = x;
+    bPrime = chroma;
+  } else if (segment < 5) {
+    rPrime = x;
+    bPrime = chroma;
+  } else {
+    rPrime = chroma;
+    bPrime = x;
+  }
+
+  return {
+    r: clamp(Math.round((rPrime + m) * 255), 0, 255),
+    g: clamp(Math.round((gPrime + m) * 255), 0, 255),
+    b: clamp(Math.round((bPrime + m) * 255), 0, 255),
+  };
+}
+
+function applyLevelsValue(
+  value: number,
+  inBlack: number,
+  inWhite: number,
+  gamma: number,
+  outBlack: number,
+  outWhite: number,
+) {
+  const safeInBlack = clamp(Math.round(inBlack), 0, 254);
+  const safeInWhite = clamp(Math.round(inWhite), safeInBlack + 1, 255);
+  const safeGamma = clamp(gamma, 0.1, 5);
+  const safeOutBlack = clamp(Math.round(outBlack), 0, 254);
+  const safeOutWhite = clamp(Math.round(outWhite), safeOutBlack + 1, 255);
+
+  const normalized = clamp((value - safeInBlack) / (safeInWhite - safeInBlack), 0, 1);
+  const corrected = normalized ** (1 / safeGamma);
+  return clamp(
+    Math.round(safeOutBlack + corrected * (safeOutWhite - safeOutBlack)),
+    0,
+    255,
+  );
+}
+
+function buildHistogram(image: GraphImage, mode: HistogramMode) {
+  const context = image.getContext("2d", { willReadFrequently: true });
+  if (!context) {
+    return {
+      channels: [] as HistogramChannel[],
+      maxCount: 0,
+      pixelCount: 0,
+    };
+  }
+
+  const pixels = context.getImageData(0, 0, image.width, image.height).data;
+  const r = new Uint32Array(256);
+  const g = new Uint32Array(256);
+  const b = new Uint32Array(256);
+  const h = new Uint32Array(256);
+  const s = new Uint32Array(256);
+  const v = new Uint32Array(256);
+  const gray = new Uint32Array(256);
+
+  let pixelCount = 0;
+  for (let index = 0; index < pixels.length; index += 4) {
+    const alpha = pixels[index + 3];
+    if (alpha === 0) {
+      continue;
+    }
+    const red = pixels[index];
+    const green = pixels[index + 1];
+    const blue = pixels[index + 2];
+    pixelCount += 1;
+
+    r[red] += 1;
+    g[green] += 1;
+    b[blue] += 1;
+
+    const luminance = Math.round(0.2126 * red + 0.7152 * green + 0.0722 * blue);
+    gray[luminance] += 1;
+
+    const hsv = rgbToHsv255(red, green, blue);
+    h[hsv.h] += 1;
+    s[hsv.s] += 1;
+    v[hsv.v] += 1;
+  }
+
+  const channelsByMode: Record<HistogramMode, HistogramChannel[]> = {
+    rgb: [
+      { name: "R", color: "rgba(255, 80, 80, 0.92)", values: r },
+      { name: "G", color: "rgba(76, 220, 120, 0.9)", values: g },
+      { name: "B", color: "rgba(92, 150, 255, 0.9)", values: b },
+    ],
+    hsv: [
+      { name: "H", color: "rgba(255, 176, 60, 0.92)", values: h },
+      { name: "S", color: "rgba(70, 225, 224, 0.9)", values: s },
+      { name: "V", color: "rgba(240, 240, 240, 0.88)", values: v },
+    ],
+    grayscale: [
+      { name: "Y", color: "rgba(240, 240, 240, 0.95)", values: gray },
+    ],
+  };
+  const channels = channelsByMode[mode];
+  let maxCount = 0;
+  channels.forEach((channel) => {
+    for (let index = 0; index < channel.values.length; index += 1) {
+      if (channel.values[index] > maxCount) {
+        maxCount = channel.values[index];
+      }
+    }
+  });
+
+  return { channels, maxCount, pixelCount };
+}
+
+function shouldReuseCachedToolResult(
+  executionMs: number | null,
+  lastSignature: string,
+  lastOptionsSignature: string,
+  currentSignature: string,
+  currentOptionsSignature: string,
+) {
+  return (
+    executionMs !== null &&
+    executionMs > 100 &&
+    lastSignature === currentSignature &&
+    lastOptionsSignature === currentOptionsSignature
+  );
+}
+
+function oilPaintGraphImage(source: GraphImage, radius: number, intensityLevels: number) {
+  const context = source.getContext("2d", { willReadFrequently: true });
+  if (!context) {
+    throw new Error("2D context not available.");
+  }
+
+  const width = source.width;
+  const height = source.height;
+  const sourceImageData = context.getImageData(0, 0, width, height);
+  const sourcePixels = sourceImageData.data;
+  const levels = clamp(Math.round(intensityLevels), 2, 64);
+  const safeRadius = clamp(Math.round(radius), 1, 24);
+  const intensityLut = new Uint8Array(width * height);
+
+  for (let index = 0, pixel = 0; index < sourcePixels.length; index += 4, pixel += 1) {
+    const avg = (sourcePixels[index] + sourcePixels[index + 1] + sourcePixels[index + 2]) / 3;
+    intensityLut[pixel] = Math.round((avg * (levels - 1)) / 255);
+  }
+
+  const output = document.createElement("canvas");
+  output.width = width;
+  output.height = height;
+  const outputContext = output.getContext("2d");
+  if (!outputContext) {
+    throw new Error("2D context not available.");
+  }
+
+  const destinationImageData = outputContext.createImageData(width, height);
+  const destinationPixels = destinationImageData.data;
+
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const countByLevel = new Uint32Array(levels);
+      const rByLevel = new Uint32Array(levels);
+      const gByLevel = new Uint32Array(levels);
+      const bByLevel = new Uint32Array(levels);
+
+      const minY = Math.max(0, y - safeRadius);
+      const maxY = Math.min(height - 1, y + safeRadius);
+      const minX = Math.max(0, x - safeRadius);
+      const maxX = Math.min(width - 1, x + safeRadius);
+
+      for (let yy = minY; yy <= maxY; yy += 1) {
+        for (let xx = minX; xx <= maxX; xx += 1) {
+          const pixelIndex = yy * width + xx;
+          const level = intensityLut[pixelIndex];
+          const sourceIndex = pixelIndex * 4;
+          countByLevel[level] += 1;
+          rByLevel[level] += sourcePixels[sourceIndex];
+          gByLevel[level] += sourcePixels[sourceIndex + 1];
+          bByLevel[level] += sourcePixels[sourceIndex + 2];
+        }
+      }
+
+      let selectedLevel = 0;
+      let selectedCount = 0;
+      for (let level = 0; level < levels; level += 1) {
+        if (countByLevel[level] > selectedCount) {
+          selectedLevel = level;
+          selectedCount = countByLevel[level];
+        }
+      }
+
+      const destinationIndex = (y * width + x) * 4;
+      const divisor = Math.max(1, selectedCount);
+      destinationPixels[destinationIndex] = Math.round(rByLevel[selectedLevel] / divisor);
+      destinationPixels[destinationIndex + 1] = Math.round(gByLevel[selectedLevel] / divisor);
+      destinationPixels[destinationIndex + 2] = Math.round(bByLevel[selectedLevel] / divisor);
+      destinationPixels[destinationIndex + 3] = 255;
+    }
+  }
+
+  outputContext.putImageData(destinationImageData, 0, 0);
+  return output;
 }
 
 function parseSvgLength(value: string | null) {
@@ -3095,7 +3355,7 @@ function downloadGraphPalette(palette: GraphPalette, filename: string) {
   URL.revokeObjectURL(url);
 }
 
-function downloadGraphMl5Data(data: GraphMl5Data, filename: string) {
+function downloadGraphJsonData(data: unknown, filename: string) {
   const blob = new Blob([JSON.stringify(data, null, 2)], {
     type: "application/json",
   });
@@ -3378,6 +3638,8 @@ class InvertToolNode {
   size: [number, number] = [280, 280];
   preview: GraphImage | null = null;
   executionMs: number | null = null;
+  lastSignature = "";
+  lastOptionsSignature = "";
 
   constructor() {
     const node = this as unknown as PreviewAwareNode & InvertToolNode;
@@ -3395,8 +3657,34 @@ class InvertToolNode {
   onExecute(this: PreviewAwareNode & InvertToolNode) {
     const start = performance.now();
     const input = this.getInputData(0);
-    this.preview = input ? invertGraphImage(input) : null;
+    if (!input) {
+      this.preview = null;
+      this.executionMs = performance.now() - start;
+      this.lastSignature = "";
+      this.lastOptionsSignature = "";
+      this.setOutputData(0, null);
+      this.refreshPreviewLayout();
+      return;
+    }
+    const signature = getGraphImageSignature(input);
+    const optionsSignature = "invert";
+    if (
+      shouldReuseCachedToolResult(
+        this.executionMs,
+        this.lastSignature,
+        this.lastOptionsSignature,
+        signature,
+        optionsSignature,
+      )
+    ) {
+      this.setOutputData(0, this.preview);
+      this.refreshPreviewLayout();
+      return;
+    }
+    this.preview = invertGraphImage(input);
     this.executionMs = performance.now() - start;
+    this.lastSignature = signature;
+    this.lastOptionsSignature = optionsSignature;
     this.setOutputData(0, this.preview);
     this.refreshPreviewLayout();
   }
@@ -3415,6 +3703,8 @@ class GrayscaleToolNode {
   size: [number, number] = [280, 280];
   preview: GraphImage | null = null;
   executionMs: number | null = null;
+  lastSignature = "";
+  lastOptionsSignature = "";
 
   constructor() {
     const node = this as unknown as PreviewAwareNode & GrayscaleToolNode;
@@ -3431,8 +3721,34 @@ class GrayscaleToolNode {
   onExecute(this: PreviewAwareNode & GrayscaleToolNode) {
     const start = performance.now();
     const input = this.getInputData(0);
-    this.preview = input ? grayscaleGraphImage(input) : null;
+    if (!input) {
+      this.preview = null;
+      this.executionMs = performance.now() - start;
+      this.lastSignature = "";
+      this.lastOptionsSignature = "";
+      this.setOutputData(0, null);
+      this.refreshPreviewLayout();
+      return;
+    }
+    const signature = getGraphImageSignature(input);
+    const optionsSignature = "grayscale";
+    if (
+      shouldReuseCachedToolResult(
+        this.executionMs,
+        this.lastSignature,
+        this.lastOptionsSignature,
+        signature,
+        optionsSignature,
+      )
+    ) {
+      this.setOutputData(0, this.preview);
+      this.refreshPreviewLayout();
+      return;
+    }
+    this.preview = grayscaleGraphImage(input);
     this.executionMs = performance.now() - start;
+    this.lastSignature = signature;
+    this.lastOptionsSignature = optionsSignature;
     this.setOutputData(0, this.preview);
     this.refreshPreviewLayout();
   }
@@ -3451,6 +3767,8 @@ class ThresholdToolNode {
   size: [number, number] = [280, 320];
   preview: GraphImage | null = null;
   executionMs: number | null = null;
+  lastSignature = "";
+  lastOptionsSignature = "";
 
   constructor() {
     const node = this as unknown as PreviewAwareNode & ThresholdToolNode;
@@ -3479,8 +3797,34 @@ class ThresholdToolNode {
     const start = performance.now();
     const input = this.getInputData(0);
     const threshold = Number(this.properties.threshold ?? 128);
-    this.preview = input ? thresholdGraphImage(input, threshold) : null;
+    if (!input) {
+      this.preview = null;
+      this.executionMs = performance.now() - start;
+      this.lastSignature = "";
+      this.lastOptionsSignature = "";
+      this.setOutputData(0, null);
+      this.refreshPreviewLayout();
+      return;
+    }
+    const signature = getGraphImageSignature(input);
+    const optionsSignature = `threshold:${Math.round(threshold)}`;
+    if (
+      shouldReuseCachedToolResult(
+        this.executionMs,
+        this.lastSignature,
+        this.lastOptionsSignature,
+        signature,
+        optionsSignature,
+      )
+    ) {
+      this.setOutputData(0, this.preview);
+      this.refreshPreviewLayout();
+      return;
+    }
+    this.preview = thresholdGraphImage(input, threshold);
     this.executionMs = performance.now() - start;
+    this.lastSignature = signature;
+    this.lastOptionsSignature = optionsSignature;
     this.setOutputData(0, this.preview);
     this.refreshPreviewLayout();
   }
@@ -3499,6 +3843,8 @@ class BlurToolNode {
   size: [number, number] = [280, 320];
   preview: GraphImage | null = null;
   executionMs: number | null = null;
+  lastSignature = "";
+  lastOptionsSignature = "";
 
   constructor() {
     const node = this as unknown as PreviewAwareNode & BlurToolNode;
@@ -3527,8 +3873,34 @@ class BlurToolNode {
     const start = performance.now();
     const input = this.getInputData(0);
     const radius = Number(this.properties.radius ?? 4);
-    this.preview = input ? blurGraphImage(input, radius) : null;
+    if (!input) {
+      this.preview = null;
+      this.executionMs = performance.now() - start;
+      this.lastSignature = "";
+      this.lastOptionsSignature = "";
+      this.setOutputData(0, null);
+      this.refreshPreviewLayout();
+      return;
+    }
+    const signature = getGraphImageSignature(input);
+    const optionsSignature = `radius:${Math.round(radius)}`;
+    if (
+      shouldReuseCachedToolResult(
+        this.executionMs,
+        this.lastSignature,
+        this.lastOptionsSignature,
+        signature,
+        optionsSignature,
+      )
+    ) {
+      this.setOutputData(0, this.preview);
+      this.refreshPreviewLayout();
+      return;
+    }
+    this.preview = blurGraphImage(input, radius);
     this.executionMs = performance.now() - start;
+    this.lastSignature = signature;
+    this.lastOptionsSignature = optionsSignature;
     this.setOutputData(0, this.preview);
     this.refreshPreviewLayout();
   }
@@ -3547,6 +3919,8 @@ class ScaleToolNode {
   size: [number, number] = [280, 320];
   preview: GraphImage | null = null;
   executionMs: number | null = null;
+  lastSignature = "";
+  lastOptionsSignature = "";
 
   constructor() {
     const node = this as unknown as PreviewAwareNode & ScaleToolNode;
@@ -3575,8 +3949,34 @@ class ScaleToolNode {
     const start = performance.now();
     const input = this.getInputData(0);
     const percent = Number(this.properties.percent ?? 100);
-    this.preview = input ? scaleGraphImage(input, percent) : null;
+    if (!input) {
+      this.preview = null;
+      this.executionMs = performance.now() - start;
+      this.lastSignature = "";
+      this.lastOptionsSignature = "";
+      this.setOutputData(0, null);
+      this.refreshPreviewLayout();
+      return;
+    }
+    const signature = getGraphImageSignature(input);
+    const optionsSignature = `percent:${Math.round(percent)}`;
+    if (
+      shouldReuseCachedToolResult(
+        this.executionMs,
+        this.lastSignature,
+        this.lastOptionsSignature,
+        signature,
+        optionsSignature,
+      )
+    ) {
+      this.setOutputData(0, this.preview);
+      this.refreshPreviewLayout();
+      return;
+    }
+    this.preview = scaleGraphImage(input, percent);
     this.executionMs = performance.now() - start;
+    this.lastSignature = signature;
+    this.lastOptionsSignature = optionsSignature;
     this.setOutputData(0, this.preview);
     this.refreshPreviewLayout();
   }
@@ -3600,6 +4000,8 @@ class RotateToolNode {
   size: [number, number] = [280, 320];
   preview: GraphImage | null = null;
   executionMs: number | null = null;
+  lastSignature = "";
+  lastOptionsSignature = "";
 
   constructor() {
     const node = this as unknown as PreviewAwareNode & RotateToolNode;
@@ -3628,8 +4030,34 @@ class RotateToolNode {
     const start = performance.now();
     const input = this.getInputData(0);
     const angle = Number(this.properties.angle ?? 0);
-    this.preview = input ? rotateGraphImage(input, angle) : null;
+    if (!input) {
+      this.preview = null;
+      this.executionMs = performance.now() - start;
+      this.lastSignature = "";
+      this.lastOptionsSignature = "";
+      this.setOutputData(0, null);
+      this.refreshPreviewLayout();
+      return;
+    }
+    const signature = getGraphImageSignature(input);
+    const optionsSignature = `angle:${Math.round(angle)}`;
+    if (
+      shouldReuseCachedToolResult(
+        this.executionMs,
+        this.lastSignature,
+        this.lastOptionsSignature,
+        signature,
+        optionsSignature,
+      )
+    ) {
+      this.setOutputData(0, this.preview);
+      this.refreshPreviewLayout();
+      return;
+    }
+    this.preview = rotateGraphImage(input, angle);
     this.executionMs = performance.now() - start;
+    this.lastSignature = signature;
+    this.lastOptionsSignature = optionsSignature;
     this.setOutputData(0, this.preview);
     this.refreshPreviewLayout();
   }
@@ -3649,6 +4077,8 @@ class BrightnessContrastToolNode {
   size: [number, number] = [280, 360];
   preview: GraphImage | null = null;
   executionMs: number | null = null;
+  lastSignature = "";
+  lastOptionsSignature = "";
 
   constructor() {
     const node = this as unknown as PreviewAwareNode & BrightnessContrastToolNode;
@@ -3701,10 +4131,34 @@ class BrightnessContrastToolNode {
     const brightness = Number(this.properties.brightness ?? 0);
     const contrast = Number(this.properties.contrast ?? 0);
     const saturation = Number(this.properties.saturation ?? 0);
-    this.preview = input
-      ? brightnessContrastGraphImage(input, brightness, contrast, saturation)
-      : null;
+    if (!input) {
+      this.preview = null;
+      this.executionMs = performance.now() - start;
+      this.lastSignature = "";
+      this.lastOptionsSignature = "";
+      this.setOutputData(0, null);
+      this.refreshPreviewLayout();
+      return;
+    }
+    const signature = getGraphImageSignature(input);
+    const optionsSignature = `b:${Math.round(brightness)}|c:${Math.round(contrast)}|s:${Math.round(saturation)}`;
+    if (
+      shouldReuseCachedToolResult(
+        this.executionMs,
+        this.lastSignature,
+        this.lastOptionsSignature,
+        signature,
+        optionsSignature,
+      )
+    ) {
+      this.setOutputData(0, this.preview);
+      this.refreshPreviewLayout();
+      return;
+    }
+    this.preview = brightnessContrastGraphImage(input, brightness, contrast, saturation);
     this.executionMs = performance.now() - start;
+    this.lastSignature = signature;
+    this.lastOptionsSignature = optionsSignature;
     this.setOutputData(0, this.preview);
     this.refreshPreviewLayout();
   }
@@ -3724,6 +4178,333 @@ class BrightnessContrastToolNode {
   }
 }
 
+class HistogramToolNode {
+  size: [number, number] = [280, 360];
+  preview: GraphImage | null = null;
+  executionMs: number | null = null;
+  channels: HistogramChannel[] = [];
+  maxCount = 0;
+  pixelCount = 0;
+  lastSignature = "";
+  lastOptionsSignature = "";
+
+  constructor() {
+    const node = this as unknown as PreviewAwareNode & HistogramToolNode;
+    node.title = createToolTitle("Histogram");
+    node.properties = { mode: "rgb" as HistogramMode };
+    node.addInput("image", "image");
+    node.addOutput("image", "image");
+    node.addWidget(
+      "combo",
+      "Type",
+      "rgb",
+      (value) => {
+        const mode = String(value) as HistogramMode;
+        node.properties.mode = mode;
+        node.setDirtyCanvas(true, true);
+        notifyGraphStateChange(node);
+      },
+      { values: ["rgb", "hsv", "grayscale"] },
+    );
+    node.refreshPreviewLayout = () => {
+      refreshNode(node, node.preview, 2);
+    };
+    node.refreshPreviewLayout();
+  }
+
+  onExecute(this: PreviewAwareNode & HistogramToolNode) {
+    const start = performance.now();
+    const input = this.getInputData(0);
+    this.preview = input ?? null;
+    this.setOutputData(0, input ?? null);
+    if (!input) {
+      this.channels = [];
+      this.maxCount = 0;
+      this.pixelCount = 0;
+      this.executionMs = performance.now() - start;
+      this.lastSignature = "";
+      this.lastOptionsSignature = "";
+      this.refreshPreviewLayout();
+      return;
+    }
+
+    const mode = String(this.properties.mode ?? "rgb") as HistogramMode;
+    const signature = getGraphImageSignature(input);
+    const optionsSignature = `mode:${mode}`;
+    if (
+      shouldReuseCachedToolResult(
+        this.executionMs,
+        this.lastSignature,
+        this.lastOptionsSignature,
+        signature,
+        optionsSignature,
+      )
+    ) {
+      this.refreshPreviewLayout();
+      return;
+    }
+    const histogram = buildHistogram(input, mode);
+    this.channels = histogram.channels;
+    this.maxCount = histogram.maxCount;
+    this.pixelCount = histogram.pixelCount;
+    this.executionMs = performance.now() - start;
+    this.lastSignature = signature;
+    this.lastOptionsSignature = optionsSignature;
+    this.refreshPreviewLayout();
+  }
+
+  onDrawBackground(this: PreviewAwareNode & HistogramToolNode, context: CanvasRenderingContext2D) {
+    const layout = drawImagePreview(context, this, this.preview, { footerLines: 2 });
+    if (this.channels.length && this.maxCount > 0) {
+      const left = layout.padding + 8;
+      const top = layout.previewTop + 8;
+      const width = layout.previewWidth - 16;
+      const height = layout.previewHeight - 16;
+
+      context.save();
+      context.fillStyle = "rgba(8,8,8,0.55)";
+      context.fillRect(left, top, width, height);
+      context.strokeStyle = "rgba(255,255,255,0.12)";
+      context.lineWidth = 1;
+      context.strokeRect(left + 0.5, top + 0.5, width - 1, height - 1);
+
+      this.channels.forEach((channel) => {
+        context.beginPath();
+        context.lineWidth = 1.5;
+        context.strokeStyle = channel.color;
+        for (let index = 0; index < 256; index += 1) {
+          const x = left + (index / 255) * width;
+          const normalized = channel.values[index] / this.maxCount;
+          const y = top + height - normalized * height;
+          if (index === 0) {
+            context.moveTo(x, y);
+          } else {
+            context.lineTo(x, y);
+          }
+        }
+        context.stroke();
+      });
+      context.restore();
+    }
+
+    context.save();
+    context.fillStyle = "rgba(255,255,255,0.65)";
+    context.font = "12px sans-serif";
+    const mode = String(this.properties.mode ?? "rgb");
+    context.fillText(`mode: ${mode} | pixels: ${this.pixelCount}`, 10, layout.footerTop + 12);
+    context.fillText(formatExecutionInfo(this.executionMs), 10, layout.footerTop + 30);
+    context.restore();
+  }
+}
+
+class LevelsToolNode {
+  size: [number, number] = [280, 430];
+  preview: GraphImage | null = null;
+  executionMs: number | null = null;
+  lastSignature = "";
+  lastOptionsSignature = "";
+
+  constructor() {
+    const node = this as unknown as PreviewAwareNode & LevelsToolNode;
+    node.title = createToolTitle("Levels");
+    node.properties = {
+      mode: "rgb" as LevelsMode,
+      inBlack: 0,
+      inWhite: 255,
+      gamma: 1,
+      outBlack: 0,
+      outWhite: 255,
+    };
+    node.addInput("image", "image");
+    node.addOutput("image", "image");
+    node.addWidget(
+      "combo",
+      "Type",
+      "rgb",
+      (value) => {
+        node.properties.mode = String(value) as LevelsMode;
+        notifyGraphStateChange(node);
+      },
+      { values: ["rgb", "hsv", "gray", "alpha"] },
+    );
+    node.addWidget(
+      "slider",
+      "In Black",
+      0,
+      (value) => {
+        node.properties.inBlack = Number(value);
+        notifyGraphStateChange(node);
+      },
+      { min: 0, max: 254, step: 1 },
+    );
+    node.addWidget(
+      "slider",
+      "In White",
+      255,
+      (value) => {
+        node.properties.inWhite = Number(value);
+        notifyGraphStateChange(node);
+      },
+      { min: 1, max: 255, step: 1 },
+    );
+    node.addWidget(
+      "slider",
+      "Gamma",
+      1,
+      (value) => {
+        node.properties.gamma = Number(value);
+        notifyGraphStateChange(node);
+      },
+      { min: 0.1, max: 5, step: 0.01, precision: 2 },
+    );
+    node.addWidget(
+      "slider",
+      "Out Black",
+      0,
+      (value) => {
+        node.properties.outBlack = Number(value);
+        notifyGraphStateChange(node);
+      },
+      { min: 0, max: 254, step: 1 },
+    );
+    node.addWidget(
+      "slider",
+      "Out White",
+      255,
+      (value) => {
+        node.properties.outWhite = Number(value);
+        notifyGraphStateChange(node);
+      },
+      { min: 1, max: 255, step: 1 },
+    );
+    node.refreshPreviewLayout = () => {
+      refreshNode(node, node.preview, 2);
+    };
+    node.refreshPreviewLayout();
+  }
+
+  onExecute(this: PreviewAwareNode & LevelsToolNode) {
+    const start = performance.now();
+    const input = this.getInputData(0);
+    if (!input) {
+      this.preview = null;
+      this.executionMs = performance.now() - start;
+      this.lastSignature = "";
+      this.lastOptionsSignature = "";
+      this.setOutputData(0, null);
+      this.refreshPreviewLayout();
+      return;
+    }
+
+    const mode = String(this.properties.mode ?? "rgb") as LevelsMode;
+    const inBlack = Number(this.properties.inBlack ?? 0);
+    const inWhite = Number(this.properties.inWhite ?? 255);
+    const gamma = Number(this.properties.gamma ?? 1);
+    const outBlack = Number(this.properties.outBlack ?? 0);
+    const outWhite = Number(this.properties.outWhite ?? 255);
+    const signature = getGraphImageSignature(input);
+    const optionsSignature = JSON.stringify({
+      mode,
+      inBlack: Math.round(inBlack),
+      inWhite: Math.round(inWhite),
+      gamma: Number(gamma.toFixed(3)),
+      outBlack: Math.round(outBlack),
+      outWhite: Math.round(outWhite),
+    });
+    if (
+      shouldReuseCachedToolResult(
+        this.executionMs,
+        this.lastSignature,
+        this.lastOptionsSignature,
+        signature,
+        optionsSignature,
+      )
+    ) {
+      this.setOutputData(0, this.preview);
+      this.refreshPreviewLayout();
+      return;
+    }
+
+    const sourceContext = input.getContext("2d", { willReadFrequently: true });
+    if (!sourceContext) {
+      this.preview = null;
+      this.executionMs = performance.now() - start;
+      this.setOutputData(0, null);
+      this.refreshPreviewLayout();
+      return;
+    }
+
+    const imageData = sourceContext.getImageData(0, 0, input.width, input.height);
+    const data = imageData.data;
+
+    for (let index = 0; index < data.length; index += 4) {
+      const r = data[index];
+      const g = data[index + 1];
+      const b = data[index + 2];
+      const a = data[index + 3];
+
+      if (mode === "rgb") {
+        data[index] = applyLevelsValue(r, inBlack, inWhite, gamma, outBlack, outWhite);
+        data[index + 1] = applyLevelsValue(g, inBlack, inWhite, gamma, outBlack, outWhite);
+        data[index + 2] = applyLevelsValue(b, inBlack, inWhite, gamma, outBlack, outWhite);
+      } else if (mode === "hsv") {
+        const hsv = rgbToHsv255(r, g, b);
+        const adjustedValue = applyLevelsValue(hsv.v, inBlack, inWhite, gamma, outBlack, outWhite);
+        const rgb = hsv255ToRgb(hsv.h, hsv.s, adjustedValue);
+        data[index] = rgb.r;
+        data[index + 1] = rgb.g;
+        data[index + 2] = rgb.b;
+      } else if (mode === "gray") {
+        const luminance = Math.round(0.2126 * r + 0.7152 * g + 0.0722 * b);
+        const gray = applyLevelsValue(luminance, inBlack, inWhite, gamma, outBlack, outWhite);
+        data[index] = gray;
+        data[index + 1] = gray;
+        data[index + 2] = gray;
+      } else if (mode === "alpha") {
+        data[index + 3] = applyLevelsValue(a, inBlack, inWhite, gamma, outBlack, outWhite);
+      }
+    }
+
+    const output = document.createElement("canvas");
+    output.width = input.width;
+    output.height = input.height;
+    const outputContext = output.getContext("2d");
+    if (!outputContext) {
+      this.preview = null;
+      this.executionMs = performance.now() - start;
+      this.setOutputData(0, null);
+      this.refreshPreviewLayout();
+      return;
+    }
+
+    outputContext.putImageData(imageData, 0, 0);
+    this.preview = output;
+    this.executionMs = performance.now() - start;
+    this.lastSignature = signature;
+    this.lastOptionsSignature = optionsSignature;
+    this.setOutputData(0, this.preview);
+    this.refreshPreviewLayout();
+  }
+
+  onDrawBackground(this: PreviewAwareNode & LevelsToolNode, context: CanvasRenderingContext2D) {
+    const layout = drawImagePreview(context, this, this.preview, { footerLines: 2 });
+    context.save();
+    context.fillStyle = "rgba(255,255,255,0.65)";
+    context.font = "12px sans-serif";
+    const mode = String(this.properties.mode ?? "rgb");
+    const inBlack = Number(this.properties.inBlack ?? 0);
+    const inWhite = Number(this.properties.inWhite ?? 255);
+    const gamma = Number(this.properties.gamma ?? 1);
+    context.fillText(
+      `mode:${mode} | in:${Math.round(inBlack)}-${Math.round(inWhite)} | g:${gamma.toFixed(2)}`,
+      10,
+      layout.footerTop + 12,
+    );
+    context.fillText(formatExecutionInfo(this.executionMs), 10, layout.footerTop + 30);
+    context.restore();
+  }
+}
+
 class RgbSplitToolNode {
   size: [number, number] = [280, 340];
   preview: GraphImage | null = null;
@@ -3731,6 +4512,8 @@ class RgbSplitToolNode {
   g: GraphImage | null = null;
   b: GraphImage | null = null;
   executionMs: number | null = null;
+  lastSignature = "";
+  lastOptionsSignature = "";
 
   constructor() {
     const node = this as unknown as PreviewAwareNode & RgbSplitToolNode;
@@ -3755,9 +4538,28 @@ class RgbSplitToolNode {
       this.g = null;
       this.b = null;
       this.executionMs = performance.now() - start;
+      this.lastSignature = "";
+      this.lastOptionsSignature = "";
       this.setOutputData(0, null);
       this.setOutputData(1, null);
       this.setOutputData(2, null);
+      this.refreshPreviewLayout();
+      return;
+    }
+    const signature = getGraphImageSignature(input);
+    const optionsSignature = "rgb-split";
+    if (
+      shouldReuseCachedToolResult(
+        this.executionMs,
+        this.lastSignature,
+        this.lastOptionsSignature,
+        signature,
+        optionsSignature,
+      )
+    ) {
+      this.setOutputData(0, this.r);
+      this.setOutputData(1, this.g);
+      this.setOutputData(2, this.b);
       this.refreshPreviewLayout();
       return;
     }
@@ -3768,6 +4570,8 @@ class RgbSplitToolNode {
     this.b = result.b;
     this.preview = result.r;
     this.executionMs = performance.now() - start;
+    this.lastSignature = signature;
+    this.lastOptionsSignature = optionsSignature;
     this.setOutputData(0, this.r);
     this.setOutputData(1, this.g);
     this.setOutputData(2, this.b);
@@ -3793,6 +4597,8 @@ class CmykSplitToolNode {
   y: GraphImage | null = null;
   k: GraphImage | null = null;
   executionMs: number | null = null;
+  lastSignature = "";
+  lastOptionsSignature = "";
 
   constructor() {
     const node = this as unknown as PreviewAwareNode & CmykSplitToolNode;
@@ -3819,10 +4625,30 @@ class CmykSplitToolNode {
       this.y = null;
       this.k = null;
       this.executionMs = performance.now() - start;
+      this.lastSignature = "";
+      this.lastOptionsSignature = "";
       this.setOutputData(0, null);
       this.setOutputData(1, null);
       this.setOutputData(2, null);
       this.setOutputData(3, null);
+      this.refreshPreviewLayout();
+      return;
+    }
+    const signature = getGraphImageSignature(input);
+    const optionsSignature = "cmyk-split";
+    if (
+      shouldReuseCachedToolResult(
+        this.executionMs,
+        this.lastSignature,
+        this.lastOptionsSignature,
+        signature,
+        optionsSignature,
+      )
+    ) {
+      this.setOutputData(0, this.c);
+      this.setOutputData(1, this.m);
+      this.setOutputData(2, this.y);
+      this.setOutputData(3, this.k);
       this.refreshPreviewLayout();
       return;
     }
@@ -3834,6 +4660,8 @@ class CmykSplitToolNode {
     this.k = result.k;
     this.preview = result.k;
     this.executionMs = performance.now() - start;
+    this.lastSignature = signature;
+    this.lastOptionsSignature = optionsSignature;
     this.setOutputData(0, this.c);
     this.setOutputData(1, this.m);
     this.setOutputData(2, this.y);
@@ -3856,6 +4684,8 @@ class RgbCombineToolNode {
   size: [number, number] = [280, 340];
   preview: GraphImage | null = null;
   executionMs: number | null = null;
+  lastSignature = "";
+  lastOptionsSignature = "";
 
   constructor() {
     const node = this as unknown as PreviewAwareNode & RgbCombineToolNode;
@@ -3879,13 +4709,32 @@ class RgbCombineToolNode {
     if (!r || !g || !b) {
       this.preview = null;
       this.executionMs = performance.now() - start;
+      this.lastSignature = "";
+      this.lastOptionsSignature = "";
       this.setOutputData(0, null);
+      this.refreshPreviewLayout();
+      return;
+    }
+    const signature = `${getGraphImageSignature(r)}|${getGraphImageSignature(g)}|${getGraphImageSignature(b)}`;
+    const optionsSignature = "rgb-combine";
+    if (
+      shouldReuseCachedToolResult(
+        this.executionMs,
+        this.lastSignature,
+        this.lastOptionsSignature,
+        signature,
+        optionsSignature,
+      )
+    ) {
+      this.setOutputData(0, this.preview);
       this.refreshPreviewLayout();
       return;
     }
 
     this.preview = combineRgbChannels(r, g, b);
     this.executionMs = performance.now() - start;
+    this.lastSignature = signature;
+    this.lastOptionsSignature = optionsSignature;
     this.setOutputData(0, this.preview);
     this.refreshPreviewLayout();
   }
@@ -3905,6 +4754,8 @@ class CmykCombineToolNode {
   size: [number, number] = [280, 340];
   preview: GraphImage | null = null;
   executionMs: number | null = null;
+  lastSignature = "";
+  lastOptionsSignature = "";
 
   constructor() {
     const node = this as unknown as PreviewAwareNode & CmykCombineToolNode;
@@ -3930,13 +4781,32 @@ class CmykCombineToolNode {
     if (!c || !m || !y || !k) {
       this.preview = null;
       this.executionMs = performance.now() - start;
+      this.lastSignature = "";
+      this.lastOptionsSignature = "";
       this.setOutputData(0, null);
+      this.refreshPreviewLayout();
+      return;
+    }
+    const signature = `${getGraphImageSignature(c)}|${getGraphImageSignature(m)}|${getGraphImageSignature(y)}|${getGraphImageSignature(k)}`;
+    const optionsSignature = "cmyk-combine";
+    if (
+      shouldReuseCachedToolResult(
+        this.executionMs,
+        this.lastSignature,
+        this.lastOptionsSignature,
+        signature,
+        optionsSignature,
+      )
+    ) {
+      this.setOutputData(0, this.preview);
       this.refreshPreviewLayout();
       return;
     }
 
     this.preview = combineCmykChannels(c, m, y, k);
     this.executionMs = performance.now() - start;
+    this.lastSignature = signature;
+    this.lastOptionsSignature = optionsSignature;
     this.setOutputData(0, this.preview);
     this.refreshPreviewLayout();
   }
@@ -4123,6 +4993,8 @@ class BlendToolNode {
   size: [number, number] = [280, 420];
   preview: GraphImage | null = null;
   executionMs: number | null = null;
+  lastSignature = "";
+  lastOptionsSignature = "";
 
   constructor() {
     const node = this as unknown as PreviewAwareNode & BlendToolNode;
@@ -4203,6 +5075,8 @@ class BlendToolNode {
     if (!baseImage) {
       this.preview = null;
       this.executionMs = performance.now() - start;
+      this.lastSignature = "";
+      this.lastOptionsSignature = "";
       this.setOutputData(0, null);
       this.refreshPreviewLayout();
       return;
@@ -4216,6 +5090,28 @@ class BlendToolNode {
       return;
     }
 
+    const signature = `${getGraphImageSignature(baseImage)}|${getGraphImageSignature(layerImage)}`;
+    const optionsSignature = JSON.stringify({
+      mode: String(this.properties.mode ?? "normal"),
+      alpha: Number(this.properties.alpha ?? 0.5).toFixed(3),
+      offsetX: Math.round(Number(this.properties.offsetX ?? 0)),
+      offsetY: Math.round(Number(this.properties.offsetY ?? 0)),
+      scale: Number(this.properties.scale ?? 1).toFixed(3),
+    });
+    if (
+      shouldReuseCachedToolResult(
+        this.executionMs,
+        this.lastSignature,
+        this.lastOptionsSignature,
+        signature,
+        optionsSignature,
+      )
+    ) {
+      this.setOutputData(0, this.preview);
+      this.refreshPreviewLayout();
+      return;
+    }
+
     this.preview = blendGraphImages(baseImage, layerImage, {
       alpha: Number(this.properties.alpha ?? 0.5),
       mode: String(this.properties.mode ?? "normal") as BlendMode,
@@ -4224,6 +5120,8 @@ class BlendToolNode {
       scale: Number(this.properties.scale ?? 1),
     });
     this.executionMs = performance.now() - start;
+    this.lastSignature = signature;
+    this.lastOptionsSignature = optionsSignature;
     this.setOutputData(0, this.preview);
     this.refreshPreviewLayout();
   }
@@ -4234,6 +5132,101 @@ class BlendToolNode {
     context.fillStyle = "rgba(255,255,255,0.65)";
     context.font = "12px sans-serif";
     context.fillText(formatExecutionInfo(this.executionMs), 10, layout.footerTop + 12);
+    context.restore();
+  }
+}
+
+class OilToolNode {
+  size: [number, number] = [280, 360];
+  preview: GraphImage | null = null;
+  executionMs: number | null = null;
+  lastSignature = "";
+  lastOptionsSignature = "";
+
+  constructor() {
+    const node = this as unknown as PreviewAwareNode & OilToolNode;
+    node.title = createToolTitle("Oil");
+    node.properties = {
+      radius: 6,
+      intensity: 10,
+    };
+    node.addInput("image", "image");
+    node.addOutput("image", "image");
+    node.addWidget(
+      "slider",
+      "Radius",
+      6,
+      (value) => {
+        node.properties.radius = Number(value);
+        notifyGraphStateChange(node);
+      },
+      { min: 1, max: 20, step: 1 },
+    );
+    node.addWidget(
+      "slider",
+      "Intensity",
+      10,
+      (value) => {
+        node.properties.intensity = Number(value);
+        notifyGraphStateChange(node);
+      },
+      { min: 2, max: 50, step: 1 },
+    );
+    node.refreshPreviewLayout = () => {
+      refreshNode(node, node.preview, 2);
+    };
+    node.refreshPreviewLayout();
+  }
+
+  onExecute(this: PreviewAwareNode & OilToolNode) {
+    const start = performance.now();
+    const input = this.getInputData(0);
+    if (!input) {
+      this.preview = null;
+      this.executionMs = performance.now() - start;
+      this.lastSignature = "";
+      this.lastOptionsSignature = "";
+      this.setOutputData(0, null);
+      this.refreshPreviewLayout();
+      return;
+    }
+
+    const radius = Number(this.properties.radius ?? 6);
+    const intensity = Number(this.properties.intensity ?? 10);
+    const signature = getGraphImageSignature(input);
+    const optionsSignature = `radius:${Math.round(radius)}|intensity:${Math.round(intensity)}`;
+    if (
+      shouldReuseCachedToolResult(
+        this.executionMs,
+        this.lastSignature,
+        this.lastOptionsSignature,
+        signature,
+        optionsSignature,
+      )
+    ) {
+      this.setOutputData(0, this.preview);
+      this.refreshPreviewLayout();
+      return;
+    }
+    this.preview = oilPaintGraphImage(input, radius, intensity);
+    this.executionMs = performance.now() - start;
+    this.lastSignature = signature;
+    this.lastOptionsSignature = optionsSignature;
+    this.setOutputData(0, this.preview);
+    this.refreshPreviewLayout();
+  }
+
+  onDrawBackground(this: PreviewAwareNode & OilToolNode, context: CanvasRenderingContext2D) {
+    const layout = drawImagePreview(context, this, this.preview, { footerLines: 2 });
+    context.save();
+    context.fillStyle = "rgba(255,255,255,0.65)";
+    context.font = "12px sans-serif";
+    context.fillText(
+      `radius:${Math.round(Number(this.properties.radius ?? 6))} | intensity:${Math.round(Number(this.properties.intensity ?? 10))}`,
+      10,
+      layout.footerTop + 12,
+    );
+    context.fillText(formatExecutionInfo(this.executionMs), 10, layout.footerTop + 30);
     context.restore();
   }
 }
@@ -6978,18 +7971,19 @@ class OutputPaletteNode {
   }
 }
 
-class OutputMl5Node {
-  data: GraphMl5Data | null = null;
+class OutputJsonNode {
+  data: unknown = null;
+  previewLines: string[] = [];
   size: [number, number] = [320, 240];
 
   constructor() {
-    const node = this as unknown as PreviewAwareNode & OutputMl5Node;
-    node.title = "ML5";
+    const node = this as unknown as PreviewAwareNode & OutputJsonNode;
+    node.title = "JSON";
     node.properties = {};
-    node.addInput("ml5", "ml5");
-    node.addWidget("button", "Save ML5 JSON", null, () => {
+    node.addInput("json", "*");
+    node.addWidget("button", "Save JSON", null, () => {
       if (node.data) {
-        downloadGraphMl5Data(node.data, "plotterfun-ml5.json");
+        downloadGraphJsonData(node.data, "plotterfun-output.json");
       }
     });
     node.refreshPreviewLayout = () => {
@@ -6998,23 +7992,34 @@ class OutputMl5Node {
     node.refreshPreviewLayout();
   }
 
-  onExecute(this: PreviewAwareNode & OutputMl5Node) {
+  onExecute(this: PreviewAwareNode & OutputJsonNode) {
     const value = this.getInputData(0) as unknown;
-    this.data = isGraphMl5Data(value) ? value : null;
+    this.data = value ?? null;
+    if (!this.data) {
+      this.previewLines = ["no json data", "connect a JSON output"];
+      this.refreshPreviewLayout();
+      return;
+    }
+
+    try {
+      const raw = JSON.stringify(this.data, null, 2) ?? "";
+      const lines = raw.split("\n").slice(0, 14).map((line) => {
+        if (line.length <= 54) {
+          return line;
+        }
+        return `${line.slice(0, 51)}...`;
+      });
+      this.previewLines = lines.length ? lines : ["{}"];
+    } catch {
+      this.previewLines = ["cannot render json", "value is not serializable"];
+    }
     this.refreshPreviewLayout();
   }
 
-  onDrawBackground(this: PreviewAwareNode & OutputMl5Node, context: CanvasRenderingContext2D) {
+  onDrawBackground(this: PreviewAwareNode & OutputJsonNode, context: CanvasRenderingContext2D) {
     const padding = 10;
     const headerHeight = 34 + (this.widgets?.length ?? 0) * 28;
-    const lines = this.data
-      ? [
-          `task: ${this.data.task}`,
-          `items: ${this.data.summary.itemCount}`,
-          `points: ${this.data.summary.pointCount}`,
-          `labels: ${this.data.summary.labels.slice(0, 3).join(", ") || "-"}`,
-        ]
-      : ["no ml5 data", "connect ML5 output"];
+    const lines = this.previewLines.length ? this.previewLines : ["no json data", "connect a JSON output"];
     this.size = [320, headerHeight + padding * 2 + lines.length * 18 + 8];
 
     context.save();
@@ -7034,39 +8039,56 @@ export function registerImageNodes() {
     return;
   }
 
-  LiteGraph.registerNodeType("input/image", InputImageNode as unknown as NodeCtor);
-  LiteGraph.registerNodeType("input/webcam", WebcamImageNode as unknown as NodeCtor);
-  LiteGraph.registerNodeType("tools/invert", InvertToolNode as unknown as NodeCtor);
-  LiteGraph.registerNodeType("tools/grayscale", GrayscaleToolNode as unknown as NodeCtor);
-  LiteGraph.registerNodeType("tools/threshold", ThresholdToolNode as unknown as NodeCtor);
-  LiteGraph.registerNodeType("tools/blur", BlurToolNode as unknown as NodeCtor);
-  LiteGraph.registerNodeType("tools/scale", ScaleToolNode as unknown as NodeCtor);
-  LiteGraph.registerNodeType("tools/rotate", RotateToolNode as unknown as NodeCtor);
-  LiteGraph.registerNodeType("tools/brightness-contrast", BrightnessContrastToolNode as unknown as NodeCtor);
-  LiteGraph.registerNodeType("tools/rgb-split", RgbSplitToolNode as unknown as NodeCtor);
-  LiteGraph.registerNodeType("tools/cmyk-split", CmykSplitToolNode as unknown as NodeCtor);
-  LiteGraph.registerNodeType("tools/cymk-split", CmykSplitToolNode as unknown as NodeCtor);
-  LiteGraph.registerNodeType("tools/rgb-combine", RgbCombineToolNode as unknown as NodeCtor);
-  LiteGraph.registerNodeType("tools/cmyk-combine", CmykCombineToolNode as unknown as NodeCtor);
-  LiteGraph.registerNodeType("tools/cymk-combine", CmykCombineToolNode as unknown as NodeCtor);
-  LiteGraph.registerNodeType("tools/quantize", QuantizeToolNode as unknown as NodeCtor);
-  LiteGraph.registerNodeType("tools/blend", BlendToolNode as unknown as NodeCtor);
-  LiteGraph.registerNodeType("tools/vectorize", VectorizeToolNode as unknown as NodeCtor);
-  LiteGraph.registerNodeType("tools/marching", MarchingToolNode as unknown as NodeCtor);
-  LiteGraph.registerNodeType("tools/rough", RoughToolNode as unknown as NodeCtor);
-  LiteGraph.registerNodeType("tools/svg-simplify", SvgSimplifyToolNode as unknown as NodeCtor);
-  LiteGraph.registerNodeType("tools/boldini", BoldiniToolNode as unknown as NodeCtor);
-  LiteGraph.registerNodeType("tools/seargeant", SeargeantToolNode as unknown as NodeCtor);
-  LiteGraph.registerNodeType("tools/carboncino", CarboncinoToolNode as unknown as NodeCtor);
-  LiteGraph.registerNodeType("tools/crosshatch-bn", CrosshatchBnToolNode as unknown as NodeCtor);
-  LiteGraph.registerNodeType("tools/matita", MatitaToolNode as unknown as NodeCtor);
-  LiteGraph.registerNodeType("tools/pose-detect", PoseDetectToolNode as unknown as NodeCtor);
-  LiteGraph.registerNodeType("tools/face-landmarker", FaceLandmarkerToolNode as unknown as NodeCtor);
-  LiteGraph.registerNodeType("tools/bg-remove", BgRemoveToolNode as unknown as NodeCtor);
-  LiteGraph.registerNodeType("tools/ml5-extract", Ml5ExtractToolNode as unknown as NodeCtor);
-  LiteGraph.registerNodeType("output/image", OutputImageNode as unknown as NodeCtor);
-  LiteGraph.registerNodeType("output/palette", OutputPaletteNode as unknown as NodeCtor);
-  LiteGraph.registerNodeType("output/svg", OutputSvgNode as unknown as NodeCtor);
-  LiteGraph.registerNodeType("output/ml5", OutputMl5Node as unknown as NodeCtor);
+  const registerNodeType = LiteGraph.registerNodeType.bind(LiteGraph);
+
+  registerInputNodes(registerNodeType, {
+    InputImageNode: InputImageNode as unknown as NodeCtor,
+    WebcamImageNode: WebcamImageNode as unknown as NodeCtor,
+  });
+  registerBasicToolNodes(registerNodeType, {
+    BlurToolNode: BlurToolNode as unknown as NodeCtor,
+    ScaleToolNode: ScaleToolNode as unknown as NodeCtor,
+    RotateToolNode: RotateToolNode as unknown as NodeCtor,
+    BrightnessContrastToolNode: BrightnessContrastToolNode as unknown as NodeCtor,
+  });
+  registerColorToolNodes(registerNodeType, {
+    InvertToolNode: InvertToolNode as unknown as NodeCtor,
+    GrayscaleToolNode: GrayscaleToolNode as unknown as NodeCtor,
+    ThresholdToolNode: ThresholdToolNode as unknown as NodeCtor,
+    HistogramToolNode: HistogramToolNode as unknown as NodeCtor,
+    LevelsToolNode: LevelsToolNode as unknown as NodeCtor,
+    RgbSplitToolNode: RgbSplitToolNode as unknown as NodeCtor,
+    CmykSplitToolNode: CmykSplitToolNode as unknown as NodeCtor,
+    RgbCombineToolNode: RgbCombineToolNode as unknown as NodeCtor,
+    CmykCombineToolNode: CmykCombineToolNode as unknown as NodeCtor,
+    QuantizeToolNode: QuantizeToolNode as unknown as NodeCtor,
+    BlendToolNode: BlendToolNode as unknown as NodeCtor,
+  });
+  registerArtToolNodes(registerNodeType, {
+    OilToolNode: OilToolNode as unknown as NodeCtor,
+    VectorizeToolNode: VectorizeToolNode as unknown as NodeCtor,
+    MarchingToolNode: MarchingToolNode as unknown as NodeCtor,
+    BoldiniToolNode: BoldiniToolNode as unknown as NodeCtor,
+    SeargeantToolNode: SeargeantToolNode as unknown as NodeCtor,
+    CarboncinoToolNode: CarboncinoToolNode as unknown as NodeCtor,
+    CrosshatchBnToolNode: CrosshatchBnToolNode as unknown as NodeCtor,
+    MatitaToolNode: MatitaToolNode as unknown as NodeCtor,
+  });
+  registerAiToolNodes(registerNodeType, {
+    PoseDetectToolNode: PoseDetectToolNode as unknown as NodeCtor,
+    FaceLandmarkerToolNode: FaceLandmarkerToolNode as unknown as NodeCtor,
+    BgRemoveToolNode: BgRemoveToolNode as unknown as NodeCtor,
+    Ml5ExtractToolNode: Ml5ExtractToolNode as unknown as NodeCtor,
+  });
+  registerSvgToolNodes(registerNodeType, {
+    RoughToolNode: RoughToolNode as unknown as NodeCtor,
+    SvgSimplifyToolNode: SvgSimplifyToolNode as unknown as NodeCtor,
+  });
+  registerOutputNodes(registerNodeType, {
+    OutputImageNode: OutputImageNode as unknown as NodeCtor,
+    OutputPaletteNode: OutputPaletteNode as unknown as NodeCtor,
+    OutputSvgNode: OutputSvgNode as unknown as NodeCtor,
+    OutputJsonNode: OutputJsonNode as unknown as NodeCtor,
+  });
   registered = true;
 }

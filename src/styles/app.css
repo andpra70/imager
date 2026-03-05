@@ -105,6 +105,12 @@ body {
   grid-template-columns: 1fr 1fr;
 }
 
+.toolbar-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.25rem;
+}
+
 .action-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -161,6 +167,38 @@ body {
     transform 120ms ease,
     background 120ms ease,
     border-color 120ms ease;
+}
+
+.toolbar-tab-button {
+  border: 1px solid var(--button-border);
+  border-radius: 999px;
+  padding: 0.25rem 0.3rem;
+  background: var(--button-bg);
+  color: var(--panel-muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  transition:
+    transform 120ms ease,
+    background 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease;
+}
+
+.toolbar-tab-button:hover {
+  transform: translateY(-1px);
+  background: var(--button-hover-bg);
+  border-color: var(--button-hover-border);
+  color: var(--panel-text);
+}
+
+.toolbar-tab-button.active {
+  background: rgba(242, 166, 90, 0.22);
+  border-color: rgba(242, 166, 90, 0.55);
+  color: var(--panel-text);
 }
 
 .toolbar-glyph {
@@ -268,7 +306,8 @@ body {
   }
 
   .tool-grid,
-  .action-grid {
+  .action-grid,
+  .toolbar-tabs {
     display: flex;
     flex-wrap: wrap;
   }

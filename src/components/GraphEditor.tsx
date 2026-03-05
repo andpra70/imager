@@ -66,7 +66,7 @@ interface SerializedViewportState {
 
 function createDefaultGraph(graph: InstanceType<typeof LGraph>) {
   const inputNode = LiteGraph.createNode("input/image") as GraphNodeInstance;
-  const invertNode = LiteGraph.createNode("tools/invert") as GraphNodeInstance;
+  const invertNode = LiteGraph.createNode("tools/colors/invert") as GraphNodeInstance;
   const outputNode = LiteGraph.createNode("output/image") as GraphNodeInstance;
   const webcamNode = LiteGraph.createNode("input/webcam") as GraphNodeInstance;
 

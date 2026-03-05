@@ -83,7 +83,7 @@
     },
     {
       "id": 6,
-      "type": "tools/brightness-contrast",
+      "type": "tools/basic/brightness-contrast",
       "pos": [
         150,
         111
@@ -121,7 +121,7 @@
     },
     {
       "id": 3,
-      "type": "tools/invert",
+      "type": "tools/colors/invert",
       "pos": [
         408,
         111
@@ -156,7 +156,7 @@
     },
     {
       "id": 5,
-      "type": "tools/grayscale",
+      "type": "tools/colors/grayscale",
       "pos": [
         688,
         109
@@ -188,7 +188,7 @@
     },
     {
       "id": 7,
-      "type": "tools/quantize",
+      "type": "tools/colors/quantize",
       "pos": [
         520,
         406
@@ -254,7 +254,7 @@
     },
     {
       "id": 10,
-      "type": "tools/vectorize",
+      "type": "tools/art/vectorize",
       "pos": [
         1053,
         437

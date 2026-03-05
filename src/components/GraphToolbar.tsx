@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import { nodePalette } from "../models/nodePalette";
+import type { NodePaletteItem } from "../models/nodePalette";
 
 interface GraphToolbarProps {
   onAddNode: (type: string) => void;
@@ -28,6 +29,17 @@ interface DragState {
   offsetY: number;
 }
 
+type ToolbarTab = NodePaletteItem["category"];
+
+const TOOLBAR_TABS: Array<{ id: ToolbarTab; label: string }> = [
+  { id: "io", label: "I/O" },
+  { id: "basic", label: "Basic" },
+  { id: "colors", label: "Colors" },
+  { id: "art", label: "Art" },
+  { id: "ai", label: "AI" },
+  { id: "svg", label: "SVG" },
+];
+
 function GraphToolbar({
   onAddNode,
   onResetGraph,
@@ -43,7 +55,9 @@ function GraphToolbar({
   statusMessage,
 }: GraphToolbarProps) {
   const [position, setPosition] = useState<ToolbarPosition>({ x: 14, y: 14 });
+  const [activeTab, setActiveTab] = useState<ToolbarTab>("basic");
   const dragStateRef = useRef<DragState | null>(null);
+  const visibleNodes = nodePalette.filter((item) => item.category === activeTab);
   const actionButtons = [
     {
       glyph: "SV",
@@ -137,8 +151,23 @@ function GraphToolbar({
         <span className="toolbar-drag-hint">drag</span>
       </div>
 
+      <div className="toolbar-group toolbar-tabs">
+        {TOOLBAR_TABS.map((tab) => (
+          <button
+            aria-label={`Mostra nodi ${tab.label}`}
+            className={`toolbar-tab-button${activeTab === tab.id ? " active" : ""}`}
+            key={tab.id}
+            onClick={() => setActiveTab(tab.id)}
+            title={`Mostra nodi ${tab.label}`}
+            type="button"
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
       <div className="toolbar-group tool-grid">
-        {nodePalette.map((item) => (
+        {visibleNodes.map((item) => (
           <button
             aria-label={item.tooltip}
             className="toolbar-icon-button"

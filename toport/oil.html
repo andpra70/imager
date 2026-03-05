@@ -31,50 +31,92 @@
     <script>
         var canvas = document.getElementById("canvas"),
             ctx = canvas.getContext("2d"),
-            img = new Image(),
-            effectEl = document.getElementById("effect"),
-            settings = {
+            destCanvas = document.getElementById("dest-canvas"),
+            img = new Image();
+
+        var TOOL = {
+            id: "oil-paint",
+            source: {
+                url: "./img/mm4.jpg",
+                crossOrigin: "Anonymous"
+            },
+            params: {
                 radius: 6,
-                intensity: 10,
-                ApplyFilter: function () {
+                intensity: 10
+            },
+            defaults: {
+                radius: 6,
+                intensity: 10
+            },
+            state: {
+                isImageLoaded: false,
+                lastRenderMs: 0
+            },
+            actions: {
+                apply: function () {
+                    doOilPaintEffect();
+                },
+                reset: function () {
+                    TOOL.params.radius = TOOL.defaults.radius;
+                    TOOL.params.intensity = TOOL.defaults.intensity;
+                    radiusCtrl.updateDisplay();
+                    intensityCtrl.updateDisplay();
                     doOilPaintEffect();
                 }
             }
+        };
 
         img.addEventListener('load', function () {
             // reduced the size by half for pen and performance.
             canvas.width = (this.width );
             canvas.height = (this.height );
+            destCanvas.width = this.width;
+            destCanvas.height = this.height;
             ctx.drawImage(this, 0, 0, canvas.width, canvas.height);
+            TOOL.state.isImageLoaded = true;
             doOilPaintEffect();
         });
 
-        img.crossOrigin = "Anonymous";
-        img.src = "./img/mm4.jpg";
+        img.crossOrigin = TOOL.source.crossOrigin;
+        img.src = TOOL.source.url;
 
         var gui = new dat.GUI();
-        gui.add(settings, 'intensity');
-        gui.add(settings, 'radius');
-        gui.add(settings, 'ApplyFilter');
+        var paramsFolder = gui.addFolder("TOOL.params");
+        var intensityCtrl = paramsFolder.add(TOOL.params, "intensity", 1, 50).step(1).name("intensity");
+        var radiusCtrl = paramsFolder.add(TOOL.params, "radius", 1, 20).step(1).name("radius");
+        paramsFolder.open();
+        gui.add(TOOL.actions, "apply").name("TOOL.apply");
+        gui.add(TOOL.actions, "reset").name("TOOL.reset");
 
         function doOilPaintEffect() {
-            oilPaintEffect(canvas, settings.radius, settings.intensity);
+            if (!TOOL.state.isImageLoaded) return;
+
+            var startedAt = performance.now();
+            oilPaintEffect({
+                sourceCanvas: canvas,
+                destinationCanvas: destCanvas,
+                radius: TOOL.params.radius,
+                intensity: TOOL.params.intensity
+            });
+            TOOL.state.lastRenderMs = Math.round(performance.now() - startedAt);
         }
 
-        function oilPaintEffect(canvas, radius, intensity) {
-            var width = canvas.width,
-                height = canvas.height,
+        function oilPaintEffect(config) {
+            var sourceCanvas = config.sourceCanvas,
+                destinationCanvas = config.destinationCanvas,
+                width = sourceCanvas.width,
+                height = sourceCanvas.height,
                 imgData = ctx.getImageData(0, 0, width, height),
                 pixData = imgData.data,
-                // change to createElement getting added element just for the demo
-                destCanvas = document.getElementById("dest-canvas"),
-                dCtx = destCanvas.getContext("2d"),
+                radius = config.radius,
+                intensity = config.intensity,
                 pixelIntensityCount = [];
 
-            destCanvas.width = width;
-            destCanvas.height = height;
+            destinationCanvas.width = width;
+            destinationCanvas.height = height;
+            var destinationCtx = destinationCanvas.getContext("2d");
 
-            var destImageData = dCtx.createImageData(width, height),
+            var destImageData = destinationCtx.createImageData(width, height),
                 destPixData = destImageData.data,
                 intensityLUT = [],
                 rgbLUT = [];
@@ -141,7 +183,7 @@
             }
 
             // change this to ctx to instead put the data on the original canvas
-            dCtx.putImageData(destImageData, 0, 0);
+            destinationCtx.putImageData(destImageData, 0, 0);
         }
     </script>
 </body>
