@@ -3276,6 +3276,15 @@ interface AsciifyResult {
   height: number;
 }
 
+interface Oil2Result {
+  svg: GraphSvg;
+  preview: GraphImage;
+  strokeCount: number;
+  pathCount: number;
+  width: number;
+  height: number;
+}
+
 interface DelanoyResult {
   svg: GraphSvg;
   preview: GraphImage;
@@ -4581,6 +4590,250 @@ async function generateSketchSvg(
   return { svg, preview, pathCount, width, height };
 }
 
+function oil2RgbaCss(r: number, g: number, b: number, a: number) {
+  return `rgba(${clamp(Math.round(r), 0, 255)},${clamp(Math.round(g), 0, 255)},${clamp(Math.round(b), 0, 255)},${clamp(a, 0, 1).toFixed(4)})`;
+}
+
+function generateOil2StrokePaths(options: {
+  context: CanvasRenderingContext2D;
+  x: number;
+  y: number;
+  angleRad: number;
+  strokeLength: number;
+  strokeThickness: number;
+  strokeColor: { r: number; g: number; b: number; a: number };
+  rng: () => number;
+  maxSvgPaths: number;
+  svgPaths: string[];
+}) {
+  const {
+    context,
+    x,
+    y,
+    angleRad,
+    strokeLength,
+    strokeThickness,
+    strokeColor,
+    rng,
+    maxSvgPaths,
+    svgPaths,
+  } = options;
+  const stepLength = strokeLength / 4;
+  let tangent1 = 0;
+  let tangent2 = 0;
+  if (rng() < 0.7) {
+    tangent1 = -strokeLength + rng() * strokeLength * 2;
+    tangent2 = -strokeLength + rng() * strokeLength * 2;
+  }
+  const cosA = Math.cos(angleRad);
+  const sinA = Math.sin(angleRad);
+  const transformPoint = (px: number, py: number) => ({
+    x: x + px * cosA - py * sinA,
+    y: y + px * sinA + py * cosA,
+  });
+  const drawCurve = (
+    p0: { x: number; y: number },
+    p1: { x: number; y: number },
+    p2: { x: number; y: number },
+    p3: { x: number; y: number },
+    colorCss: string,
+    weight: number,
+  ) => {
+    const safeWeight = Math.max(0.1, weight);
+    const tp0 = transformPoint(p0.x, p0.y);
+    const tp1 = transformPoint(p1.x, p1.y);
+    const tp2 = transformPoint(p2.x, p2.y);
+    const tp3 = transformPoint(p3.x, p3.y);
+    const c1 = {
+      x: tp1.x + (tp2.x - tp0.x) / 6,
+      y: tp1.y + (tp2.y - tp0.y) / 6,
+    };
+    const c2 = {
+      x: tp2.x - (tp3.x - tp1.x) / 6,
+      y: tp2.y - (tp3.y - tp1.y) / 6,
+    };
+    context.strokeStyle = colorCss;
+    context.lineWidth = safeWeight;
+    context.lineCap = "round";
+    context.lineJoin = "round";
+    context.beginPath();
+    context.moveTo(tp1.x, tp1.y);
+    context.bezierCurveTo(c1.x, c1.y, c2.x, c2.y, tp2.x, tp2.y);
+    context.stroke();
+    if (svgPaths.length < maxSvgPaths) {
+      const d =
+        `M ${tp1.x.toFixed(2)} ${tp1.y.toFixed(2)} ` +
+        `C ${c1.x.toFixed(2)} ${c1.y.toFixed(2)}, ${c2.x.toFixed(2)} ${c2.y.toFixed(2)}, ${tp2.x.toFixed(2)} ${tp2.y.toFixed(2)}`;
+      svgPaths.push(
+        `<path d="${d}" fill="none" stroke="${colorCss}" stroke-width="${safeWeight.toFixed(2)}" stroke-linecap="round" stroke-linejoin="round"/>`,
+      );
+    }
+  };
+
+  const baseColorCss = oil2RgbaCss(strokeColor.r, strokeColor.g, strokeColor.b, strokeColor.a);
+  drawCurve(
+    { x: tangent1, y: -stepLength * 2 },
+    { x: 0, y: -stepLength },
+    { x: 0, y: stepLength },
+    { x: tangent2, y: stepLength * 2 },
+    baseColorCss,
+    strokeThickness,
+  );
+
+  let z = 1;
+  const detailIterations = Math.max(1, Math.round(strokeThickness));
+  for (let num = detailIterations; num > 0; num -= 1) {
+    const offset = -50 + rng() * 75;
+    const detailColorCss = oil2RgbaCss(
+      strokeColor.r + offset,
+      strokeColor.g + offset,
+      strokeColor.b + offset,
+      (100 + rng() * 155) / 255,
+    );
+    const detailWeight = Math.floor(rng() * 3);
+    if (detailWeight <= 0) {
+      z += 1;
+      continue;
+    }
+    const localX = z - strokeThickness / 2;
+    drawCurve(
+      { x: tangent1, y: -stepLength * 2 },
+      { x: localX, y: -stepLength * (0.9 + rng() * 0.2) },
+      { x: localX, y: stepLength * (0.9 + rng() * 0.2) },
+      { x: tangent2, y: stepLength * 2 },
+      detailColorCss,
+      detailWeight,
+    );
+    z += 1;
+  }
+}
+
+async function generateOil2Svg(
+  input: GraphImage,
+  options: {
+    maxWidth: number;
+    density: number;
+    probabilityDiv: number;
+    seed: number;
+    refreshEvery: number;
+    maxSvgPaths: number;
+    backgroundColor: string;
+  },
+  shouldCancel?: () => boolean,
+  onProgress?: (progress: number, status: string) => void,
+  onPreview?: (preview: GraphImage) => void,
+): Promise<Oil2Result | null> {
+  const source = fitSourceToMaxWidthCanvas(input, options.maxWidth);
+  const width = source.width;
+  const height = source.height;
+  const context = source.getContext("2d", { willReadFrequently: true });
+  if (!context) {
+    throw new Error("2D context not available.");
+  }
+  const imageData = context.getImageData(0, 0, width, height);
+  const pixels = imageData.data;
+
+  const preview = document.createElement("canvas");
+  preview.width = width;
+  preview.height = height;
+  const previewContext = preview.getContext("2d");
+  if (!previewContext) {
+    throw new Error("2D context not available.");
+  }
+  const backgroundColor = normalizeHexColor(options.backgroundColor);
+  previewContext.fillStyle = backgroundColor;
+  previewContext.fillRect(0, 0, width, height);
+
+  const rng = createSeededRandom(options.seed);
+  const safeDensity = clamp(options.density, 0.05, 8);
+  const safeProbabilityDiv = clamp(Math.round(options.probabilityDiv), 2000, 120000);
+  const expectedPerFrame = (width * height * safeDensity) / safeProbabilityDiv;
+  const refreshEvery = clamp(Math.round(options.refreshEvery), 1, 512);
+  const maxSvgPaths = clamp(Math.round(options.maxSvgPaths), 1000, 300000);
+
+  const stages = [
+    { name: "rough", frames: 20, lenMin: 150, lenMax: 250, thickMin: 20, thickMax: 40 },
+    { name: "thick", frames: 30, lenMin: 75, lenMax: 125, thickMin: 8, thickMax: 12 },
+    { name: "small", frames: 250, lenMin: 30, lenMax: 60, thickMin: 1, thickMax: 4 },
+    { name: "big-dots", frames: 50, lenMin: 5, lenMax: 20, thickMin: 5, thickMax: 15 },
+    { name: "small-dots", frames: 250, lenMin: 1, lenMax: 10, thickMin: 1, thickMax: 7 },
+  ] as const;
+  const stageTargets = stages.map((stage) => Math.max(1, Math.round(expectedPerFrame * stage.frames)));
+  const totalStrokesTarget = stageTargets.reduce((sum, value) => sum + value, 0);
+
+  const svgPaths: string[] = [];
+  let strokeCount = 0;
+  let lastYieldTime = performance.now();
+
+  for (let stageIndex = 0; stageIndex < stages.length; stageIndex += 1) {
+    const stage = stages[stageIndex];
+    const target = stageTargets[stageIndex];
+    for (let index = 0; index < target; index += 1) {
+      if (shouldCancel?.()) {
+        return null;
+      }
+      const px = Math.floor(rng() * width);
+      const py = Math.floor(rng() * height);
+      const pixelIndex = (py * width + px) * 4;
+      const r = pixels[pixelIndex];
+      const g = pixels[pixelIndex + 1];
+      const b = pixels[pixelIndex + 2];
+      const baseAlpha = 100 / 255;
+      const angleRad = ((-90 + rng() * 180) * Math.PI) / 180;
+      const strokeLength = stage.lenMin + rng() * (stage.lenMax - stage.lenMin);
+      const thickness =
+        Math.floor(stage.thickMin + rng() * (stage.thickMax - stage.thickMin + 1));
+
+      generateOil2StrokePaths({
+        context: previewContext,
+        x: px,
+        y: py,
+        angleRad,
+        strokeLength,
+        strokeThickness: thickness,
+        strokeColor: { r, g, b, a: baseAlpha },
+        rng,
+        maxSvgPaths,
+        svgPaths,
+      });
+      strokeCount += 1;
+
+      if (strokeCount % refreshEvery === 0 || strokeCount === totalStrokesTarget) {
+        onProgress?.(strokeCount / Math.max(1, totalStrokesTarget), `${stage.name} ${index + 1}/${target}`);
+        onPreview?.(preview);
+      }
+      if (performance.now() - lastYieldTime > 12) {
+        await yieldToUi();
+        lastYieldTime = performance.now();
+      }
+    }
+  }
+
+  const pathCount = svgPaths.length;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><rect width="100%" height="100%" fill="${backgroundColor}"/>${svgPaths.join("")}</svg>`;
+  onProgress?.(1, "ready");
+  return { svg, preview, strokeCount, pathCount, width, height };
+}
+
+const ASCIIFY_CHARSETS = {
+  minimalist: "#+-.",
+  normal: "@%#*+=-:.",
+  normal2: "&$Xx+;:.",
+  alphabetic: "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+  alphanumeric: "ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890abcdefghijklmnopqrstuvwxyz",
+  numerical: "0896452317",
+  extended: "@%#{}[]()<>^*+=~-:. ",
+  math: "+-\u00d7\u00f7=\u2260\u2248\u221e\u221a\u03c0",
+  arrow: "\u2191\u2197\u2192\u2198\u2193\u2199\u2190\u2196",
+  grayscale: "@$BWM#*oahkbdpwmZO0QCJYXzcvnxrjft/|()1{}[]-_+~<>i!lI;:,\"^`'.",
+  max: "\u00c6\u00d1\u00ca\u0152\u00d8M\u00c9\u00cb\u00c8\u00c3\u00c2WQB\u00c5\u00e6#N\u00c1\u00feE\u00c4\u00c0HKR\u017d\u0153Xg\u00d0\u00eaq\u00db\u0160\u00d5\u00d4A\u20ac\u00dfpm\u00e3\u00e2G\u00b6\u00f8\u00f0\u00e98\u00da\u00dc$\u00ebd\u00d9\u00fd\u00e8\u00d3\u00de\u00d6\u00e5\u00ff\u00d2b\u00a5FD\u00f1\u00e1ZP\u00e4\u0161\u00c7\u00e0h\u00fb\u00a7\u00ddk\u0178\u00aeS9\u017eUTe6\u00b5Oyx\u00ce\u00bef4\u00f55\u00f4\u00fa&a\u00fc\u21222\u00f9\u00e7w\u00a9Y\u00a30V\u00cdL\u00b13\u00cf\u00cc\u00f3C@n\u00f6\u00f2s\u00a2u\u2030\u00bd\u00bc\u2021zJ\u0192%\u00a4Itoc\u00eerjv1l\u00ed=\u00ef\u00ec<>i7\u2020[\u00bf?\u00d7}*{+()/\u00bb\u00ab\u2022\u00ac|!\u00a1\u00f7\u00a6\u00af\u2014^\u00aa\u201e\u201c\u201d~\u00b3\u00ba\u00b2\u2013\u00b0\u00ad\u00b9\u2039\u203a;:\u2019\u2018\u201a\u2019\u02dc\u02c6\u00b8\u2026\u00b7\u00a8\u00b4`",
+  codepage437: "\u2588\u2593\u2592\u2591",
+  blockelement: "\u2588",
+} as const;
+
+type AsciifyCharsetPreset = keyof typeof ASCIIFY_CHARSETS;
+const ASCIIFY_CHARSET_PRESETS = Object.keys(ASCIIFY_CHARSETS) as AsciifyCharsetPreset[];
+
 async function generateAsciifyOutput(
   input: GraphImage,
   options: {
@@ -5839,6 +6092,18 @@ function downloadGraphPalette(palette: GraphPalette, filename: string) {
 function downloadGraphJsonData(data: unknown, filename: string) {
   const blob = new Blob([JSON.stringify(data, null, 2)], {
     type: "application/json",
+  });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function downloadGraphTextData(text: string, filename: string) {
+  const blob = new Blob([text], {
+    type: "text/plain;charset=utf-8",
   });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
@@ -8216,6 +8481,278 @@ class OilToolNode extends OptimizedToolNode {
   }
 }
 
+class Oil2ToolNode {
+  size: [number, number] = [280, 620];
+  properties!: Record<string, unknown>;
+  preview: GraphImage | null = null;
+  svg: GraphSvg | null = null;
+  status = "idle";
+  progress = 0;
+  strokeCount = 0;
+  pathCount = 0;
+  outputWidth = 0;
+  outputHeight = 0;
+  isRendering = false;
+  executionMs: number | null = null;
+  lastSignature = "";
+  lastOptionsSignature = "";
+  renderToken = 0;
+
+  setWidgetValue(this: Oil2ToolNode, name: string, value: unknown) {
+    const widgets = (this as unknown as LiteNode).widgets;
+    if (!widgets?.length) {
+      return;
+    }
+    const widget = widgets.find((item) => {
+      if (!item || typeof item !== "object") {
+        return false;
+      }
+      return (item as { name?: unknown }).name === name;
+    }) as { value?: unknown } | undefined;
+    if (widget) {
+      widget.value = value;
+    }
+  }
+
+  applyPreset(
+    this: PreviewAwareNode & Oil2ToolNode,
+    preset: "fast" | "normal" | "slow",
+    notify = true,
+  ) {
+    const values =
+      preset === "fast"
+        ? {
+            maxWidth: 720,
+            density: 0.7,
+            probabilityDiv: 20000,
+            refreshEvery: 48,
+            maxSvgPaths: 16000,
+          }
+        : preset === "slow"
+          ? {
+              maxWidth: 1400,
+              density: 1.7,
+              probabilityDiv: 20000,
+              refreshEvery: 12,
+              maxSvgPaths: 120000,
+            }
+          : {
+              maxWidth: 1000,
+              density: 1,
+              probabilityDiv: 20000,
+              refreshEvery: 24,
+              maxSvgPaths: 50000,
+            };
+    Object.assign(this.properties, values, { preset });
+    this.setWidgetValue("Preset", preset);
+    this.setWidgetValue("Max width", values.maxWidth);
+    this.setWidgetValue("Density", values.density);
+    this.setWidgetValue("Prob div", values.probabilityDiv);
+    this.setWidgetValue("Refresh", values.refreshEvery);
+    this.setWidgetValue("Max SVG", values.maxSvgPaths);
+    this.setDirtyCanvas(true, true);
+    if (notify) {
+      notifyGraphStateChange(this);
+    }
+  }
+
+  markCustom(this: PreviewAwareNode & Oil2ToolNode) {
+    if (String(this.properties.preset ?? "normal") !== "custom") {
+      this.properties.preset = "custom";
+      this.setWidgetValue("Preset", "custom");
+    }
+  }
+
+  constructor() {
+    const node = this as unknown as PreviewAwareNode & Oil2ToolNode;
+    node.title = createToolTitle("Oil2");
+    node.properties = {
+      preset: "normal",
+      maxWidth: 1000,
+      density: 1,
+      probabilityDiv: 20000,
+      seed: 1337,
+      refreshEvery: 24,
+      maxSvgPaths: 50000,
+      backgroundColor: "#FFFFFF",
+    };
+    node.addInput("image", "image");
+    node.addOutput("image", "image");
+    node.addOutput("svg", "svg");
+    node.addWidget("combo", "Preset", "normal", (value) => {
+      const preset = String(value);
+      if (preset === "fast" || preset === "normal" || preset === "slow") {
+        node.applyPreset(preset, true);
+      } else {
+        node.properties.preset = "custom";
+        node.setDirtyCanvas(true, true);
+        notifyGraphStateChange(node);
+      }
+    }, { values: ["fast", "normal", "slow", "custom"] });
+    node.addWidget("slider", "Max width", 1000, (value) => {
+      node.properties.maxWidth = Math.round(Number(value));
+      node.markCustom();
+      notifyGraphStateChange(node);
+    }, { min: 128, max: 2800, step: 8 });
+    node.addWidget("slider", "Density", 1, (value) => {
+      node.properties.density = Number(value);
+      node.markCustom();
+      notifyGraphStateChange(node);
+    }, { min: 0.05, max: 8, step: 0.01, precision: 2 });
+    node.addWidget("slider", "Prob div", 20000, (value) => {
+      node.properties.probabilityDiv = Math.round(Number(value));
+      node.markCustom();
+      notifyGraphStateChange(node);
+    }, { min: 2000, max: 120000, step: 100 });
+    node.addWidget("number", "Seed", 1337, (value) => {
+      node.properties.seed = Math.round(Number(value));
+      notifyGraphStateChange(node);
+    }, { step: 1 });
+    node.addWidget("slider", "Refresh", 24, (value) => {
+      node.properties.refreshEvery = Math.round(Number(value));
+      node.markCustom();
+      notifyGraphStateChange(node);
+    }, { min: 1, max: 512, step: 1 });
+    node.addWidget("slider", "Max SVG", 50000, (value) => {
+      node.properties.maxSvgPaths = Math.round(Number(value));
+      notifyGraphStateChange(node);
+    }, { min: 1000, max: 300000, step: 500 });
+    node.addWidget("text", "BG color", "#FFFFFF", (value) => {
+      node.properties.backgroundColor = normalizeHexColor(String(value));
+      notifyGraphStateChange(node);
+    });
+    node.refreshPreviewLayout = () => {
+      refreshNode(node, node.preview, 4);
+    };
+    node.applyPreset("normal", false);
+    node.refreshPreviewLayout();
+  }
+
+  onExecute(this: PreviewAwareNode & Oil2ToolNode) {
+    const inputValue = this.getInputData(0);
+    const input = isGraphImageReady(inputValue) ? inputValue : null;
+    if (!input) {
+      this.preview = null;
+      this.svg = null;
+      this.status = "waiting valid image";
+      this.progress = 0;
+      this.strokeCount = 0;
+      this.pathCount = 0;
+      this.outputWidth = 0;
+      this.outputHeight = 0;
+      this.executionMs = null;
+      this.isRendering = false;
+      this.lastSignature = "";
+      this.lastOptionsSignature = "";
+      this.setOutputData(0, null);
+      this.setOutputData(1, null);
+      this.refreshPreviewLayout();
+      return;
+    }
+
+    const options = {
+      maxWidth: clamp(Math.round(Number(this.properties.maxWidth ?? 1000)), 128, 2800),
+      density: clamp(Number(this.properties.density ?? 1), 0.05, 8),
+      probabilityDiv: clamp(Math.round(Number(this.properties.probabilityDiv ?? 20000)), 2000, 120000),
+      seed: Math.round(Number(this.properties.seed ?? 1337)),
+      refreshEvery: clamp(Math.round(Number(this.properties.refreshEvery ?? 24)), 1, 512),
+      maxSvgPaths: clamp(Math.round(Number(this.properties.maxSvgPaths ?? 50000)), 1000, 300000),
+      backgroundColor: normalizeHexColor(String(this.properties.backgroundColor ?? "#FFFFFF")),
+    };
+    const signature = getGraphImageSignature(input);
+    const optionsSignature = JSON.stringify(options);
+    if (signature !== this.lastSignature || optionsSignature !== this.lastOptionsSignature) {
+      this.lastSignature = signature;
+      this.lastOptionsSignature = optionsSignature;
+      const renderToken = ++this.renderToken;
+      const start = performance.now();
+      this.isRendering = true;
+      this.progress = 0;
+      this.status = "generating oil2...";
+      this.setDirtyCanvas(true, true);
+
+      const shouldCancel = () => renderToken !== this.renderToken;
+      const updateProgress = (value: number, status?: string) => {
+        this.progress = clamp(value, 0, 1);
+        if (status) {
+          this.status = status;
+        }
+        this.setDirtyCanvas(true, true);
+      };
+
+      void generateOil2Svg(
+        input,
+        options,
+        shouldCancel,
+        updateProgress,
+        (partialPreview) => {
+          if (shouldCancel()) {
+            return;
+          }
+          this.preview = partialPreview;
+          this.setDirtyCanvas(true, true);
+        },
+      )
+        .then((result) => {
+          if (renderToken !== this.renderToken || !result) {
+            return;
+          }
+          this.preview = result.preview;
+          this.svg = result.svg;
+          this.strokeCount = result.strokeCount;
+          this.pathCount = result.pathCount;
+          this.outputWidth = result.width;
+          this.outputHeight = result.height;
+          this.progress = 1;
+          this.status = "ready";
+          this.executionMs = performance.now() - start;
+          this.isRendering = false;
+          this.setDirtyCanvas(true, true);
+        })
+        .catch((error) => {
+          if (renderToken !== this.renderToken) {
+            return;
+          }
+          this.preview = input;
+          this.svg = null;
+          this.strokeCount = 0;
+          this.pathCount = 0;
+          this.outputWidth = 0;
+          this.outputHeight = 0;
+          this.progress = 0;
+          this.status = error instanceof Error ? error.message : "oil2 error";
+          this.executionMs = null;
+          this.isRendering = false;
+          this.setDirtyCanvas(true, true);
+        });
+    }
+
+    this.setOutputData(0, this.preview ?? input);
+    this.setOutputData(1, this.svg);
+    this.refreshPreviewLayout();
+  }
+
+  onDrawBackground(this: PreviewAwareNode & Oil2ToolNode, context: CanvasRenderingContext2D) {
+    const layout = drawImagePreview(context, this, this.preview, { footerLines: 4 });
+    context.save();
+    context.fillStyle = "rgba(255,255,255,0.65)";
+    context.font = "12px sans-serif";
+    context.fillText(`${this.status}${this.isRendering ? "..." : ""}`, 10, layout.footerTop + 12);
+    context.fillText(
+      `progress ${Math.round(this.progress * 100)}% | strokes ${this.strokeCount} | paths ${this.pathCount}`,
+      10,
+      layout.footerTop + 30,
+    );
+    context.fillText(
+      `out ${this.outputWidth || "-"}x${this.outputHeight || "-"}`,
+      10,
+      layout.footerTop + 48,
+    );
+    context.fillText(formatExecutionInfo(this.executionMs), 10, layout.footerTop + 66);
+    context.restore();
+  }
+}
+
 class VectorizeToolNode {
   size: [number, number] = [280, 540];
   preview: GraphImage | null = null;
@@ -10226,7 +10763,7 @@ class AsciifyToolNode {
       preset: "normal",
       maxWidth: 960,
       columns: 180,
-      charset: "@%#{}[]()<>^*+=~-:. ",
+      charsetPreset: "extended",
       invert: false,
       charAspect: 0.5,
       fontScale: 1.1,
@@ -10258,10 +10795,15 @@ class AsciifyToolNode {
       node.markCustom();
       notifyGraphStateChange(node);
     }, { min: 16, max: 800, step: 1 });
-    node.addWidget("text", "Charset", "@%#{}[]()<>^*+=~-:. ", (value) => {
-      node.properties.charset = String(value || "@%#{}[]()<>^*+=~-:. ");
+    node.addWidget("combo", "Charset", "extended", (value) => {
+      const preset = String(value);
+      if (ASCIIFY_CHARSET_PRESETS.includes(preset as AsciifyCharsetPreset)) {
+        node.properties.charsetPreset = preset;
+      } else {
+        node.properties.charsetPreset = "extended";
+      }
       notifyGraphStateChange(node);
-    });
+    }, { values: ASCIIFY_CHARSET_PRESETS });
     node.addWidget("toggle", "Invert", false, (value) => {
       node.properties.invert = Boolean(value);
       notifyGraphStateChange(node);
@@ -10321,7 +10863,12 @@ class AsciifyToolNode {
     const options = {
       maxWidth: clamp(Math.round(Number(this.properties.maxWidth ?? 960)), 128, 2800),
       columns: clamp(Math.round(Number(this.properties.columns ?? 180)), 16, 800),
-      charset: String(this.properties.charset ?? "@%#{}[]()<>^*+=~-:. "),
+      charset:
+        ASCIIFY_CHARSETS[
+          ASCIIFY_CHARSET_PRESETS.includes(String(this.properties.charsetPreset) as AsciifyCharsetPreset)
+            ? (String(this.properties.charsetPreset) as AsciifyCharsetPreset)
+            : "extended"
+        ],
       invert: Boolean(this.properties.invert ?? false),
       charAspect: clamp(Number(this.properties.charAspect ?? 0.5), 0.25, 2),
       fontScale: clamp(Number(this.properties.fontScale ?? 1.1), 0.4, 2.2),
@@ -13227,6 +13774,62 @@ class OutputJsonNode {
   }
 }
 
+class OutputTextNode {
+  text = "";
+  previewLines: string[] = [];
+  size: [number, number] = [320, 260];
+
+  constructor() {
+    const node = this as unknown as PreviewAwareNode & OutputTextNode;
+    node.title = "TXT";
+    node.properties = {};
+    node.addInput("txt", "string");
+    node.addWidget("button", "Save TXT", null, () => {
+      if (node.text.length > 0) {
+        downloadGraphTextData(node.text, "plotterfun-output.txt");
+      }
+    });
+    node.refreshPreviewLayout = () => {
+      node.setDirtyCanvas(true, true);
+    };
+    node.refreshPreviewLayout();
+  }
+
+  onExecute(this: PreviewAwareNode & OutputTextNode) {
+    const value = this.getInputData(0);
+    this.text = typeof value === "string" ? value : "";
+    if (!this.text) {
+      this.previewLines = ["no text data", "connect a TXT output"];
+      this.refreshPreviewLayout();
+      return;
+    }
+    const lines = this.text.split(/\r?\n/);
+    this.previewLines = lines.slice(0, 36).map((line) => (line.length <= 96 ? line : `${line.slice(0, 93)}...`));
+    if (lines.length > 36) {
+      this.previewLines.push(`... (${lines.length - 36} more lines)`);
+    }
+    this.refreshPreviewLayout();
+  }
+
+  onDrawBackground(this: PreviewAwareNode & OutputTextNode, context: CanvasRenderingContext2D) {
+    const padding = 10;
+    const headerHeight = 34 + (this.widgets?.length ?? 0) * 28;
+    const lines = this.previewLines.length ? this.previewLines : ["no text data", "connect a TXT output"];
+    const lineHeight = 12;
+    this.size = [360, headerHeight + padding * 2 + lines.length * lineHeight + 10];
+
+    context.save();
+    context.fillStyle = "#101010";
+    context.fillRect(padding, headerHeight, this.size[0] - padding * 2, this.size[1] - headerHeight - padding);
+    context.fillStyle = "rgba(255,255,255,0.9)";
+    context.font = "8pt monospace";
+    for (let index = 0; index < lines.length; index += 1) {
+      context.fillText(lines[index], padding + 8, headerHeight + 14 + index * lineHeight);
+    }
+    context.restore();
+  }
+}
+
 export function registerImageNodes() {
   if (registered) {
     return;
@@ -13266,6 +13869,7 @@ export function registerImageNodes() {
   });
   registerArtToolNodes(registerNodeType, {
     OilToolNode: OilToolNode as unknown as NodeCtor,
+    Oil2ToolNode: Oil2ToolNode as unknown as NodeCtor,
     AsciifyToolNode: AsciifyToolNode as unknown as NodeCtor,
     SketchToolNode: SketchToolNode as unknown as NodeCtor,
     DelanoyToolNode: DelanoyToolNode as unknown as NodeCtor,
@@ -13297,6 +13901,7 @@ export function registerImageNodes() {
     OutputPaletteNode: OutputPaletteNode as unknown as NodeCtor,
     OutputSvgNode: OutputSvgNode as unknown as NodeCtor,
     OutputJsonNode: OutputJsonNode as unknown as NodeCtor,
+    OutputTextNode: OutputTextNode as unknown as NodeCtor,
   });
   registered = true;
 }

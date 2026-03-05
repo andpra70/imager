@@ -30,6 +30,7 @@ export const nodePalette: NodePaletteItem[] = [
   { type: "tools/colors/blend", category: "colors", glyph: "B2", shortLabel: "Blend", tooltip: "BLEND: miscela due immagini con modalita, alpha, offset e scala." },
   { type: "tools/colors/layers", category: "colors", glyph: "LYR", shortLabel: "Layers", tooltip: "LAYERS: blend in stack di N immagini con alpha e blend mode per layer." },
   { type: "tools/art/oil", category: "art", glyph: "OIL", shortLabel: "Oil", tooltip: "OIL: effetto pittura a olio con parametri radius e intensity." },
+  { type: "tools/art/oil2", category: "art", glyph: "O2", shortLabel: "Oil2", tooltip: "OIL2: portrait painter a pennellate curve multi-layer (stile p5), con output raster + SVG." },
   { type: "tools/art/asciify", category: "art", glyph: "ASC", shortLabel: "Ascii", tooltip: "ASCIIFY: converte immagine in ASCII art con output raster, SVG e testo." },
   { type: "tools/art/sketch", category: "art", glyph: "SKT", shortLabel: "Sketch", tooltip: "SKETCH: tratteggio progressivo basato sulle aree piu scure (darkest squiggles), ottimizzato con preset FAST/NORMAL/SLOW e output raster+SVG." },
   { type: "tools/art/delanoy", category: "art", glyph: "DEL", shortLabel: "Delanoy", tooltip: "DELANOY: triangolazione Delaunay su griglia e render wireframe (output raster+SVG)." },
@@ -55,4 +56,5 @@ export const nodePalette: NodePaletteItem[] = [
   { type: "output/palette", category: "colors", glyph: "PAL", shortLabel: "Palette", tooltip: "PALETTE: visualizza e salva i colori in ingresso." },
   { type: "output/svg", category: "io", glyph: "S/O", shortLabel: "SVG Out", tooltip: "SVG OUTPUT: mostra un SVG in input e permette il download." },
   { type: "output/ml5", category: "io", glyph: "J/O", shortLabel: "JSON Out", tooltip: "JSON OUTPUT: mostra i dati in formato JSON e permette il download." },
+  { type: "output/txt", category: "io", glyph: "T/O", shortLabel: "TXT Out", tooltip: "TXT OUTPUT: mostra testo in font fisso 8pt e permette il download .txt." },
 ];

@@ -10,6 +10,7 @@ interface OutputNodeCtors {
   OutputPaletteNode: NodeCtor;
   OutputSvgNode: NodeCtor;
   OutputJsonNode: NodeCtor;
+  OutputTextNode: NodeCtor;
 }
 
 export function registerInputNodes(registerNodeType: RegisterNodeTypeFn, ctors: InputNodeCtors) {
@@ -22,4 +23,5 @@ export function registerOutputNodes(registerNodeType: RegisterNodeTypeFn, ctors:
   registerNodeType("output/palette", ctors.OutputPaletteNode);
   registerNodeType("output/svg", ctors.OutputSvgNode);
   registerNodeType("output/ml5", ctors.OutputJsonNode);
+  registerNodeType("output/txt", ctors.OutputTextNode);
 }
