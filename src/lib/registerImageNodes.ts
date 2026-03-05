@@ -41,6 +41,7 @@ import {
 } from "./imageUtils";
 import { registerInputNodes, registerOutputNodes } from "./nodeRegistrations/io";
 import { registerBasicToolNodes } from "./nodeRegistrations/basic";
+import { registerFocusToolNodes } from "./nodeRegistrations/focus";
 import { registerColorToolNodes } from "./nodeRegistrations/colors";
 import { registerArtToolNodes } from "./nodeRegistrations/art";
 import { registerAiToolNodes } from "./nodeRegistrations/ai";
@@ -8594,13 +8595,14 @@ export function registerImageNodes() {
     WebcamImageNode: WebcamImageNode as unknown as NodeCtor,
   });
   registerBasicToolNodes(registerNodeType, {
-    BlurToolNode: BlurToolNode as unknown as NodeCtor,
-    SharpenToolNode: SharpenToolNode as unknown as NodeCtor,
-    SobelToolNode: SobelToolNode as unknown as NodeCtor,
     RotatePanZoomToolNode: RotatePanZoomToolNode as unknown as NodeCtor,
     ScaleToolNode: ScaleToolNode as unknown as NodeCtor,
     RotateToolNode: RotateToolNode as unknown as NodeCtor,
-    BrightnessContrastToolNode: BrightnessContrastToolNode as unknown as NodeCtor,
+  });
+  registerFocusToolNodes(registerNodeType, {
+    BlurToolNode: BlurToolNode as unknown as NodeCtor,
+    SharpenToolNode: SharpenToolNode as unknown as NodeCtor,
+    SobelToolNode: SobelToolNode as unknown as NodeCtor,
   });
   registerColorToolNodes(registerNodeType, {
     InvertToolNode: InvertToolNode as unknown as NodeCtor,
@@ -8615,6 +8617,7 @@ export function registerImageNodes() {
     QuantizeToolNode: QuantizeToolNode as unknown as NodeCtor,
     BlendToolNode: BlendToolNode as unknown as NodeCtor,
     LayersToolNode: LayersToolNode as unknown as NodeCtor,
+    BrightnessContrastToolNode: BrightnessContrastToolNode as unknown as NodeCtor,
   });
   registerArtToolNodes(registerNodeType, {
     OilToolNode: OilToolNode as unknown as NodeCtor,

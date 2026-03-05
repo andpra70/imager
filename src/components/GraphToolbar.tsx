@@ -34,6 +34,7 @@ type ToolbarTab = NodePaletteItem["category"];
 const TOOLBAR_TABS: Array<{ id: ToolbarTab; label: string }> = [
   { id: "io", label: "I/O" },
   { id: "basic", label: "Basic" },
+  { id: "focus", label: "Focus" },
   { id: "colors", label: "Colors" },
   { id: "art", label: "Art" },
   { id: "ai", label: "AI" },

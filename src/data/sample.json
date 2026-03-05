@@ -83,7 +83,7 @@
     },
     {
       "id": 6,
-      "type": "tools/basic/brightness-contrast",
+      "type": "tools/colors/brightness-contrast",
       "pos": [
         150,
         111

@@ -1,6 +1,6 @@
 export interface NodePaletteItem {
   type: string;
-  category: "io" | "basic" | "colors" | "art" | "ai" | "svg";
+  category: "io" | "basic" | "focus" | "colors" | "art" | "ai" | "svg";
   glyph: string;
   shortLabel: string;
   tooltip: string;
@@ -14,13 +14,13 @@ export const nodePalette: NodePaletteItem[] = [
   { type: "tools/colors/threshold", category: "colors", glyph: "THR", shortLabel: "Thresh", tooltip: "THRESHOLD: binarizza l'immagine con una soglia." },
   { type: "tools/colors/histogram", category: "colors", glyph: "HST", shortLabel: "Hist", tooltip: "HISTOGRAM: mostra istogramma dell'immagine con modalita RGB, HSV o scala di grigi." },
   { type: "tools/colors/levels", category: "colors", glyph: "LVL", shortLabel: "Levels", tooltip: "LEVELS: regola livelli con controlli in/out e gamma su RGB, HSV, Gray o Alpha." },
-  { type: "tools/basic/blur", category: "basic", glyph: "BLR", shortLabel: "Blur", tooltip: "BLUR: sfoca l'immagine in ingresso." },
-  { type: "tools/basic/sharpen", category: "basic", glyph: "SHP", shortLabel: "Sharpen", tooltip: "SHARPEN: aumenta nitidezza con preset e amount." },
-  { type: "tools/basic/sobel", category: "basic", glyph: "SBL", shortLabel: "Sobel", tooltip: "SOBEL: edge detection con modalita magnitude/horizontal/vertical/threshold." },
+  { type: "tools/focus/blur", category: "focus", glyph: "BLR", shortLabel: "Blur", tooltip: "BLUR: sfoca l'immagine in ingresso." },
+  { type: "tools/focus/sharpen", category: "focus", glyph: "SHP", shortLabel: "Sharpen", tooltip: "SHARPEN: aumenta nitidezza con preset e amount." },
+  { type: "tools/focus/sobel", category: "focus", glyph: "SBL", shortLabel: "Sobel", tooltip: "SOBEL: edge detection con modalita magnitude/horizontal/vertical/threshold." },
   { type: "tools/basic/rotatePanZoom", category: "basic", glyph: "RPZ", shortLabel: "RPZ", tooltip: "ROTATE PAN ZOOM: ruota, zooma e croppa con pan sliders e bird-eye della zona di crop." },
   { type: "tools/basic/scale", category: "basic", glyph: "SCL", shortLabel: "Scale", tooltip: "SCALE: ridimensiona l'immagine in percentuale." },
   { type: "tools/basic/rotate", category: "basic", glyph: "ROT", shortLabel: "Rotate", tooltip: "ROTATE: ruota l'immagine dell'angolo impostato." },
-  { type: "tools/basic/brightness-contrast", category: "basic", glyph: "B/C", shortLabel: "Bri/Con", tooltip: "BRIGHTNESS/CONTRAST: regola luminosita e contrasto." },
+  { type: "tools/colors/brightness-contrast", category: "colors", glyph: "B/C", shortLabel: "Bri/Con", tooltip: "BRIGHTNESS/CONTRAST: regola luminosita e contrasto." },
   { type: "tools/colors/rgb-split", category: "colors", glyph: "RGB", shortLabel: "RGB Split", tooltip: "RGB SPLIT: separa l'immagine in 3 uscite (R,G,B)." },
   { type: "tools/colors/cmyk-split", category: "colors", glyph: "CMYK", shortLabel: "CMYK Split", tooltip: "CMYK SPLIT: separa l'immagine in 4 uscite (C,M,Y,K)." },
   { type: "tools/colors/rgb-combine", category: "colors", glyph: "RGB+", shortLabel: "RGB Join", tooltip: "RGB COMBINE: ricompone immagine colore da 3 canali R,G,B." },
