@@ -2025,6 +2025,46 @@ interface BicPencilResult {
   height: number;
 }
 
+interface BicPencilOptionsInput {
+  maxWidth: number;
+  pointCount: number;
+  gamma: number;
+  contrast: number;
+  simplifyTolerance: number;
+  lineWidth: number;
+  lineAlpha: number;
+  optimizePasses: number;
+  maxGenerations?: number;
+  offspringPerGeneration?: number;
+  mutationRate?: number;
+  mutationStrength?: number;
+  minMse?: number;
+  mseDeltaThreshold?: number;
+  stableGenerations?: number;
+  workScale?: number;
+  seed: number;
+}
+
+interface BicPencilOptionsResolved {
+  maxWidth: number;
+  pointCount: number;
+  gamma: number;
+  contrast: number;
+  simplifyTolerance: number;
+  lineWidth: number;
+  lineAlpha: number;
+  optimizePasses: number;
+  maxGenerations: number;
+  offspringPerGeneration: number;
+  mutationRate: number;
+  mutationStrength: number;
+  minMse: number;
+  mseDeltaThreshold: number;
+  stableGenerations: number;
+  workScale: number;
+  seed: number;
+}
+
 interface AsciifyResult {
   svg: GraphSvg;
   preview: GraphImage;
