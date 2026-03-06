@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import { nodePalette } from "../models/nodePalette";
 import type { NodePaletteItem } from "../models/nodePalette";
@@ -61,8 +61,21 @@ function GraphToolbar({
   const [position, setPosition] = useState<ToolbarPosition>({ x: 14, y: 14 });
   const [activeTab, setActiveTab] = useState<ToolbarTab>("basic");
   const dragStateRef = useRef<DragState | null>(null);
-  const visibleNodes =
-    activeTab === "file" ? [] : nodePalette.filter((item) => item.category === activeTab);
+  const visibleNodes = useMemo(() => {
+    if (activeTab === "file") {
+      return [];
+    }
+    return nodePalette
+      .filter((item) => item.category === activeTab)
+      .slice()
+      .sort((a, b) => {
+        const byLabel = a.shortLabel.localeCompare(b.shortLabel, "it", { sensitivity: "base" });
+        if (byLabel !== 0) {
+          return byLabel;
+        }
+        return a.type.localeCompare(b.type, "it", { sensitivity: "base" });
+      });
+  }, [activeTab]);
   const actionButtons = [
     {
       glyph: "SV",

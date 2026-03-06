@@ -2026,6 +2026,15 @@ interface BicPencilResult {
   height: number;
 }
 
+interface TonalShadingResult {
+  svg: GraphSvg;
+  preview: GraphImage;
+  strokeCount: number;
+  pathCount: number;
+  width: number;
+  height: number;
+}
+
 interface BicPencilOptionsInput {
   maxWidth: number;
   pointCount: number;
@@ -4411,6 +4420,219 @@ function generateOil2StrokePaths(options: {
     );
     z += 1;
   }
+}
+
+function createTonalDirectionOffsets(directionCount: number) {
+  const count = clamp(Math.round(directionCount), 1, 8);
+  if (count <= 1) {
+    return [0];
+  }
+  const span = Math.PI * 0.85;
+  const offsets: number[] = [];
+  for (let i = 0; i < count; i += 1) {
+    const t = i / (count - 1);
+    offsets.push(-span * 0.5 + t * span);
+  }
+  return offsets;
+}
+
+export async function generateTonalShadingSvg(
+  input: GraphImage,
+  options: {
+    maxWidth: number;
+    cellSize: number;
+    toneGamma: number;
+    contrast: number;
+    detailBoost: number;
+    lineWidth: number;
+    lineAlpha: number;
+    minStrokeLength: number;
+    maxStrokeLength: number;
+    maxLinesPerCell: number;
+    directionCount: number;
+    jitter: number;
+    angleJitter: number;
+    curveBend: number;
+    threshold: number;
+    maxStrokes: number;
+    seed: number;
+  },
+  shouldCancel?: () => boolean,
+  onProgress?: (progress: number, status: string) => void,
+): Promise<TonalShadingResult | null> {
+  const maxWidth = clamp(Math.round(toFiniteNumber(options.maxWidth, 1200)), 256, 3200);
+  const cellSize = clamp(Math.round(toFiniteNumber(options.cellSize, 6)), 3, 32);
+  const toneGamma = clamp(toFiniteNumber(options.toneGamma, 1.1), 0.3, 3.5);
+  const contrast = clamp(toFiniteNumber(options.contrast, 1.2), 0.2, 4);
+  const detailBoost = clamp(toFiniteNumber(options.detailBoost, 0.7), 0, 2.5);
+  const lineWidth = clamp(toFiniteNumber(options.lineWidth, 0.65), 0.1, 8);
+  const lineAlpha = clamp(toFiniteNumber(options.lineAlpha, 0.92), 0.02, 1);
+  const minStrokeLength = clamp(toFiniteNumber(options.minStrokeLength, 2), 0.5, 80);
+  const maxStrokeLength = clamp(toFiniteNumber(options.maxStrokeLength, 14), minStrokeLength, 180);
+  const maxLinesPerCell = clamp(Math.round(toFiniteNumber(options.maxLinesPerCell, 8)), 1, 32);
+  const directionCount = clamp(Math.round(toFiniteNumber(options.directionCount, 4)), 1, 8);
+  const jitter = clamp(toFiniteNumber(options.jitter, 0.65), 0, 4);
+  const angleJitter = clamp(toFiniteNumber(options.angleJitter, 9), 0, 60) * (Math.PI / 180);
+  const curveBend = clamp(toFiniteNumber(options.curveBend, 0.55), 0, 2.5);
+  const threshold = clamp(toFiniteNumber(options.threshold, 0.08), 0, 0.95);
+  const maxStrokes = clamp(Math.round(toFiniteNumber(options.maxStrokes, 35000)), 500, 250000);
+  const seed = clamp(Math.round(toFiniteNumber(options.seed, 1)), 1, 1000000);
+
+  const source = fitSourceToMaxWidthCanvas(input, maxWidth);
+  const width = source.width;
+  const height = source.height;
+  const srcCtx = source.getContext("2d", { willReadFrequently: true });
+  if (!srcCtx) {
+    throw new Error("2D context not available.");
+  }
+  const srcData = srcCtx.getImageData(0, 0, width, height).data;
+  const pixelCount = width * height;
+
+  const luminance = new Float32Array(pixelCount);
+  const darkness = new Float32Array(pixelCount);
+  for (let i = 0, p = 0; p < pixelCount; i += 4, p += 1) {
+    const lum = (0.299 * srcData[i] + 0.587 * srcData[i + 1] + 0.114 * srcData[i + 2]) / 255;
+    luminance[p] = lum;
+    darkness[p] = clamp(Math.pow(1 - lum, toneGamma) * contrast, 0, 1);
+  }
+
+  const gradient = new Float32Array(pixelCount);
+  let maxGradient = 1e-6;
+  for (let y = 1; y < height - 1; y += 1) {
+    const row = y * width;
+    for (let x = 1; x < width - 1; x += 1) {
+      const i = row + x;
+      const tl = luminance[i - width - 1];
+      const tc = luminance[i - width];
+      const tr = luminance[i - width + 1];
+      const ml = luminance[i - 1];
+      const mr = luminance[i + 1];
+      const bl = luminance[i + width - 1];
+      const bc = luminance[i + width];
+      const br = luminance[i + width + 1];
+      const gx = -tl + tr - 2 * ml + 2 * mr - bl + br;
+      const gy = tl + 2 * tc + tr - bl - 2 * bc - br;
+      const mag = Math.sqrt(gx * gx + gy * gy);
+      gradient[i] = mag;
+      if (mag > maxGradient) {
+        maxGradient = mag;
+      }
+    }
+  }
+
+  const preview = document.createElement("canvas");
+  preview.width = width;
+  preview.height = height;
+  const previewCtx = preview.getContext("2d");
+  if (!previewCtx) {
+    throw new Error("2D context not available.");
+  }
+  previewCtx.fillStyle = "#FFFFFF";
+  previewCtx.fillRect(0, 0, width, height);
+  previewCtx.strokeStyle = "#111111";
+  previewCtx.lineWidth = lineWidth;
+  previewCtx.globalAlpha = lineAlpha;
+  previewCtx.lineCap = "round";
+  previewCtx.lineJoin = "round";
+
+  const offsets = createTonalDirectionOffsets(directionCount);
+  const rng = createSeededRandom(seed);
+  const svgPaths: string[] = [];
+  let strokeCount = 0;
+  const half = Math.max(1, Math.floor(cellSize / 2));
+  const rows = Math.max(1, Math.floor((height - half * 2) / cellSize) + 1);
+  let rowIndex = 0;
+
+  outer: for (let y = half; y < height - half; y += cellSize) {
+    if (shouldCancel?.()) {
+      return null;
+    }
+    for (let x = half; x < width - half; x += cellSize) {
+      if (strokeCount >= maxStrokes) {
+        break outer;
+      }
+      const center = y * width + x;
+      const tone = darkness[center];
+      if (tone <= threshold) {
+        continue;
+      }
+      const gx =
+        luminance[center + 1] -
+        luminance[center - 1];
+      const gy =
+        luminance[Math.min(pixelCount - 1, center + width)] -
+        luminance[Math.max(0, center - width)];
+      const gradAngle = Math.atan2(gy, gx);
+      const tangentAngle = gradAngle + Math.PI * 0.5;
+      const detail = clamp(gradient[center] / maxGradient, 0, 1);
+      const localTone = clamp(tone * (0.82 + detail * detailBoost), 0, 1);
+      const localLineCount = clamp(
+        Math.round(localTone * maxLinesPerCell * (0.7 + detail * 0.55)),
+        1,
+        maxLinesPerCell,
+      );
+      for (let lineIndex = 0; lineIndex < localLineCount; lineIndex += 1) {
+        if (strokeCount >= maxStrokes) {
+          break outer;
+        }
+        const directionIndex = lineIndex % offsets.length;
+        const layerIndex = Math.floor(lineIndex / offsets.length);
+        const layerCount = Math.ceil(localLineCount / offsets.length);
+        const depthShift =
+          ((layerIndex + 0.5) / Math.max(1, layerCount) - 0.5) * cellSize * 1.1;
+        const angle =
+          tangentAngle +
+          offsets[directionIndex] +
+          (rng() * 2 - 1) * angleJitter;
+        const perp = angle + Math.PI * 0.5;
+        const cx =
+          x +
+          Math.cos(perp) * depthShift +
+          (rng() * 2 - 1) * jitter;
+        const cy =
+          y +
+          Math.sin(perp) * depthShift +
+          (rng() * 2 - 1) * jitter;
+        const tLen = minStrokeLength + localTone * (maxStrokeLength - minStrokeLength);
+        const length = tLen * (0.72 + rng() * 0.58);
+        const halfLen = length * 0.5;
+        const x1 = clamp(cx - Math.cos(angle) * halfLen, 0, width);
+        const y1 = clamp(cy - Math.sin(angle) * halfLen, 0, height);
+        const x2 = clamp(cx + Math.cos(angle) * halfLen, 0, width);
+        const y2 = clamp(cy + Math.sin(angle) * halfLen, 0, height);
+        const bendMag = cellSize * 0.45 * curveBend * (0.45 + detail * 0.75) * (rng() * 2 - 1);
+        const cpx = clamp((x1 + x2) * 0.5 + Math.cos(perp) * bendMag, 0, width);
+        const cpy = clamp((y1 + y2) * 0.5 + Math.sin(perp) * bendMag, 0, height);
+
+        previewCtx.beginPath();
+        previewCtx.moveTo(x1, y1);
+        previewCtx.quadraticCurveTo(cpx, cpy, x2, y2);
+        previewCtx.stroke();
+
+        const d = `M${x1.toFixed(2)},${y1.toFixed(2)} Q${cpx.toFixed(2)},${cpy.toFixed(2)} ${x2.toFixed(2)},${y2.toFixed(2)}`;
+        svgPaths.push(
+          `<path d="${d}" fill="none" stroke="#111111" stroke-width="${lineWidth.toFixed(3)}" stroke-opacity="${lineAlpha.toFixed(4)}" stroke-linecap="round" stroke-linejoin="round"/>`,
+        );
+        strokeCount += 1;
+      }
+    }
+    rowIndex += 1;
+    onProgress?.(rowIndex / rows, `tonal shading ${strokeCount} strokes`);
+    if (rowIndex % 4 === 0) {
+      await yieldToUi();
+    }
+  }
+
+  onProgress?.(1, "ready");
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><rect width="100%" height="100%" fill="#FFFFFF"/>${svgPaths.join("")}</svg>`;
+  return {
+    svg,
+    preview,
+    strokeCount,
+    pathCount: svgPaths.length,
+    width,
+    height,
+  };
 }
 
 export async function generateOil2Svg(

@@ -8,6 +8,7 @@ import {
   formatExecutionInfo,
   generateBicPencilSingleLineSvg,
   generateSketchSvg,
+  generateTonalShadingSvg,
   getGraphImageSignature,
   isGraphImageReady,
   notifyGraphStateChange,
@@ -716,6 +717,237 @@ export class GraphicPencilToolNode {
     context.fillText(`progress ${Math.round(this.progress * 100)}% | points ${this.pointCount}`, 10, layout.footerTop + 30);
     context.fillText(`length ${Math.round(this.pathLength)} px`, 10, layout.footerTop + 48);
     context.fillText(formatExecutionInfo(this.executionMs), 10, layout.footerTop + 66);
+    context.restore();
+  }
+}
+
+export class GraphicTonalShadingToolNode {
+  size: [number, number] = [280, 760];
+  properties!: Record<string, unknown>;
+  preview: GraphImage | null = null;
+  svg: GraphSvg | null = null;
+  status = "idle";
+  progress = 0;
+  strokeCount = 0;
+  pathCount = 0;
+  outputWidth = 0;
+  outputHeight = 0;
+  isRendering = false;
+  executionMs: number | null = null;
+  lastSignature = "";
+  lastOptionsSignature = "";
+  renderToken = 0;
+
+  constructor() {
+    const node = this as unknown as PreviewAwareNode & GraphicTonalShadingToolNode;
+    node.title = createToolTitle("Graphic TonalShading");
+    node.properties = {
+      maxWidth: 1280,
+      cellSize: 6,
+      toneGamma: 1.1,
+      contrast: 1.2,
+      detailBoost: 0.7,
+      lineWidth: 0.65,
+      lineAlpha: 0.92,
+      minStrokeLength: 2,
+      maxStrokeLength: 14,
+      maxLinesPerCell: 8,
+      directionCount: 4,
+      jitter: 0.65,
+      angleJitter: 9,
+      curveBend: 0.55,
+      threshold: 0.08,
+      maxStrokes: 35000,
+      seed: 1,
+    };
+    node.addInput("image", "image");
+    node.addOutput("image", "image");
+    node.addOutput("svg", "svg");
+    node.addWidget("slider", "Max width", 1280, (value) => {
+      node.properties.maxWidth = Math.round(Number(value));
+      notifyGraphStateChange(node);
+    }, { min: 256, max: 3200, step: 8 });
+    node.addWidget("slider", "Cell", 6, (value) => {
+      node.properties.cellSize = Math.round(Number(value));
+      notifyGraphStateChange(node);
+    }, { min: 3, max: 32, step: 1 });
+    node.addWidget("slider", "Tone gamma", 1.1, (value) => {
+      node.properties.toneGamma = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0.3, max: 3.5, step: 0.01, precision: 2 });
+    node.addWidget("slider", "Contrast", 1.2, (value) => {
+      node.properties.contrast = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0.2, max: 4, step: 0.01, precision: 2 });
+    node.addWidget("slider", "Detail", 0.7, (value) => {
+      node.properties.detailBoost = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0, max: 2.5, step: 0.01, precision: 2 });
+    node.addWidget("slider", "Line width", 0.65, (value) => {
+      node.properties.lineWidth = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0.1, max: 8, step: 0.05, precision: 2 });
+    node.addWidget("slider", "Line alpha", 0.92, (value) => {
+      node.properties.lineAlpha = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0.02, max: 1, step: 0.01, precision: 2 });
+    node.addWidget("slider", "Min len", 2, (value) => {
+      node.properties.minStrokeLength = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0.5, max: 80, step: 0.1, precision: 1 });
+    node.addWidget("slider", "Max len", 14, (value) => {
+      node.properties.maxStrokeLength = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0.5, max: 180, step: 0.5, precision: 1 });
+    node.addWidget("slider", "Lines/cell", 8, (value) => {
+      node.properties.maxLinesPerCell = Math.round(Number(value));
+      notifyGraphStateChange(node);
+    }, { min: 1, max: 32, step: 1 });
+    node.addWidget("slider", "Directions", 4, (value) => {
+      node.properties.directionCount = Math.round(Number(value));
+      notifyGraphStateChange(node);
+    }, { min: 1, max: 8, step: 1 });
+    node.addWidget("slider", "Jitter", 0.65, (value) => {
+      node.properties.jitter = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0, max: 4, step: 0.01, precision: 2 });
+    node.addWidget("slider", "Angle jitter", 9, (value) => {
+      node.properties.angleJitter = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0, max: 60, step: 0.5, precision: 1 });
+    node.addWidget("slider", "Curve bend", 0.55, (value) => {
+      node.properties.curveBend = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0, max: 2.5, step: 0.01, precision: 2 });
+    node.addWidget("slider", "Threshold", 0.08, (value) => {
+      node.properties.threshold = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0, max: 0.95, step: 0.01, precision: 2 });
+    node.addWidget("slider", "Max strokes", 35000, (value) => {
+      node.properties.maxStrokes = Math.round(Number(value));
+      notifyGraphStateChange(node);
+    }, { min: 500, max: 250000, step: 100 });
+    node.addWidget("slider", "Seed", 1, (value) => {
+      node.properties.seed = Math.round(Number(value));
+      notifyGraphStateChange(node);
+    }, { min: 1, max: 1000000, step: 1 });
+    node.refreshPreviewLayout = () => refreshNode(node, node.preview, 5);
+    node.refreshPreviewLayout();
+  }
+
+  onExecute(this: PreviewAwareNode & GraphicTonalShadingToolNode) {
+    const inputValue = this.getInputData(0);
+    const input = isGraphImageReady(inputValue) ? inputValue : null;
+    if (!input) {
+      this.preview = null;
+      this.svg = null;
+      this.status = "waiting valid image";
+      this.progress = 0;
+      this.strokeCount = 0;
+      this.pathCount = 0;
+      this.outputWidth = 0;
+      this.outputHeight = 0;
+      this.executionMs = null;
+      this.isRendering = false;
+      this.lastSignature = "";
+      this.lastOptionsSignature = "";
+      this.setOutputData(0, null);
+      this.setOutputData(1, null);
+      this.refreshPreviewLayout();
+      return;
+    }
+
+    const options = {
+      maxWidth: clamp(Math.round(Number(this.properties.maxWidth ?? 1280)), 256, 3200),
+      cellSize: clamp(Math.round(Number(this.properties.cellSize ?? 6)), 3, 32),
+      toneGamma: clamp(Number(this.properties.toneGamma ?? 1.1), 0.3, 3.5),
+      contrast: clamp(Number(this.properties.contrast ?? 1.2), 0.2, 4),
+      detailBoost: clamp(Number(this.properties.detailBoost ?? 0.7), 0, 2.5),
+      lineWidth: clamp(Number(this.properties.lineWidth ?? 0.65), 0.1, 8),
+      lineAlpha: clamp(Number(this.properties.lineAlpha ?? 0.92), 0.02, 1),
+      minStrokeLength: clamp(Number(this.properties.minStrokeLength ?? 2), 0.5, 80),
+      maxStrokeLength: clamp(Number(this.properties.maxStrokeLength ?? 14), 0.5, 180),
+      maxLinesPerCell: clamp(Math.round(Number(this.properties.maxLinesPerCell ?? 8)), 1, 32),
+      directionCount: clamp(Math.round(Number(this.properties.directionCount ?? 4)), 1, 8),
+      jitter: clamp(Number(this.properties.jitter ?? 0.65), 0, 4),
+      angleJitter: clamp(Number(this.properties.angleJitter ?? 9), 0, 60),
+      curveBend: clamp(Number(this.properties.curveBend ?? 0.55), 0, 2.5),
+      threshold: clamp(Number(this.properties.threshold ?? 0.08), 0, 0.95),
+      maxStrokes: clamp(Math.round(Number(this.properties.maxStrokes ?? 35000)), 500, 250000),
+      seed: clamp(Math.round(Number(this.properties.seed ?? 1)), 1, 1000000),
+    };
+
+    const signature = getGraphImageSignature(input);
+    const optionsSignature = JSON.stringify(options);
+    if (signature !== this.lastSignature || optionsSignature !== this.lastOptionsSignature) {
+      this.lastSignature = signature;
+      this.lastOptionsSignature = optionsSignature;
+      const renderToken = ++this.renderToken;
+      const start = performance.now();
+      this.isRendering = true;
+      this.progress = 0;
+      this.status = "generating tonal shading...";
+      this.setDirtyCanvas(true, true);
+
+      const shouldCancel = () => renderToken !== this.renderToken;
+      const updateProgress = (value: number, status?: string) => {
+        this.progress = clamp(value, 0, 1);
+        if (status) {
+          this.status = status;
+        }
+        this.setDirtyCanvas(true, true);
+      };
+
+      void generateTonalShadingSvg(input, options, shouldCancel, updateProgress)
+        .then((result) => {
+          if (renderToken !== this.renderToken || !result) return;
+          this.preview = result.preview;
+          this.svg = result.svg;
+          this.strokeCount = result.strokeCount;
+          this.pathCount = result.pathCount;
+          this.outputWidth = result.width;
+          this.outputHeight = result.height;
+          this.progress = 1;
+          this.status = "ready";
+          this.executionMs = performance.now() - start;
+          this.isRendering = false;
+          this.setDirtyCanvas(true, true);
+        })
+        .catch((error) => {
+          if (renderToken !== this.renderToken) return;
+          logNodeError("GraphicTonalShadingToolNode", error, {
+            options,
+            inputSize: `${input.width}x${input.height}`,
+          });
+          this.preview = input;
+          this.svg = null;
+          this.strokeCount = 0;
+          this.pathCount = 0;
+          this.outputWidth = 0;
+          this.outputHeight = 0;
+          this.progress = 0;
+          this.status = error instanceof Error ? error.message : "graphic tonal shading error";
+          this.executionMs = null;
+          this.isRendering = false;
+          this.setDirtyCanvas(true, true);
+        });
+    }
+
+    this.setOutputData(0, this.preview ?? input);
+    this.setOutputData(1, this.svg);
+    this.refreshPreviewLayout();
+  }
+
+  onDrawBackground(this: PreviewAwareNode & GraphicTonalShadingToolNode, context: CanvasRenderingContext2D) {
+    const layout = drawImagePreview(context, this, this.preview, { footerLines: 5 });
+    context.save();
+    context.fillStyle = "rgba(255,255,255,0.65)";
+    context.font = "12px sans-serif";
+    context.fillText(`${this.status}${this.isRendering ? "..." : ""}`, 10, layout.footerTop + 12);
+    context.fillText(`progress ${Math.round(this.progress * 100)}% | strokes ${this.strokeCount}`, 10, layout.footerTop + 30);
+    context.fillText(`paths ${this.pathCount}`, 10, layout.footerTop + 48);
+    context.fillText(`out ${this.outputWidth || "-"}x${this.outputHeight || "-"}`, 10, layout.footerTop + 66);
+    context.fillText(formatExecutionInfo(this.executionMs), 10, layout.footerTop + 84);
     context.restore();
   }
 }

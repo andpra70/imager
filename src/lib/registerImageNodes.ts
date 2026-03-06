@@ -187,6 +187,7 @@ export function registerImageNodes() {
   registerGraphicToolNodes(registerNodeType, {
     GraphicSketchToolNode: graphicToolCtors.GraphicSketchToolNode,
     GraphicPencilToolNode: graphicToolCtors.GraphicPencilToolNode,
+    GraphicTonalShadingToolNode: graphicToolCtors.GraphicTonalShadingToolNode,
   });
 
   registerOutputNodes(registerNodeType, {
