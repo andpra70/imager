@@ -227,10 +227,25 @@ function animatePointList(output, speed){
 
 
 function postLines(data){
+  if (!Array.isArray(data) || data.length === 0) {
+    postMessage(['svg-path', ''])
+    return
+  }
+
+  if (!Array.isArray(data[0]) || data[0].length === 0) {
+    postMessage(['svg-path', ''])
+    return
+  }
+
   let pathstring="";
 
   // either a list of points, or a list of lists of points
-  if (typeof data[0][0] !== "object") data = [data] 
+  if (typeof data[0][0] !== "object") data = [data]
+
+  if (!data[0] || !data[0][0]) {
+    postMessage(['svg-path', ''])
+    return
+  }
 
   if (data[0][0].x) {
     for (let p in data) {
@@ -247,6 +262,11 @@ function postLines(data){
 }
 
 function postCircles(data){
+  if (!Array.isArray(data) || data.length === 0 || !data[0]) {
+    postMessage(['svg-path', ''])
+    return
+  }
+
   let pathstring = ""
   if (data[0].x) {
     for (let p in data) {
@@ -263,4 +283,3 @@ function postCircles(data){
   }
   postMessage(['svg-path',pathstring])
 }
-

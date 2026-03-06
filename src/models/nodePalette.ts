@@ -1,6 +1,6 @@
 export interface NodePaletteItem {
   type: string;
-  category: "io" | "basic" | "focus" | "colors" | "art" | "ai" | "svg";
+  category: "io" | "basic" | "focus" | "colors" | "art" | "plotter" | "ai" | "svg";
   glyph: string;
   shortLabel: string;
   tooltip: string;
@@ -49,6 +49,28 @@ export const nodePalette: NodePaletteItem[] = [
   { type: "tools/art/carboncino", category: "art", glyph: "CRB", shortLabel: "Carbon", tooltip: "CARBONCINO: disegno a tratti e scumble in 3 passate con controlli upscale/densita/pressione." },
   { type: "tools/art/crosshatch-bn", category: "art", glyph: "XHB", shortLabel: "XH BN", tooltip: "CROSSHATCH BN: line art b/n multi-angolo (0-90) con output raster + SVG." },
   { type: "tools/art/matita", category: "art", glyph: "MAT", shortLabel: "Matita", tooltip: "MATITA: single-line painter ottimizzato con passate, semplificazione RDP e output raster + SVG." },
+  { type: "tools/plotter/boxes", category: "plotter", glyph: "PBX", shortLabel: "Boxes", tooltip: "PLOTTER/BOXES: box-grid derivata da tools/plotter/legacy/boxes.js con parametri legacy completi." },
+  { type: "tools/plotter/delaunay", category: "plotter", glyph: "PDE", shortLabel: "Delaunay", tooltip: "PLOTTER/DELAUNAY: triangolazione con stipple iterativo, spread e gamma da tools/plotter/legacy/delaunay.js." },
+  { type: "tools/plotter/dots", category: "plotter", glyph: "PDT", shortLabel: "Dots", tooltip: "PLOTTER/DOTS: punteggiatura lineare con direction random/seed da tools/plotter/legacy/dots.js." },
+  { type: "tools/plotter/halftone", category: "plotter", glyph: "PHF", shortLabel: "Halftone", tooltip: "PLOTTER/HALFTONE: retino cerchi/diamanti con divisions/factor/cutoff da tools/plotter/legacy/halftone.js." },
+  { type: "tools/plotter/implode", category: "plotter", glyph: "PIM", shortLabel: "Implode", tooltip: "PLOTTER/IMPLODE: raggi centripeti con threshold, dither e route optimize da tools/plotter/legacy/implode.js." },
+  { type: "tools/plotter/jaggy", category: "plotter", glyph: "PJG", shortLabel: "Jaggy", tooltip: "PLOTTER/JAGGY: single-path jagged con seed, derivato da tools/plotter/legacy/jaggy.js." },
+  { type: "tools/plotter/linedraw", category: "plotter", glyph: "PLD", shortLabel: "Linedraw", tooltip: "PLOTTER/LINEDRAW: contour/hatching/noise-scale da tools/plotter/legacy/linedraw.js." },
+  { type: "tools/plotter/linescan", category: "plotter", glyph: "PLS", shortLabel: "Linescan", tooltip: "PLOTTER/LINESCAN: scansione threshold su assi horizontal/vertical/both da tools/plotter/legacy/linescan.js." },
+  { type: "tools/plotter/longwave", category: "plotter", glyph: "PLW", shortLabel: "Longwave", tooltip: "PLOTTER/LONGWAVE: onde lunghe con depth/direction/simplify da tools/plotter/legacy/longwave.js." },
+  { type: "tools/plotter/mosaic", category: "plotter", glyph: "PMO", shortLabel: "Mosaic", tooltip: "PLOTTER/MOSAIC: mosaico hatch con scale/hatches/outlines da tools/plotter/legacy/mosaic.js." },
+  { type: "tools/plotter/needles", category: "plotter", glyph: "PND", shortLabel: "Needles", tooltip: "PLOTTER/NEEDLES: needle strokes con max length/threshold da tools/plotter/legacy/needles.js." },
+  { type: "tools/plotter/peano", category: "plotter", glyph: "PPE", shortLabel: "Peano", tooltip: "PLOTTER/PEANO: spazio riempiente con order/hblocks/vblocks da tools/plotter/legacy/peano.js." },
+  { type: "tools/plotter/polyspiral", category: "plotter", glyph: "PPS", shortLabel: "PolySp", tooltip: "PLOTTER/POLYSPIRAL: spirale poligonale con polygon/frequency/amplitude/spacing da tools/plotter/legacy/polyspiral.js." },
+  { type: "tools/plotter/sawtooth", category: "plotter", glyph: "PSW", shortLabel: "Saw", tooltip: "PLOTTER/SAWTOOTH: sawtooth linework con lineCount/sampling da tools/plotter/legacy/sawtooth.js." },
+  { type: "tools/plotter/spiral", category: "plotter", glyph: "PSP", shortLabel: "Spiral", tooltip: "PLOTTER/SPIRAL: spirale radiale con frequency/amplitude/spacing da tools/plotter/legacy/spiral.js." },
+  { type: "tools/plotter/springs", category: "plotter", glyph: "PSR", shortLabel: "Springs", tooltip: "PLOTTER/SPRINGS: pattern a molla con widdershins da tools/plotter/legacy/springs.js." },
+  { type: "tools/plotter/squiggle", category: "plotter", glyph: "PSQ", shortLabel: "Squig", tooltip: "PLOTTER/SQUIGGLE: squiggle classico con modulazione AM/FM/BOTH da tools/plotter/legacy/squiggle.js." },
+  { type: "tools/plotter/squiggle-left-right", category: "plotter", glyph: "PSL", shortLabel: "Sq L/R", tooltip: "PLOTTER/SQUIGGLE L/R: zig-zag left-right con join-ends da tools/plotter/legacy/squiggleLeftRight.js." },
+  { type: "tools/plotter/stipple", category: "plotter", glyph: "PST", shortLabel: "Stipple", tooltip: "PLOTTER/STIPPLE: voronoi stippling con TSP art e shape modes da tools/plotter/legacy/stipple.js." },
+  { type: "tools/plotter/subline", category: "plotter", glyph: "PSU", shortLabel: "Subline", tooltip: "PLOTTER/SUBLINE: subline multilineari con sublines/amplitude/sampling da tools/plotter/legacy/subline.js." },
+  { type: "tools/plotter/waves", category: "plotter", glyph: "PWV", shortLabel: "Waves", tooltip: "PLOTTER/WAVES: onde orientate per angle/step-size da tools/plotter/legacy/waves.js." },
+  { type: "tools/plotter/woven", category: "plotter", glyph: "PWO", shortLabel: "Woven", tooltip: "PLOTTER/WOVEN: effetto tessuto con cosine/random/power da tools/plotter/legacy/woven.js." },
   { type: "tools/svg/rough", category: "svg", glyph: "RFX", shortLabel: "Rough", tooltip: "ROUGH: applica stile rough a un SVG in ingresso e produce un nuovo SVG." },
   { type: "tools/svg/svg-simplify", category: "svg", glyph: "SMP", shortLabel: "Simplify", tooltip: "SVG SIMPLIFY: semplifica path e minifica SVG riducendo il peso mantenendo i colori." },
   { type: "tools/ai/bg-remove", category: "ai", glyph: "BGR", shortLabel: "BG Remove", tooltip: "BG REMOVE: rimuove lo sfondo con segmentazione persona AI (stile MediaPipe/selfie segmentation)." },
