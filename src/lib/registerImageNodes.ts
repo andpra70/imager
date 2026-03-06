@@ -9,6 +9,7 @@ import { createToolArtNodeCtors, registerArtToolNodes } from "./nodeRegistration
 import { createToolAiNodeCtors, registerAiToolNodes } from "./nodeRegistrations/tools/ai";
 import { createToolSvgNodeCtors, registerSvgToolNodes } from "./nodeRegistrations/tools/svg";
 import { createToolPlotterNodeCtors, registerPlotterToolNodes } from "./nodeRegistrations/tools/plotter";
+import { createToolGraphicNodeCtors, registerGraphicToolNodes } from "./nodeRegistrations/tools/graphic";
 import type { LiteNode, PreviewAwareNode } from "./nodeRegistrations/shared";
 
 let registered = false;
@@ -110,6 +111,7 @@ export function registerImageNodes() {
   const aiToolCtors = createToolAiNodeCtors();
   const svgToolCtors = createToolSvgNodeCtors();
   const plotterToolCtors = createToolPlotterNodeCtors();
+  const graphicToolCtors = createToolGraphicNodeCtors();
 
   registerInputNodes(registerNodeType, {
     InputImageNode: ioNodeCtors.InputImageNode,
@@ -181,6 +183,11 @@ export function registerImageNodes() {
   });
 
   registerPlotterToolNodes(registerNodeType, plotterToolCtors);
+
+  registerGraphicToolNodes(registerNodeType, {
+    GraphicSketchToolNode: graphicToolCtors.GraphicSketchToolNode,
+    GraphicPencilToolNode: graphicToolCtors.GraphicPencilToolNode,
+  });
 
   registerOutputNodes(registerNodeType, {
     OutputImageNode: ioNodeCtors.OutputImageNode,

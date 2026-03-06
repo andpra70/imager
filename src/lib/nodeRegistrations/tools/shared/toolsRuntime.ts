@@ -2006,6 +2006,21 @@ interface SketchResult {
   svg: GraphSvg;
   preview: GraphImage;
   pathCount: number;
+  iterations: number;
+  finalError: number;
+  stopReason: "line_limit" | "min_error" | "stalled" | "darkness_cleared";
+  width: number;
+  height: number;
+}
+
+interface BicPencilResult {
+  svg: GraphSvg;
+  preview: GraphImage;
+  pointCount: number;
+  pathLength: number;
+  mse: number;
+  generations: number;
+  stopReason: "max_generations" | "target_error" | "stalled";
   width: number;
   height: number;
 }
@@ -3030,6 +3045,10 @@ export async function generateSketchSvg(
     simplifyTolerance: number;
     lightenStep: number;
     refreshEvery: number;
+    minError?: number;
+    errorStabilityDelta?: number;
+    errorStabilityChecks?: number;
+    errorCheckEvery?: number;
   },
   shouldCancel?: () => boolean,
   onProgress?: (progress: number, status: string) => void,
@@ -3149,6 +3168,14 @@ export async function generateSketchSvg(
   const lightenStep = clamp(Math.round(options.lightenStep), 1, 255);
   const refreshEvery = clamp(Math.round(options.refreshEvery), 4, 256);
   const brushRadius = Math.max(0, Math.round(lineWidth * 0.5));
+  const minError = clamp(Number(options.minError ?? 0), 0, 255);
+  const errorStabilityDelta = clamp(Number(options.errorStabilityDelta ?? 0), 0, 255);
+  const errorStabilityChecks = clamp(Math.round(Number(options.errorStabilityChecks ?? 0)), 0, 1024);
+  const errorCheckEvery = clamp(Math.round(Number(options.errorCheckEvery ?? refreshEvery)), 1, 2048);
+  const convergenceEnabled =
+    Number.isFinite(options.minError ?? NaN) ||
+    Number.isFinite(options.errorStabilityDelta ?? NaN) ||
+    Number.isFinite(options.errorStabilityChecks ?? NaN);
 
   const preview = document.createElement("canvas");
   preview.width = width;
@@ -3172,6 +3199,11 @@ export async function generateSketchSvg(
   const svgPaths: string[] = [];
   let pathCount = 0;
   let lastYieldTime = performance.now();
+  let iterations = 0;
+  let stopReason: SketchResult["stopReason"] = "line_limit";
+  let finalError = 255;
+  let previousError = Number.POSITIVE_INFINITY;
+  let stableErrorChecks = 0;
 
   for (let lineIndex = 0; lineIndex < lineLimit; lineIndex += 1) {
     if (shouldCancel?.()) {
@@ -3180,6 +3212,7 @@ export async function generateSketchSvg(
     const darkestCell = findDarkestCell();
     const start = findDarkestPixelInCell(darkestCell);
     if (start.luminance > 245) {
+      stopReason = "darkness_cleared";
       break;
     }
 
@@ -3345,6 +3378,38 @@ export async function generateSketchSvg(
       recomputeCellAverage(cellIndex);
     });
     pathCount += subpaths.length;
+    iterations = lineIndex + 1;
+
+    if (convergenceEnabled && (iterations % errorCheckEvery === 0 || iterations === lineLimit)) {
+      let errorSum = 0;
+      for (let i = 0; i < gridCount; i += 1) {
+        errorSum += gridAverage[i];
+      }
+      finalError = errorSum / Math.max(1, gridCount);
+
+      if (finalError <= minError) {
+        stopReason = "min_error";
+        onProgress?.(iterations / lineLimit, `min error reached (${finalError.toFixed(2)})`);
+        break;
+      }
+
+      const improvement = previousError - finalError;
+      if (improvement <= errorStabilityDelta) {
+        stableErrorChecks += 1;
+      } else {
+        stableErrorChecks = 0;
+      }
+      previousError = finalError;
+
+      if (errorStabilityChecks > 0 && stableErrorChecks >= errorStabilityChecks) {
+        stopReason = "stalled";
+        onProgress?.(
+          iterations / lineLimit,
+          `error stalled (${finalError.toFixed(2)}, Δ<=${errorStabilityDelta.toFixed(3)})`,
+        );
+        break;
+      }
+    }
 
     const progress = (lineIndex + 1) / lineLimit;
     onProgress?.(progress, `line ${lineIndex + 1}/${lineLimit}`);
@@ -3357,9 +3422,448 @@ export async function generateSketchSvg(
     }
   }
 
+  if (!convergenceEnabled) {
+    let errorSum = 0;
+    for (let i = 0; i < gridCount; i += 1) {
+      errorSum += gridAverage[i];
+    }
+    finalError = errorSum / Math.max(1, gridCount);
+  }
+
+  if (iterations === 0 && stopReason === "line_limit") {
+    stopReason = "darkness_cleared";
+  }
+
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><rect width="100%" height="100%" fill="#FFFFFF"/><g fill="none" stroke="#000000" stroke-width="${lineWidth}" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="${lineAlpha.toFixed(4)}">${svgPaths.join("")}</g></svg>`;
   onProgress?.(1, "ready");
-  return { svg, preview, pathCount, width, height };
+  return { svg, preview, pathCount, iterations, finalError, stopReason, width, height };
+}
+
+export async function generateBicPencilSingleLineSvg(
+  input: GraphImage,
+  options: {
+    maxWidth: number;
+    pointCount: number;
+    gamma: number;
+    contrast: number;
+    simplifyTolerance: number;
+    lineWidth: number;
+    lineAlpha: number;
+    optimizePasses: number;
+    maxGenerations: number;
+    offspringPerGeneration: number;
+    mutationRate: number;
+    mutationStrength: number;
+    minMse: number;
+    mseDeltaThreshold: number;
+    stableGenerations: number;
+    workScale: number;
+    seed: number;
+  },
+  shouldCancel?: () => boolean,
+  onProgress?: (progress: number, status: string) => void,
+): Promise<BicPencilResult | null> {
+  const source = fitSourceToMaxWidthCanvas(input, options.maxWidth);
+  const width = source.width;
+  const height = source.height;
+  const context = source.getContext("2d", { willReadFrequently: true });
+  if (!context) {
+    throw new Error("2D context not available.");
+  }
+
+  const imageData = context.getImageData(0, 0, width, height);
+  const data = imageData.data;
+  const gamma = clamp(options.gamma, 0.2, 3);
+  const contrast = clamp(options.contrast, 0.2, 4);
+  const targetPoints = clamp(Math.round(options.pointCount), 300, 25000);
+  const simplifyTolerance = clamp(options.simplifyTolerance, 0, 10);
+  const lineWidth = clamp(options.lineWidth, 0.1, 8);
+  const lineAlpha = clamp(options.lineAlpha, 0.01, 1);
+  const optimizePasses = clamp(Math.round(options.optimizePasses), 0, 20);
+  const maxGenerations = clamp(Math.round(options.maxGenerations), 0, 200);
+  const offspringPerGeneration = clamp(Math.round(options.offspringPerGeneration), 1, 16);
+  const mutationRate = clamp(options.mutationRate, 0.001, 0.5);
+  const mutationStrength = clamp(options.mutationStrength, 0.25, 64);
+  const minMse = clamp(options.minMse, 0, 65025);
+  const mseDeltaThreshold = clamp(options.mseDeltaThreshold, 0, 1000);
+  const stableGenerations = clamp(Math.round(options.stableGenerations), 1, 100);
+  const workScale = clamp(options.workScale, 0.1, 1);
+  const rng = createSeededRandom(Math.round(options.seed) || 1);
+
+  const pixelCount = width * height;
+  const darkness = new Float32Array(pixelCount);
+  let totalDarkness = 0;
+  for (let i = 0, p = 0; p < pixelCount; i += 4, p += 1) {
+    const l = (0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2]) / 255;
+    const d = clamp(Math.pow(1 - l, gamma) * contrast, 0, 1);
+    darkness[p] = d;
+    totalDarkness += d;
+  }
+  if (totalDarkness <= 1e-6) {
+    const blank = document.createElement("canvas");
+    blank.width = width;
+    blank.height = height;
+    const blankCtx = blank.getContext("2d");
+    if (!blankCtx) {
+      throw new Error("2D context not available.");
+    }
+    blankCtx.fillStyle = "#FFFFFF";
+    blankCtx.fillRect(0, 0, width, height);
+    const emptySvg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><rect width="100%" height="100%" fill="#FFFFFF"/></svg>`;
+    return {
+      svg: emptySvg,
+      preview: blank,
+      pointCount: 0,
+      pathLength: 0,
+      mse: 0,
+      generations: 0,
+      stopReason: "target_error",
+      width,
+      height,
+    };
+  }
+
+  const cum = new Float64Array(pixelCount);
+  let acc = 0;
+  for (let i = 0; i < pixelCount; i += 1) {
+    acc += darkness[i];
+    cum[i] = acc;
+  }
+
+  const points: Array<{ x: number; y: number }> = [];
+  const occupied = new Uint8Array(pixelCount);
+  const pickWeightedIndex = () => {
+    const r = rng() * acc;
+    let lo = 0;
+    let hi = pixelCount - 1;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (cum[mid] < r) lo = mid + 1;
+      else hi = mid;
+    }
+    return lo;
+  };
+
+  const reportStep = Math.max(1, Math.floor(targetPoints / 20));
+  for (let i = 0; i < targetPoints; i += 1) {
+    if (shouldCancel?.()) {
+      return null;
+    }
+    const idx = pickWeightedIndex();
+    if (occupied[idx]) {
+      continue;
+    }
+    occupied[idx] = 1;
+    points.push({ x: idx % width, y: Math.floor(idx / width) });
+    if (i % reportStep === 0 || i === targetPoints - 1) {
+      onProgress?.(0.2 * (i / Math.max(1, targetPoints - 1)), `sampling ${i + 1}/${targetPoints}`);
+      await yieldToUi();
+    }
+  }
+
+  if (points.length < 2) {
+    const blank = document.createElement("canvas");
+    blank.width = width;
+    blank.height = height;
+    const blankCtx = blank.getContext("2d");
+    if (!blankCtx) {
+      throw new Error("2D context not available.");
+    }
+    blankCtx.fillStyle = "#FFFFFF";
+    blankCtx.fillRect(0, 0, width, height);
+    const emptySvg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><rect width="100%" height="100%" fill="#FFFFFF"/></svg>`;
+    return {
+      svg: emptySvg,
+      preview: blank,
+      pointCount: points.length,
+      pathLength: 0,
+      mse: 0,
+      generations: 0,
+      stopReason: "target_error",
+      width,
+      height,
+    };
+  }
+
+  let startIndex = 0;
+  let darkest = -1;
+  for (let i = 0; i < points.length; i += 1) {
+    const p = points[i];
+    const d = darkness[p.y * width + p.x];
+    if (d > darkest) {
+      darkest = d;
+      startIndex = i;
+    }
+  }
+
+  const route: Array<{ x: number; y: number }> = [];
+  const used = new Uint8Array(points.length);
+  let current = startIndex;
+  used[current] = 1;
+  route.push(points[current]);
+
+  const sqDist = (a: { x: number; y: number }, b: { x: number; y: number }) => {
+    const dx = a.x - b.x;
+    const dy = a.y - b.y;
+    return dx * dx + dy * dy;
+  };
+
+  for (let usedCount = 1; usedCount < points.length; usedCount += 1) {
+    if (shouldCancel?.()) {
+      return null;
+    }
+    let best = -1;
+    let bestScore = Number.POSITIVE_INFINITY;
+    const from = points[current];
+    for (let i = 0; i < points.length; i += 1) {
+      if (used[i]) continue;
+      const cand = points[i];
+      const dist = sqDist(from, cand);
+      const d = darkness[cand.y * width + cand.x];
+      const score = dist / (0.3 + d); // prefer dark areas when distances are similar
+      if (score < bestScore) {
+        best = i;
+        bestScore = score;
+      }
+    }
+    if (best < 0) break;
+    used[best] = 1;
+    current = best;
+    route.push(points[current]);
+    if (usedCount % Math.max(1, Math.floor(points.length / 20)) === 0) {
+      onProgress?.(0.2 + 0.3 * (usedCount / points.length), `routing ${usedCount}/${points.length}`);
+      await yieldToUi();
+    }
+  }
+
+  const reverseSegment = (arr: Array<{ x: number; y: number }>, i: number, j: number) => {
+    while (i < j) {
+      const tmp = arr[i];
+      arr[i] = arr[j];
+      arr[j] = tmp;
+      i += 1;
+      j -= 1;
+    }
+  };
+  const segDist = (arr: Array<{ x: number; y: number }>, i: number, j: number) => {
+    return Math.sqrt(sqDist(arr[i], arr[j]));
+  };
+
+  for (let pass = 0; pass < optimizePasses; pass += 1) {
+    if (shouldCancel?.()) {
+      return null;
+    }
+    const attempts = Math.min(20000, route.length * 8);
+    for (let k = 0; k < attempts; k += 1) {
+      const a = 1 + Math.floor(rng() * Math.max(1, route.length - 3));
+      const b = a + 1 + Math.floor(rng() * Math.max(1, route.length - a - 2));
+      const oldLen = segDist(route, a - 1, a) + segDist(route, b, b + 1);
+      const newLen = segDist(route, a - 1, b) + segDist(route, a, b + 1);
+      if (newLen < oldLen) {
+        reverseSegment(route, a, b);
+      }
+    }
+    onProgress?.(0.5 + 0.2 * ((pass + 1) / Math.max(1, optimizePasses)), `optimize ${pass + 1}/${optimizePasses}`);
+    await yieldToUi();
+  }
+
+  let finalPoints =
+    simplifyTolerance > 0 && route.length > 2
+      ? getSimplify()(
+        route.map((p) => ({ x: p.x, y: p.y })),
+        simplifyTolerance,
+        true,
+      )
+      : route;
+
+  if (finalPoints.length < 2) {
+    finalPoints = route;
+  }
+
+  const workWidth = clamp(Math.round(width * workScale), 64, width);
+  const workHeight = clamp(Math.round(height * workScale), 64, height);
+  const scaleX = workWidth / width;
+  const scaleY = workHeight / height;
+  const invScaleX = width / workWidth;
+  const invScaleY = height / workHeight;
+  const workLineWidth = Math.max(0.1, lineWidth * ((scaleX + scaleY) * 0.5));
+
+  const targetCanvas = document.createElement("canvas");
+  targetCanvas.width = workWidth;
+  targetCanvas.height = workHeight;
+  const targetCtx = targetCanvas.getContext("2d", { willReadFrequently: true });
+  if (!targetCtx) {
+    throw new Error("2D context not available.");
+  }
+  targetCtx.fillStyle = "#FFFFFF";
+  targetCtx.fillRect(0, 0, workWidth, workHeight);
+  targetCtx.drawImage(source, 0, 0, workWidth, workHeight);
+  const targetData = targetCtx.getImageData(0, 0, workWidth, workHeight).data;
+  const targetLum = new Float32Array(workWidth * workHeight);
+  for (let i = 0, p = 0; p < targetLum.length; i += 4, p += 1) {
+    targetLum[p] = 0.299 * targetData[i] + 0.587 * targetData[i + 1] + 0.114 * targetData[i + 2];
+  }
+
+  const workCanvas = document.createElement("canvas");
+  workCanvas.width = workWidth;
+  workCanvas.height = workHeight;
+  const workCtx = workCanvas.getContext("2d", { willReadFrequently: true });
+  if (!workCtx) {
+    throw new Error("2D context not available.");
+  }
+
+  const renderMse = (pts: Array<{ x: number; y: number }>) => {
+    workCtx.fillStyle = "#FFFFFF";
+    workCtx.fillRect(0, 0, workWidth, workHeight);
+    if (pts.length >= 2) {
+      workCtx.strokeStyle = "#000000";
+      workCtx.globalAlpha = lineAlpha;
+      workCtx.lineWidth = workLineWidth;
+      workCtx.lineCap = "round";
+      workCtx.lineJoin = "round";
+      workCtx.beginPath();
+      workCtx.moveTo(pts[0].x * scaleX, pts[0].y * scaleY);
+      for (let i = 1; i < pts.length; i += 1) {
+        workCtx.lineTo(pts[i].x * scaleX, pts[i].y * scaleY);
+      }
+      workCtx.stroke();
+    }
+    const rendered = workCtx.getImageData(0, 0, workWidth, workHeight).data;
+    let mse = 0;
+    for (let i = 0, p = 0; p < targetLum.length; i += 4, p += 1) {
+      const lum = 0.299 * rendered[i] + 0.587 * rendered[i + 1] + 0.114 * rendered[i + 2];
+      const err = targetLum[p] - lum;
+      mse += err * err;
+    }
+    return mse / Math.max(1, targetLum.length);
+  };
+
+  const mutatePath = (base: Array<{ x: number; y: number }>) => {
+    const candidate = base.map((p) => ({ x: p.x, y: p.y }));
+    const mutateCount = Math.max(2, Math.round(candidate.length * mutationRate));
+    for (let i = 0; i < mutateCount; i += 1) {
+      const idx = Math.floor(rng() * candidate.length);
+      const p = candidate[idx];
+      const jx = (rng() * 2 - 1) * mutationStrength;
+      const jy = (rng() * 2 - 1) * mutationStrength;
+      p.x = clamp(p.x + jx, 0, width - 1);
+      p.y = clamp(p.y + jy, 0, height - 1);
+    }
+    if (candidate.length > 12 && rng() < 0.35) {
+      const a = 1 + Math.floor(rng() * Math.max(1, candidate.length - 3));
+      const b = a + 1 + Math.floor(rng() * Math.max(1, candidate.length - a - 2));
+      reverseSegment(candidate, a, b);
+    }
+    if (simplifyTolerance > 0 && candidate.length > 12) {
+      const simplified = getSimplify()(candidate, simplifyTolerance * 0.25, true);
+      return simplified.length >= 2 ? simplified : candidate;
+    }
+    return candidate;
+  };
+
+  let bestPoints = finalPoints.map((p) => ({ x: p.x, y: p.y }));
+  let bestMse = renderMse(bestPoints);
+  let generations = 0;
+  let stableCount = 0;
+  let stopReason: BicPencilResult["stopReason"] = "max_generations";
+
+  if (bestMse <= minMse) {
+    stopReason = "target_error";
+  } else {
+    for (let generation = 0; generation < maxGenerations; generation += 1) {
+      if (shouldCancel?.()) {
+        return null;
+      }
+      let improved = false;
+      let generationBest = bestMse;
+      let generationBestPath = bestPoints;
+      for (let child = 0; child < offspringPerGeneration; child += 1) {
+        const candidate = mutatePath(bestPoints);
+        const mse = renderMse(candidate);
+        if (mse < generationBest) {
+          generationBest = mse;
+          generationBestPath = candidate;
+        }
+      }
+
+      const delta = bestMse - generationBest;
+      if (delta > 0) {
+        improved = true;
+        bestMse = generationBest;
+        bestPoints = generationBestPath;
+      }
+
+      generations = generation + 1;
+      if (bestMse <= minMse) {
+        stopReason = "target_error";
+        onProgress?.(0.7 + 0.3 * ((generation + 1) / Math.max(1, maxGenerations)), `evolve ${generation + 1} mse ${bestMse.toFixed(2)}`);
+        break;
+      }
+
+      if (!improved || delta <= mseDeltaThreshold) {
+        stableCount += 1;
+      } else {
+        stableCount = 0;
+      }
+      if (stableCount >= stableGenerations) {
+        stopReason = "stalled";
+        onProgress?.(0.7 + 0.3 * ((generation + 1) / Math.max(1, maxGenerations)), `stalled mse ${bestMse.toFixed(2)}`);
+        break;
+      }
+
+      onProgress?.(0.7 + 0.3 * ((generation + 1) / Math.max(1, maxGenerations)), `evolve ${generation + 1}/${maxGenerations} mse ${bestMse.toFixed(2)}`);
+      if ((generation + 1) % 2 === 0) {
+        await yieldToUi();
+      }
+    }
+  }
+
+  finalPoints = bestPoints.map((p) => ({
+    x: clamp(p.x, 0, width - 1),
+    y: clamp(p.y, 0, height - 1),
+  }));
+
+  let d = `M${finalPoints[0].x.toFixed(2)},${finalPoints[0].y.toFixed(2)}`;
+  let pathLength = 0;
+  for (let i = 1; i < finalPoints.length; i += 1) {
+    d += ` L${finalPoints[i].x.toFixed(2)},${finalPoints[i].y.toFixed(2)}`;
+    pathLength += Math.sqrt(sqDist(finalPoints[i - 1], finalPoints[i]));
+  }
+
+  const preview = document.createElement("canvas");
+  preview.width = width;
+  preview.height = height;
+  const previewCtx = preview.getContext("2d");
+  if (!previewCtx) {
+    throw new Error("2D context not available.");
+  }
+  previewCtx.fillStyle = "#FFFFFF";
+  previewCtx.fillRect(0, 0, width, height);
+  previewCtx.strokeStyle = "rgba(0,0,120,1)";
+  previewCtx.lineWidth = lineWidth;
+  previewCtx.globalAlpha = lineAlpha;
+  previewCtx.lineCap = "round";
+  previewCtx.lineJoin = "round";
+  previewCtx.beginPath();
+  previewCtx.moveTo(finalPoints[0].x, finalPoints[0].y);
+  for (let i = 1; i < finalPoints.length; i += 1) {
+    previewCtx.lineTo(finalPoints[i].x, finalPoints[i].y);
+  }
+  previewCtx.stroke();
+  onProgress?.(1, "ready");
+
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><rect width="100%" height="100%" fill="#FFFFFF"/><path d="${d}" fill="none" stroke="#00008B" stroke-width="${lineWidth}" stroke-opacity="${lineAlpha.toFixed(4)}" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+  return {
+    svg,
+    preview,
+    pointCount: finalPoints.length,
+    pathLength,
+    mse: bestMse,
+    generations,
+    stopReason,
+    width,
+    height,
+  };
 }
 
 function oil2RgbaCss(r: number, g: number, b: number, a: number) {

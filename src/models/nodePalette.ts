@@ -1,6 +1,6 @@
 export interface NodePaletteItem {
   type: string;
-  category: "io" | "basic" | "focus" | "colors" | "art" | "plotter" | "ai" | "svg";
+  category: "io" | "basic" | "focus" | "colors" | "art" | "graphic" | "plotter" | "ai" | "svg";
   glyph: string;
   shortLabel: string;
   tooltip: string;
@@ -36,6 +36,8 @@ export const nodePalette: NodePaletteItem[] = [
   { type: "tools/art/dots", category: "art", glyph: "DOT", shortLabel: "Dots", tooltip: "DOTS: griglia di cerchi colorati campionati dall'immagine (stile p5 dots), con controllo tile/diametro/sfondo (output raster + SVG)." },
   { type: "tools/art/asciify", category: "art", glyph: "ASC", shortLabel: "Ascii", tooltip: "ASCIIFY: converte immagine in ASCII art con output raster, SVG e testo." },
   { type: "tools/art/sketch", category: "art", glyph: "SKT", shortLabel: "Sketch", tooltip: "SKETCH: tratteggio progressivo basato sulle aree piu scure (darkest squiggles), ottimizzato con preset FAST/NORMAL/SLOW e output raster+SVG." },
+  { type: "tools/graphic/sketch", category: "graphic", glyph: "GSK", shortLabel: "GSketch", tooltip: "GRAPHIC SKETCH: sketch a matita con linea continua iterativa, convergenza su errore, preset FAST/MEDIUM/SLOW e stop per stagnazione errore (output raster+SVG)." },
+  { type: "tools/graphic/pencil", category: "graphic", glyph: "BIC", shortLabel: "Pencil", tooltip: "GRAPHIC PENCIL: ritratto single-line stile penna bic con un unico tratto continuo (campionamento scuro + routing + ottimizzazione), output raster+SVG." },
   { type: "tools/art/delanoy", category: "art", glyph: "DEL", shortLabel: "Delanoy", tooltip: "DELANOY: triangolazione Delaunay su griglia e render wireframe (output raster+SVG)." },
   { type: "tools/art/delanoy2", category: "art", glyph: "DE2", shortLabel: "Delanoy2", tooltip: "DELANOY2: triangolazione Delaunay e cerchi per triangolo (output raster+SVG)." },
   { type: "tools/art/linefy", category: "art", glyph: "LNF", shortLabel: "Linefy", tooltip: "LINEFY: line-art progressivo in stile linify con preset FAST/NORMAL/SLOW e output raster+SVG." },
