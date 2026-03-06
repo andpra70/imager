@@ -1,4 +1,4 @@
-import type { NodeCtor, RegisterNodeTypeFn } from "./types";
+import type { NodeCtor, RegisterNodeTypeFn } from "../../shared";
 
 interface ColorToolNodeCtors {
   InvertToolNode: NodeCtor;

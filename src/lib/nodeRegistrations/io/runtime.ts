@@ -1,7 +1,7 @@
-import type { GraphImage } from "../../models/graphImage";
-import type { GraphPalette } from "../../models/graphPalette";
-import type { GraphSvg } from "../../models/graphSvg";
-import type { LiteNode, NodeCtor, PreviewAwareNode } from "./types";
+import type { GraphImage } from "../../../models/graphImage";
+import type { GraphPalette } from "../../../models/graphPalette";
+import type { GraphSvg } from "../../../models/graphSvg";
+import type { LiteNode, NodeCtor, PreviewAwareNode } from "../shared";
 import {
   deserializeGraphImage,
   downloadGraphImage,
@@ -10,7 +10,7 @@ import {
   drawSourceToCanvas,
   rasterizeGraphSvg,
   serializeCompressedGraphImage,
-} from "../imageUtils";
+} from "../../imageUtils";
 
 interface IoNodeRuntimeDeps {
   refreshNode: (node: PreviewAwareNode, image: CanvasImageSource | null, footerLines?: number) => void;

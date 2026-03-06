@@ -1,22 +1,16 @@
 import { LiteGraph } from "litegraph.js";
 import type { GraphImage } from "../models/graphImage";
 import { resizeNodeForPreview } from "./imageUtils";
-import { registerInputNodes, registerOutputNodes } from "./nodeRegistrations/io";
-import { createIoNodeCtors } from "./nodeRegistrations/ioRuntime";
-import { createToolsNodeCtors } from "./nodeRegistrations/toolsRuntime";
-import { registerBasicToolNodes } from "./nodeRegistrations/basic";
-import { registerFocusToolNodes } from "./nodeRegistrations/focus";
-import { registerColorToolNodes } from "./nodeRegistrations/colors";
-import { registerArtToolNodes } from "./nodeRegistrations/art";
-import { registerAiToolNodes } from "./nodeRegistrations/ai";
-import { registerSvgToolNodes } from "./nodeRegistrations/svg";
-import type { LiteNode, NodeCtor, PreviewAwareNode } from "./nodeRegistrations/types";
+import { registerInputNodes, registerOutputNodes, createIoNodeCtors } from "./nodeRegistrations/io";
+import { createToolBasicNodeCtors, registerBasicToolNodes } from "./nodeRegistrations/tools/basic";
+import { createToolFocusNodeCtors, registerFocusToolNodes } from "./nodeRegistrations/tools/focus";
+import { createToolColorsNodeCtors, registerColorToolNodes } from "./nodeRegistrations/tools/colors";
+import { createToolArtNodeCtors, registerArtToolNodes } from "./nodeRegistrations/tools/art";
+import { createToolAiNodeCtors, registerAiToolNodes } from "./nodeRegistrations/tools/ai";
+import { createToolSvgNodeCtors, registerSvgToolNodes } from "./nodeRegistrations/tools/svg";
+import type { LiteNode, PreviewAwareNode } from "./nodeRegistrations/shared";
 
 let registered = false;
-
-function asNodeCtor(ctor: new () => unknown): NodeCtor {
-  return ctor as unknown as NodeCtor;
-}
 
 function refreshNode(node: PreviewAwareNode, image: CanvasImageSource | null, footerLines = 0) {
   resizeNodeForPreview(node, image, { footerLines });
@@ -107,7 +101,13 @@ export function registerImageNodes() {
     getGraphImageSignature,
     formatGraphImageInfo,
   });
-  const toolsNodeCtors = createToolsNodeCtors();
+
+  const basicToolCtors = createToolBasicNodeCtors();
+  const focusToolCtors = createToolFocusNodeCtors();
+  const colorsToolCtors = createToolColorsNodeCtors();
+  const artToolCtors = createToolArtNodeCtors();
+  const aiToolCtors = createToolAiNodeCtors();
+  const svgToolCtors = createToolSvgNodeCtors();
 
   registerInputNodes(registerNodeType, {
     InputImageNode: ioNodeCtors.InputImageNode,
@@ -115,67 +115,67 @@ export function registerImageNodes() {
   });
 
   registerBasicToolNodes(registerNodeType, {
-    RotatePanZoomToolNode: asNodeCtor(toolsNodeCtors.RotatePanZoomToolNode),
-    ScaleToolNode: asNodeCtor(toolsNodeCtors.ScaleToolNode),
-    RotateToolNode: asNodeCtor(toolsNodeCtors.RotateToolNode),
+    RotatePanZoomToolNode: basicToolCtors.RotatePanZoomToolNode,
+    ScaleToolNode: basicToolCtors.ScaleToolNode,
+    RotateToolNode: basicToolCtors.RotateToolNode,
   });
 
   registerFocusToolNodes(registerNodeType, {
-    BlurToolNode: asNodeCtor(toolsNodeCtors.BlurToolNode),
-    SharpenToolNode: asNodeCtor(toolsNodeCtors.SharpenToolNode),
-    SobelToolNode: asNodeCtor(toolsNodeCtors.SobelToolNode),
+    BlurToolNode: focusToolCtors.BlurToolNode,
+    SharpenToolNode: focusToolCtors.SharpenToolNode,
+    SobelToolNode: focusToolCtors.SobelToolNode,
   });
 
   registerColorToolNodes(registerNodeType, {
-    InvertToolNode: asNodeCtor(toolsNodeCtors.InvertToolNode),
-    GrayscaleToolNode: asNodeCtor(toolsNodeCtors.GrayscaleToolNode),
-    ThresholdToolNode: asNodeCtor(toolsNodeCtors.ThresholdToolNode),
-    HalftoningToolNode: asNodeCtor(toolsNodeCtors.HalftoningToolNode),
-    HistogramToolNode: asNodeCtor(toolsNodeCtors.HistogramToolNode),
-    LevelsToolNode: asNodeCtor(toolsNodeCtors.LevelsToolNode),
-    RgbSplitToolNode: asNodeCtor(toolsNodeCtors.RgbSplitToolNode),
-    CmykSplitToolNode: asNodeCtor(toolsNodeCtors.CmykSplitToolNode),
-    RgbCombineToolNode: asNodeCtor(toolsNodeCtors.RgbCombineToolNode),
-    CmykCombineToolNode: asNodeCtor(toolsNodeCtors.CmykCombineToolNode),
-    QuantizeToolNode: asNodeCtor(toolsNodeCtors.QuantizeToolNode),
-    BlendToolNode: asNodeCtor(toolsNodeCtors.BlendToolNode),
-    LayersToolNode: asNodeCtor(toolsNodeCtors.LayersToolNode),
-    BrightnessContrastToolNode: asNodeCtor(toolsNodeCtors.BrightnessContrastToolNode),
+    InvertToolNode: colorsToolCtors.InvertToolNode,
+    GrayscaleToolNode: colorsToolCtors.GrayscaleToolNode,
+    ThresholdToolNode: colorsToolCtors.ThresholdToolNode,
+    HalftoningToolNode: colorsToolCtors.HalftoningToolNode,
+    HistogramToolNode: colorsToolCtors.HistogramToolNode,
+    LevelsToolNode: colorsToolCtors.LevelsToolNode,
+    RgbSplitToolNode: colorsToolCtors.RgbSplitToolNode,
+    CmykSplitToolNode: colorsToolCtors.CmykSplitToolNode,
+    RgbCombineToolNode: colorsToolCtors.RgbCombineToolNode,
+    CmykCombineToolNode: colorsToolCtors.CmykCombineToolNode,
+    QuantizeToolNode: colorsToolCtors.QuantizeToolNode,
+    BlendToolNode: colorsToolCtors.BlendToolNode,
+    LayersToolNode: colorsToolCtors.LayersToolNode,
+    BrightnessContrastToolNode: colorsToolCtors.BrightnessContrastToolNode,
   });
 
   registerArtToolNodes(registerNodeType, {
-    OilToolNode: asNodeCtor(toolsNodeCtors.OilToolNode),
-    Oil2ToolNode: asNodeCtor(toolsNodeCtors.Oil2ToolNode),
-    Oil3ToolNode: asNodeCtor(toolsNodeCtors.Oil3ToolNode),
-    LinesToolNode: asNodeCtor(toolsNodeCtors.LinesToolNode),
-    DotsToolNode: asNodeCtor(toolsNodeCtors.DotsToolNode),
-    AsciifyToolNode: asNodeCtor(toolsNodeCtors.AsciifyToolNode),
-    SketchToolNode: asNodeCtor(toolsNodeCtors.SketchToolNode),
-    DelanoyToolNode: asNodeCtor(toolsNodeCtors.DelanoyToolNode),
-    Delanoy2ToolNode: asNodeCtor(toolsNodeCtors.Delanoy2ToolNode),
-    LinefyToolNode: asNodeCtor(toolsNodeCtors.LinefyToolNode),
-    Linefy2ToolNode: asNodeCtor(toolsNodeCtors.Linefy2ToolNode),
-    GridDotToolNode: asNodeCtor(toolsNodeCtors.GridDotToolNode),
-    StippleToolNode: asNodeCtor(toolsNodeCtors.StippleToolNode),
-    VectorizeToolNode: asNodeCtor(toolsNodeCtors.VectorizeToolNode),
-    MarchingToolNode: asNodeCtor(toolsNodeCtors.MarchingToolNode),
-    BoldiniToolNode: asNodeCtor(toolsNodeCtors.BoldiniToolNode),
-    SeargeantToolNode: asNodeCtor(toolsNodeCtors.SeargeantToolNode),
-    CarboncinoToolNode: asNodeCtor(toolsNodeCtors.CarboncinoToolNode),
-    CrosshatchBnToolNode: asNodeCtor(toolsNodeCtors.CrosshatchBnToolNode),
-    MatitaToolNode: asNodeCtor(toolsNodeCtors.MatitaToolNode),
+    OilToolNode: artToolCtors.OilToolNode,
+    Oil2ToolNode: artToolCtors.Oil2ToolNode,
+    Oil3ToolNode: artToolCtors.Oil3ToolNode,
+    LinesToolNode: artToolCtors.LinesToolNode,
+    DotsToolNode: artToolCtors.DotsToolNode,
+    AsciifyToolNode: artToolCtors.AsciifyToolNode,
+    SketchToolNode: artToolCtors.SketchToolNode,
+    DelanoyToolNode: artToolCtors.DelanoyToolNode,
+    Delanoy2ToolNode: artToolCtors.Delanoy2ToolNode,
+    LinefyToolNode: artToolCtors.LinefyToolNode,
+    Linefy2ToolNode: artToolCtors.Linefy2ToolNode,
+    GridDotToolNode: artToolCtors.GridDotToolNode,
+    StippleToolNode: artToolCtors.StippleToolNode,
+    VectorizeToolNode: artToolCtors.VectorizeToolNode,
+    MarchingToolNode: artToolCtors.MarchingToolNode,
+    BoldiniToolNode: artToolCtors.BoldiniToolNode,
+    SeargeantToolNode: artToolCtors.SeargeantToolNode,
+    CarboncinoToolNode: artToolCtors.CarboncinoToolNode,
+    CrosshatchBnToolNode: artToolCtors.CrosshatchBnToolNode,
+    MatitaToolNode: artToolCtors.MatitaToolNode,
   });
 
   registerAiToolNodes(registerNodeType, {
-    PoseDetectToolNode: asNodeCtor(toolsNodeCtors.PoseDetectToolNode),
-    FaceLandmarkerToolNode: asNodeCtor(toolsNodeCtors.FaceLandmarkerToolNode),
-    BgRemoveToolNode: asNodeCtor(toolsNodeCtors.BgRemoveToolNode),
-    Ml5ExtractToolNode: asNodeCtor(toolsNodeCtors.Ml5ExtractToolNode),
+    PoseDetectToolNode: aiToolCtors.PoseDetectToolNode,
+    FaceLandmarkerToolNode: aiToolCtors.FaceLandmarkerToolNode,
+    BgRemoveToolNode: aiToolCtors.BgRemoveToolNode,
+    Ml5ExtractToolNode: aiToolCtors.Ml5ExtractToolNode,
   });
 
   registerSvgToolNodes(registerNodeType, {
-    RoughToolNode: asNodeCtor(toolsNodeCtors.RoughToolNode),
-    SvgSimplifyToolNode: asNodeCtor(toolsNodeCtors.SvgSimplifyToolNode),
+    RoughToolNode: svgToolCtors.RoughToolNode,
+    SvgSimplifyToolNode: svgToolCtors.SvgSimplifyToolNode,
   });
 
   registerOutputNodes(registerNodeType, {

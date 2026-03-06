@@ -1,4 +1,4 @@
-import type { GraphImage } from "../../models/graphImage";
+import type { GraphImage } from "../../../models/graphImage";
 
 export type LiteNode = {
   addInput: (name: string, type?: string) => void;
