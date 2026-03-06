@@ -7,10 +7,13 @@ import {
   createToolTitle,
   formatExecutionInfo,
   generateBicPencilSingleLineSvg,
+  generateGraphicCrosshatichingSvg,
+  generateGraphicScribblingSvg,
   generateSketchSvg,
   generateTonalShadingSvg,
   getGraphImageSignature,
   isGraphImageReady,
+  normalizeHexColor,
   notifyGraphStateChange,
   refreshNode,
 } from "../shared";
@@ -939,6 +942,532 @@ export class GraphicTonalShadingToolNode {
   }
 
   onDrawBackground(this: PreviewAwareNode & GraphicTonalShadingToolNode, context: CanvasRenderingContext2D) {
+    const layout = drawImagePreview(context, this, this.preview, { footerLines: 5 });
+    context.save();
+    context.fillStyle = "rgba(255,255,255,0.65)";
+    context.font = "12px sans-serif";
+    context.fillText(`${this.status}${this.isRendering ? "..." : ""}`, 10, layout.footerTop + 12);
+    context.fillText(`progress ${Math.round(this.progress * 100)}% | strokes ${this.strokeCount}`, 10, layout.footerTop + 30);
+    context.fillText(`paths ${this.pathCount}`, 10, layout.footerTop + 48);
+    context.fillText(`out ${this.outputWidth || "-"}x${this.outputHeight || "-"}`, 10, layout.footerTop + 66);
+    context.fillText(formatExecutionInfo(this.executionMs), 10, layout.footerTop + 84);
+    context.restore();
+  }
+}
+
+export class GraphicCrosshatichingToolNode {
+  size: [number, number] = [280, 860];
+  properties!: Record<string, unknown>;
+  preview: GraphImage | null = null;
+  svg: GraphSvg | null = null;
+  status = "idle";
+  progress = 0;
+  lineCount = 0;
+  pathCount = 0;
+  outputWidth = 0;
+  outputHeight = 0;
+  isRendering = false;
+  executionMs: number | null = null;
+  lastSignature = "";
+  lastOptionsSignature = "";
+  renderToken = 0;
+
+  constructor() {
+    const node = this as unknown as PreviewAwareNode & GraphicCrosshatichingToolNode;
+    node.title = createToolTitle("Graphic Crosshatiching");
+    node.properties = {
+      maxWidth: 1400,
+      angleCount: 5,
+      baseSpacing: 6,
+      sampleStep: 1.6,
+      toneGamma: 1.1,
+      contrast: 1.18,
+      detailBoost: 0.85,
+      threshold: 0.11,
+      minSegmentLength: 3,
+      lineWidth: 0.62,
+      lineAlpha: 0.93,
+      lineColor: "#101010",
+      curveSmoothing: 0.65,
+      penUpDistanceFactor: 2.4,
+      maxPaths: 90000,
+      seed: 1,
+      simulateHand: false,
+      handWobble: 0.7,
+      handJitter: 0.45,
+      handBreakProb: 0.025,
+      handPressure: 0.28,
+    };
+    node.addInput("image", "image");
+    node.addOutput("image", "image");
+    node.addOutput("svg", "svg");
+    node.addWidget("slider", "Max width", 1400, (value) => {
+      node.properties.maxWidth = Math.round(Number(value));
+      notifyGraphStateChange(node);
+    }, { min: 256, max: 3200, step: 8 });
+    node.addWidget("slider", "Angles", 5, (value) => {
+      node.properties.angleCount = Math.round(Number(value));
+      notifyGraphStateChange(node);
+    }, { min: 2, max: 10, step: 1 });
+    node.addWidget("slider", "Spacing", 6, (value) => {
+      node.properties.baseSpacing = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 2, max: 48, step: 0.1, precision: 1 });
+    node.addWidget("slider", "Sample step", 1.6, (value) => {
+      node.properties.sampleStep = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0.6, max: 12, step: 0.1, precision: 1 });
+    node.addWidget("slider", "Tone gamma", 1.1, (value) => {
+      node.properties.toneGamma = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0.2, max: 4, step: 0.01, precision: 2 });
+    node.addWidget("slider", "Contrast", 1.18, (value) => {
+      node.properties.contrast = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0.2, max: 4, step: 0.01, precision: 2 });
+    node.addWidget("slider", "Detail", 0.85, (value) => {
+      node.properties.detailBoost = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0, max: 2.5, step: 0.01, precision: 2 });
+    node.addWidget("slider", "Threshold", 0.11, (value) => {
+      node.properties.threshold = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0, max: 0.98, step: 0.01, precision: 2 });
+    node.addWidget("slider", "Min seg", 3, (value) => {
+      node.properties.minSegmentLength = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0.5, max: 140, step: 0.1, precision: 1 });
+    node.addWidget("slider", "Line width", 0.62, (value) => {
+      node.properties.lineWidth = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0.1, max: 8, step: 0.01, precision: 2 });
+    node.addWidget("slider", "Line alpha", 0.93, (value) => {
+      node.properties.lineAlpha = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0.01, max: 1, step: 0.01, precision: 2 });
+    node.addWidget("text", "Line color", "#101010", (value) => {
+      node.properties.lineColor = normalizeHexColor(String(value));
+      notifyGraphStateChange(node);
+    });
+    node.addWidget("slider", "Smoothing", 0.65, (value) => {
+      node.properties.curveSmoothing = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0, max: 1.5, step: 0.01, precision: 2 });
+    node.addWidget("slider", "Pen-up jump", 2.4, (value) => {
+      node.properties.penUpDistanceFactor = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 1, max: 12, step: 0.1, precision: 1 });
+    node.addWidget("slider", "Max paths", 90000, (value) => {
+      node.properties.maxPaths = Math.round(Number(value));
+      notifyGraphStateChange(node);
+    }, { min: 300, max: 300000, step: 100 });
+    node.addWidget("combo", "Manual", "off", (value) => {
+      node.properties.simulateHand = String(value) === "on";
+      notifyGraphStateChange(node);
+    }, { values: ["off", "on"] });
+    node.addWidget("slider", "Hand wobble", 0.7, (value) => {
+      node.properties.handWobble = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0, max: 6, step: 0.01, precision: 2 });
+    node.addWidget("slider", "Hand jitter", 0.45, (value) => {
+      node.properties.handJitter = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0, max: 4, step: 0.01, precision: 2 });
+    node.addWidget("slider", "Hand breaks", 0.025, (value) => {
+      node.properties.handBreakProb = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0, max: 0.6, step: 0.001, precision: 3 });
+    node.addWidget("slider", "Hand pressure", 0.28, (value) => {
+      node.properties.handPressure = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0, max: 1, step: 0.01, precision: 2 });
+    node.addWidget("slider", "Seed", 1, (value) => {
+      node.properties.seed = Math.round(Number(value));
+      notifyGraphStateChange(node);
+    }, { min: 1, max: 1000000, step: 1 });
+    node.refreshPreviewLayout = () => refreshNode(node, node.preview, 5);
+    node.refreshPreviewLayout();
+  }
+
+  onExecute(this: PreviewAwareNode & GraphicCrosshatichingToolNode) {
+    const inputValue = this.getInputData(0);
+    const input = isGraphImageReady(inputValue) ? inputValue : null;
+    if (!input) {
+      this.preview = null;
+      this.svg = null;
+      this.status = "waiting valid image";
+      this.progress = 0;
+      this.lineCount = 0;
+      this.pathCount = 0;
+      this.outputWidth = 0;
+      this.outputHeight = 0;
+      this.executionMs = null;
+      this.isRendering = false;
+      this.lastSignature = "";
+      this.lastOptionsSignature = "";
+      this.setOutputData(0, null);
+      this.setOutputData(1, null);
+      this.refreshPreviewLayout();
+      return;
+    }
+
+    const options = {
+      maxWidth: clamp(Math.round(Number(this.properties.maxWidth ?? 1400)), 256, 3200),
+      angleCount: clamp(Math.round(Number(this.properties.angleCount ?? 5)), 2, 10),
+      baseSpacing: clamp(Number(this.properties.baseSpacing ?? 6), 2, 48),
+      sampleStep: clamp(Number(this.properties.sampleStep ?? 1.6), 0.6, 12),
+      toneGamma: clamp(Number(this.properties.toneGamma ?? 1.1), 0.2, 4),
+      contrast: clamp(Number(this.properties.contrast ?? 1.18), 0.2, 4),
+      detailBoost: clamp(Number(this.properties.detailBoost ?? 0.85), 0, 2.5),
+      threshold: clamp(Number(this.properties.threshold ?? 0.11), 0, 0.98),
+      minSegmentLength: clamp(Number(this.properties.minSegmentLength ?? 3), 0.5, 140),
+      lineWidth: clamp(Number(this.properties.lineWidth ?? 0.62), 0.1, 8),
+      lineAlpha: clamp(Number(this.properties.lineAlpha ?? 0.93), 0.01, 1),
+      lineColor: normalizeHexColor(String(this.properties.lineColor ?? "#101010")),
+      curveSmoothing: clamp(Number(this.properties.curveSmoothing ?? 0.65), 0, 1.5),
+      penUpDistanceFactor: clamp(Number(this.properties.penUpDistanceFactor ?? 2.4), 1, 12),
+      maxPaths: clamp(Math.round(Number(this.properties.maxPaths ?? 90000)), 300, 300000),
+      seed: clamp(Math.round(Number(this.properties.seed ?? 1)), 1, 1000000),
+      simulateHand: Boolean(this.properties.simulateHand),
+      handWobble: clamp(Number(this.properties.handWobble ?? 0.7), 0, 6),
+      handJitter: clamp(Number(this.properties.handJitter ?? 0.45), 0, 4),
+      handBreakProb: clamp(Number(this.properties.handBreakProb ?? 0.025), 0, 0.6),
+      handPressure: clamp(Number(this.properties.handPressure ?? 0.28), 0, 1),
+    };
+    const signature = getGraphImageSignature(input);
+    const optionsSignature = JSON.stringify(options);
+    if (signature !== this.lastSignature || optionsSignature !== this.lastOptionsSignature) {
+      this.lastSignature = signature;
+      this.lastOptionsSignature = optionsSignature;
+      const renderToken = ++this.renderToken;
+      const start = performance.now();
+      this.isRendering = true;
+      this.progress = 0;
+      this.status = "generating crosshatiching...";
+      this.setDirtyCanvas(true, true);
+
+      const shouldCancel = () => renderToken !== this.renderToken;
+      const updateProgress = (value: number, status?: string) => {
+        this.progress = clamp(value, 0, 1);
+        if (status) {
+          this.status = status;
+        }
+        this.setDirtyCanvas(true, true);
+      };
+
+      void generateGraphicCrosshatichingSvg(input, options, shouldCancel, updateProgress)
+        .then((result) => {
+          if (renderToken !== this.renderToken || !result) return;
+          this.preview = result.preview;
+          this.svg = result.svg;
+          this.lineCount = result.lineCount;
+          this.pathCount = result.pathCount;
+          this.outputWidth = result.width;
+          this.outputHeight = result.height;
+          this.progress = 1;
+          this.status = "ready";
+          this.executionMs = performance.now() - start;
+          this.isRendering = false;
+          this.setDirtyCanvas(true, true);
+        })
+        .catch((error) => {
+          if (renderToken !== this.renderToken) return;
+          logNodeError("GraphicCrosshatichingToolNode", error, {
+            options,
+            inputSize: `${input.width}x${input.height}`,
+          });
+          this.preview = input;
+          this.svg = null;
+          this.lineCount = 0;
+          this.pathCount = 0;
+          this.outputWidth = 0;
+          this.outputHeight = 0;
+          this.progress = 0;
+          this.status = error instanceof Error ? error.message : "graphic crosshatiching error";
+          this.executionMs = null;
+          this.isRendering = false;
+          this.setDirtyCanvas(true, true);
+        });
+    }
+
+    this.setOutputData(0, this.preview ?? input);
+    this.setOutputData(1, this.svg);
+    this.refreshPreviewLayout();
+  }
+
+  onDrawBackground(this: PreviewAwareNode & GraphicCrosshatichingToolNode, context: CanvasRenderingContext2D) {
+    const layout = drawImagePreview(context, this, this.preview, { footerLines: 5 });
+    context.save();
+    context.fillStyle = "rgba(255,255,255,0.65)";
+    context.font = "12px sans-serif";
+    context.fillText(`${this.status}${this.isRendering ? "..." : ""}`, 10, layout.footerTop + 12);
+    context.fillText(`progress ${Math.round(this.progress * 100)}% | lines ${this.lineCount}`, 10, layout.footerTop + 30);
+    context.fillText(`paths ${this.pathCount}`, 10, layout.footerTop + 48);
+    context.fillText(`out ${this.outputWidth || "-"}x${this.outputHeight || "-"}`, 10, layout.footerTop + 66);
+    context.fillText(formatExecutionInfo(this.executionMs), 10, layout.footerTop + 84);
+    context.restore();
+  }
+}
+
+export class GraphicScribblingToolNode {
+  size: [number, number] = [280, 900];
+  properties!: Record<string, unknown>;
+  preview: GraphImage | null = null;
+  svg: GraphSvg | null = null;
+  status = "idle";
+  progress = 0;
+  strokeCount = 0;
+  pathCount = 0;
+  outputWidth = 0;
+  outputHeight = 0;
+  isRendering = false;
+  executionMs: number | null = null;
+  lastSignature = "";
+  lastOptionsSignature = "";
+  renderToken = 0;
+
+  constructor() {
+    const node = this as unknown as PreviewAwareNode & GraphicScribblingToolNode;
+    node.title = createToolTitle("Graphic Scribbling");
+    node.properties = {
+      maxWidth: 1400,
+      strokeCount: 2600,
+      startCandidates: 140,
+      maxStrokePoints: 60,
+      stepSize: 2.2,
+      toneGamma: 1.1,
+      contrast: 1.22,
+      minStartTone: 0.13,
+      minContinueTone: 0.06,
+      darknessFade: 0.11,
+      lineWidth: 0.58,
+      lineAlpha: 0.92,
+      lineColor: "#0A0A0A",
+      curveSmoothing: 0.75,
+      jitter: 0.36,
+      angleJitter: 11,
+      flowBlend: 0.72,
+      simplifyTolerance: 0.38,
+      maxPaths: 120000,
+      seed: 1,
+      manualInk: true,
+      manualWobble: 0.8,
+      manualPressure: 0.32,
+      manualBreakProb: 0.012,
+    };
+    node.addInput("image", "image");
+    node.addOutput("image", "image");
+    node.addOutput("svg", "svg");
+    node.addWidget("slider", "Max width", 1400, (value) => {
+      node.properties.maxWidth = Math.round(Number(value));
+      notifyGraphStateChange(node);
+    }, { min: 256, max: 3200, step: 8 });
+    node.addWidget("slider", "Strokes", 2600, (value) => {
+      node.properties.strokeCount = Math.round(Number(value));
+      notifyGraphStateChange(node);
+    }, { min: 10, max: 100000, step: 1 });
+    node.addWidget("slider", "Start cands", 140, (value) => {
+      node.properties.startCandidates = Math.round(Number(value));
+      notifyGraphStateChange(node);
+    }, { min: 8, max: 2000, step: 1 });
+    node.addWidget("slider", "Stroke pts", 60, (value) => {
+      node.properties.maxStrokePoints = Math.round(Number(value));
+      notifyGraphStateChange(node);
+    }, { min: 4, max: 400, step: 1 });
+    node.addWidget("slider", "Step", 2.2, (value) => {
+      node.properties.stepSize = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0.5, max: 24, step: 0.1, precision: 1 });
+    node.addWidget("slider", "Tone gamma", 1.1, (value) => {
+      node.properties.toneGamma = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0.2, max: 4, step: 0.01, precision: 2 });
+    node.addWidget("slider", "Contrast", 1.22, (value) => {
+      node.properties.contrast = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0.2, max: 4, step: 0.01, precision: 2 });
+    node.addWidget("slider", "Start tone", 0.13, (value) => {
+      node.properties.minStartTone = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0, max: 1, step: 0.01, precision: 2 });
+    node.addWidget("slider", "Cont tone", 0.06, (value) => {
+      node.properties.minContinueTone = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0, max: 1, step: 0.01, precision: 2 });
+    node.addWidget("slider", "Ink fade", 0.11, (value) => {
+      node.properties.darknessFade = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0.001, max: 1, step: 0.001, precision: 3 });
+    node.addWidget("slider", "Line width", 0.58, (value) => {
+      node.properties.lineWidth = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0.05, max: 8, step: 0.01, precision: 2 });
+    node.addWidget("slider", "Line alpha", 0.92, (value) => {
+      node.properties.lineAlpha = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0.02, max: 1, step: 0.01, precision: 2 });
+    node.addWidget("text", "Line color", "#0A0A0A", (value) => {
+      node.properties.lineColor = normalizeHexColor(String(value));
+      notifyGraphStateChange(node);
+    });
+    node.addWidget("slider", "Smoothing", 0.75, (value) => {
+      node.properties.curveSmoothing = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0, max: 1.5, step: 0.01, precision: 2 });
+    node.addWidget("slider", "Jitter", 0.36, (value) => {
+      node.properties.jitter = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0, max: 6, step: 0.01, precision: 2 });
+    node.addWidget("slider", "Angle jit", 11, (value) => {
+      node.properties.angleJitter = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0, max: 90, step: 0.5, precision: 1 });
+    node.addWidget("slider", "Flow blend", 0.72, (value) => {
+      node.properties.flowBlend = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0, max: 1, step: 0.01, precision: 2 });
+    node.addWidget("slider", "Simplify", 0.38, (value) => {
+      node.properties.simplifyTolerance = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0, max: 10, step: 0.01, precision: 2 });
+    node.addWidget("slider", "Max paths", 120000, (value) => {
+      node.properties.maxPaths = Math.round(Number(value));
+      notifyGraphStateChange(node);
+    }, { min: 100, max: 300000, step: 100 });
+    node.addWidget("combo", "Manual ink", "on", (value) => {
+      node.properties.manualInk = String(value) === "on";
+      notifyGraphStateChange(node);
+    }, { values: ["on", "off"] });
+    node.addWidget("slider", "Ink wobble", 0.8, (value) => {
+      node.properties.manualWobble = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0, max: 8, step: 0.01, precision: 2 });
+    node.addWidget("slider", "Ink pressure", 0.32, (value) => {
+      node.properties.manualPressure = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0, max: 1, step: 0.01, precision: 2 });
+    node.addWidget("slider", "Ink breaks", 0.012, (value) => {
+      node.properties.manualBreakProb = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0, max: 0.6, step: 0.001, precision: 3 });
+    node.addWidget("slider", "Seed", 1, (value) => {
+      node.properties.seed = Math.round(Number(value));
+      notifyGraphStateChange(node);
+    }, { min: 1, max: 1000000, step: 1 });
+    node.refreshPreviewLayout = () => refreshNode(node, node.preview, 5);
+    node.refreshPreviewLayout();
+  }
+
+  onExecute(this: PreviewAwareNode & GraphicScribblingToolNode) {
+    const inputValue = this.getInputData(0);
+    const input = isGraphImageReady(inputValue) ? inputValue : null;
+    if (!input) {
+      this.preview = null;
+      this.svg = null;
+      this.status = "waiting valid image";
+      this.progress = 0;
+      this.strokeCount = 0;
+      this.pathCount = 0;
+      this.outputWidth = 0;
+      this.outputHeight = 0;
+      this.executionMs = null;
+      this.isRendering = false;
+      this.lastSignature = "";
+      this.lastOptionsSignature = "";
+      this.setOutputData(0, null);
+      this.setOutputData(1, null);
+      this.refreshPreviewLayout();
+      return;
+    }
+
+    const options = {
+      maxWidth: clamp(Math.round(Number(this.properties.maxWidth ?? 1400)), 256, 3200),
+      strokeCount: clamp(Math.round(Number(this.properties.strokeCount ?? 2600)), 10, 100000),
+      startCandidates: clamp(Math.round(Number(this.properties.startCandidates ?? 140)), 8, 2000),
+      maxStrokePoints: clamp(Math.round(Number(this.properties.maxStrokePoints ?? 60)), 4, 400),
+      stepSize: clamp(Number(this.properties.stepSize ?? 2.2), 0.5, 24),
+      toneGamma: clamp(Number(this.properties.toneGamma ?? 1.1), 0.2, 4),
+      contrast: clamp(Number(this.properties.contrast ?? 1.22), 0.2, 4),
+      minStartTone: clamp(Number(this.properties.minStartTone ?? 0.13), 0, 1),
+      minContinueTone: clamp(Number(this.properties.minContinueTone ?? 0.06), 0, 1),
+      darknessFade: clamp(Number(this.properties.darknessFade ?? 0.11), 0.001, 1),
+      lineWidth: clamp(Number(this.properties.lineWidth ?? 0.58), 0.05, 8),
+      lineAlpha: clamp(Number(this.properties.lineAlpha ?? 0.92), 0.02, 1),
+      lineColor: normalizeHexColor(String(this.properties.lineColor ?? "#0A0A0A")),
+      curveSmoothing: clamp(Number(this.properties.curveSmoothing ?? 0.75), 0, 1.5),
+      jitter: clamp(Number(this.properties.jitter ?? 0.36), 0, 6),
+      angleJitter: clamp(Number(this.properties.angleJitter ?? 11), 0, 90),
+      flowBlend: clamp(Number(this.properties.flowBlend ?? 0.72), 0, 1),
+      simplifyTolerance: clamp(Number(this.properties.simplifyTolerance ?? 0.38), 0, 10),
+      maxPaths: clamp(Math.round(Number(this.properties.maxPaths ?? 120000)), 100, 300000),
+      seed: clamp(Math.round(Number(this.properties.seed ?? 1)), 1, 1000000),
+      manualInk: Boolean(this.properties.manualInk),
+      manualWobble: clamp(Number(this.properties.manualWobble ?? 0.8), 0, 8),
+      manualPressure: clamp(Number(this.properties.manualPressure ?? 0.32), 0, 1),
+      manualBreakProb: clamp(Number(this.properties.manualBreakProb ?? 0.012), 0, 0.6),
+    };
+    const signature = getGraphImageSignature(input);
+    const optionsSignature = JSON.stringify(options);
+    if (signature !== this.lastSignature || optionsSignature !== this.lastOptionsSignature) {
+      this.lastSignature = signature;
+      this.lastOptionsSignature = optionsSignature;
+      const renderToken = ++this.renderToken;
+      const start = performance.now();
+      this.isRendering = true;
+      this.progress = 0;
+      this.status = "generating scribbling...";
+      this.setDirtyCanvas(true, true);
+
+      const shouldCancel = () => renderToken !== this.renderToken;
+      const updateProgress = (value: number, status?: string) => {
+        this.progress = clamp(value, 0, 1);
+        if (status) {
+          this.status = status;
+        }
+        this.setDirtyCanvas(true, true);
+      };
+
+      void generateGraphicScribblingSvg(input, options, shouldCancel, updateProgress)
+        .then((result) => {
+          if (renderToken !== this.renderToken || !result) return;
+          this.preview = result.preview;
+          this.svg = result.svg;
+          this.strokeCount = result.strokeCount;
+          this.pathCount = result.pathCount;
+          this.outputWidth = result.width;
+          this.outputHeight = result.height;
+          this.progress = 1;
+          this.status = "ready";
+          this.executionMs = performance.now() - start;
+          this.isRendering = false;
+          this.setDirtyCanvas(true, true);
+        })
+        .catch((error) => {
+          if (renderToken !== this.renderToken) return;
+          logNodeError("GraphicScribblingToolNode", error, {
+            options,
+            inputSize: `${input.width}x${input.height}`,
+          });
+          this.preview = input;
+          this.svg = null;
+          this.strokeCount = 0;
+          this.pathCount = 0;
+          this.outputWidth = 0;
+          this.outputHeight = 0;
+          this.progress = 0;
+          this.status = error instanceof Error ? error.message : "graphic scribbling error";
+          this.executionMs = null;
+          this.isRendering = false;
+          this.setDirtyCanvas(true, true);
+        });
+    }
+
+    this.setOutputData(0, this.preview ?? input);
+    this.setOutputData(1, this.svg);
+    this.refreshPreviewLayout();
+  }
+
+  onDrawBackground(this: PreviewAwareNode & GraphicScribblingToolNode, context: CanvasRenderingContext2D) {
     const layout = drawImagePreview(context, this, this.preview, { footerLines: 5 });
     context.save();
     context.fillStyle = "rgba(255,255,255,0.65)";

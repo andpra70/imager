@@ -188,6 +188,8 @@ export function registerImageNodes() {
     GraphicSketchToolNode: graphicToolCtors.GraphicSketchToolNode,
     GraphicPencilToolNode: graphicToolCtors.GraphicPencilToolNode,
     GraphicTonalShadingToolNode: graphicToolCtors.GraphicTonalShadingToolNode,
+    GraphicCrosshatichingToolNode: graphicToolCtors.GraphicCrosshatichingToolNode,
+    GraphicScribblingToolNode: graphicToolCtors.GraphicScribblingToolNode,
   });
 
   registerOutputNodes(registerNodeType, {
