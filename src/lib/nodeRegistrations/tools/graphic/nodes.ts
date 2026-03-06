@@ -387,6 +387,14 @@ export class GraphicPencilToolNode {
       lineWidth: 0.8,
       lineAlpha: 0.95,
       optimizePasses: 6,
+      maxGenerations: 72,
+      offspringPerGeneration: 8,
+      mutationRate: 0.02,
+      mutationStrength: 8,
+      minMse: 1050,
+      mseDeltaThreshold: 0.35,
+      stableGenerations: 10,
+      workScale: 0.55,
       seed: 1,
     };
     node.addInput("image", "image");
@@ -463,6 +471,14 @@ export class GraphicPencilToolNode {
       lineWidth: clamp(Number(this.properties.lineWidth ?? 0.8), 0.1, 8),
       lineAlpha: clamp(Number(this.properties.lineAlpha ?? 0.95), 0.01, 1),
       optimizePasses: clamp(Math.round(Number(this.properties.optimizePasses ?? 6)), 0, 20),
+      maxGenerations: clamp(Math.round(Number(this.properties.maxGenerations ?? 72)), 0, 240),
+      offspringPerGeneration: clamp(Math.round(Number(this.properties.offspringPerGeneration ?? 8)), 2, 20),
+      mutationRate: clamp(Number(this.properties.mutationRate ?? 0.02), 0.001, 0.5),
+      mutationStrength: clamp(Number(this.properties.mutationStrength ?? 8), 0.25, 64),
+      minMse: clamp(Number(this.properties.minMse ?? 1050), 0, 65025),
+      mseDeltaThreshold: clamp(Number(this.properties.mseDeltaThreshold ?? 0.35), 0, 1000),
+      stableGenerations: clamp(Math.round(Number(this.properties.stableGenerations ?? 10)), 1, 100),
+      workScale: clamp(Number(this.properties.workScale ?? 0.55), 0.1, 1),
       seed: clamp(Math.round(Number(this.properties.seed ?? 1)), 1, 1000000),
     };
     const signature = getGraphImageSignature(input);

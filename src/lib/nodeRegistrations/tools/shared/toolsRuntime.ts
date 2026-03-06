@@ -3479,31 +3479,190 @@ export async function generateSketchSvg(
   return { svg, preview, pathCount, iterations, finalError, stopReason, width, height };
 }
 
+function resolveBicPencilOptions(options: BicPencilOptionsInput): BicPencilOptionsResolved {
+  return {
+    maxWidth: clamp(Math.round(options.maxWidth), 256, 2600),
+    pointCount: clamp(Math.round(options.pointCount), 300, 25000),
+    gamma: clamp(options.gamma, 0.2, 3),
+    contrast: clamp(options.contrast, 0.2, 4),
+    simplifyTolerance: clamp(options.simplifyTolerance, 0, 10),
+    lineWidth: clamp(options.lineWidth, 0.1, 8),
+    lineAlpha: clamp(options.lineAlpha, 0.01, 1),
+    optimizePasses: clamp(Math.round(options.optimizePasses), 0, 20),
+    maxGenerations: clamp(Math.round(options.maxGenerations ?? 72), 0, 240),
+    offspringPerGeneration: clamp(Math.round(options.offspringPerGeneration ?? 8), 2, 20),
+    mutationRate: clamp(options.mutationRate ?? 0.02, 0.001, 0.5),
+    mutationStrength: clamp(options.mutationStrength ?? 8, 0.25, 64),
+    minMse: clamp(options.minMse ?? 1050, 0, 65025),
+    mseDeltaThreshold: clamp(options.mseDeltaThreshold ?? 0.35, 0, 1000),
+    stableGenerations: clamp(Math.round(options.stableGenerations ?? 10), 1, 100),
+    workScale: clamp(options.workScale ?? 0.55, 0.1, 1),
+    seed: clamp(Math.round(options.seed) || 1, 1, 1000000),
+  };
+}
+
+function computeDarknessAndImportanceMaps(options: {
+  rgbaData: Uint8ClampedArray;
+  width: number;
+  height: number;
+  gamma: number;
+  contrast: number;
+}) {
+  const { rgbaData, width, height, gamma, contrast } = options;
+  const pixelCount = width * height;
+  const darkness = new Float32Array(pixelCount);
+  const luminance = new Float32Array(pixelCount);
+  let totalDarkness = 0;
+  for (let i = 0, p = 0; p < pixelCount; i += 4, p += 1) {
+    const lum = (0.299 * rgbaData[i] + 0.587 * rgbaData[i + 1] + 0.114 * rgbaData[i + 2]) / 255;
+    const d = clamp(Math.pow(1 - lum, gamma) * contrast, 0, 1);
+    darkness[p] = d;
+    luminance[p] = lum;
+    totalDarkness += d;
+  }
+
+  const edgeMap = new Float32Array(pixelCount);
+  let maxEdge = 1e-6;
+  for (let y = 1; y < height - 1; y += 1) {
+    const row = y * width;
+    for (let x = 1; x < width - 1; x += 1) {
+      const i = row + x;
+      const tl = luminance[i - width - 1];
+      const tc = luminance[i - width];
+      const tr = luminance[i - width + 1];
+      const ml = luminance[i - 1];
+      const mr = luminance[i + 1];
+      const bl = luminance[i + width - 1];
+      const bc = luminance[i + width];
+      const br = luminance[i + width + 1];
+      const gx = -tl + tr - 2 * ml + 2 * mr - bl + br;
+      const gy = tl + 2 * tc + tr - bl - 2 * bc - br;
+      const g = Math.sqrt(gx * gx + gy * gy);
+      edgeMap[i] = g;
+      if (g > maxEdge) {
+        maxEdge = g;
+      }
+    }
+  }
+
+  const importance = new Float32Array(pixelCount);
+  const cumulativeImportance = new Float64Array(pixelCount);
+  let totalImportance = 0;
+  for (let i = 0; i < pixelCount; i += 1) {
+    const edge = edgeMap[i] / maxEdge;
+    const base = darkness[i];
+    const value = clamp(base * (0.78 + edge * 0.72), 0, 1);
+    importance[i] = value;
+    totalImportance += value;
+    cumulativeImportance[i] = totalImportance;
+  }
+
+  return { darkness, importance, cumulativeImportance, totalDarkness, totalImportance };
+}
+
+function sampleImportancePoints(options: {
+  width: number;
+  height: number;
+  targetPoints: number;
+  cumulativeImportance: Float64Array;
+  totalImportance: number;
+  rng: () => number;
+  shouldCancel?: () => boolean;
+  onProgress?: (progress: number, status: string) => void;
+}) {
+  const {
+    width,
+    height,
+    targetPoints,
+    cumulativeImportance,
+    totalImportance,
+    rng,
+    shouldCancel,
+    onProgress,
+  } = options;
+  const pixelCount = width * height;
+  const occupied = new Uint8Array(pixelCount);
+  const points: Array<{ x: number; y: number }> = [];
+  const baseSpacing = Math.sqrt((width * height) / Math.max(1, targetPoints));
+  const minSpacing = clamp(baseSpacing * 0.42, 0, 6);
+  const minSpacingSq = minSpacing * minSpacing;
+  const cellSize = Math.max(1, Math.ceil(minSpacing));
+  const gridCols = Math.max(1, Math.ceil(width / cellSize));
+  const gridRows = Math.max(1, Math.ceil(height / cellSize));
+  const buckets: number[][] = Array.from({ length: gridCols * gridRows }, () => []);
+  const maxAttempts = targetPoints * 10;
+  const progressStep = Math.max(1, Math.floor(maxAttempts / 18));
+
+  const pickWeightedIndex = () => {
+    const r = rng() * totalImportance;
+    let lo = 0;
+    let hi = pixelCount - 1;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (cumulativeImportance[mid] < r) {
+        lo = mid + 1;
+      } else {
+        hi = mid;
+      }
+    }
+    return lo;
+  };
+
+  for (let attempt = 0; attempt < maxAttempts && points.length < targetPoints; attempt += 1) {
+    if (shouldCancel?.()) {
+      return null;
+    }
+    const idx = pickWeightedIndex();
+    if (occupied[idx]) {
+      continue;
+    }
+    const x = idx % width;
+    const y = Math.floor(idx / width);
+    let nearPoint = false;
+    if (minSpacing > 0) {
+      const gx = Math.floor(x / cellSize);
+      const gy = Math.floor(y / cellSize);
+      for (let ny = Math.max(0, gy - 1); ny <= Math.min(gridRows - 1, gy + 1) && !nearPoint; ny += 1) {
+        for (let nx = Math.max(0, gx - 1); nx <= Math.min(gridCols - 1, gx + 1) && !nearPoint; nx += 1) {
+          const bucket = buckets[ny * gridCols + nx];
+          for (let bi = 0; bi < bucket.length; bi += 1) {
+            const pointIndex = bucket[bi];
+            const point = points[pointIndex];
+            const dx = point.x - x;
+            const dy = point.y - y;
+            if (dx * dx + dy * dy < minSpacingSq) {
+              nearPoint = true;
+              break;
+            }
+          }
+        }
+      }
+    }
+    if (nearPoint) {
+      continue;
+    }
+    occupied[idx] = 1;
+    const pointIndex = points.length;
+    points.push({ x, y });
+    const gx = Math.floor(x / cellSize);
+    const gy = Math.floor(y / cellSize);
+    buckets[gy * gridCols + gx].push(pointIndex);
+    if (attempt % progressStep === 0 || points.length === targetPoints) {
+      onProgress?.(0.2 * (attempt / Math.max(1, maxAttempts - 1)), `sampling ${points.length}/${targetPoints}`);
+    }
+  }
+
+  return points;
+}
+
 export async function generateBicPencilSingleLineSvg(
   input: GraphImage,
-  options: {
-    maxWidth: number;
-    pointCount: number;
-    gamma: number;
-    contrast: number;
-    simplifyTolerance: number;
-    lineWidth: number;
-    lineAlpha: number;
-    optimizePasses: number;
-    maxGenerations: number;
-    offspringPerGeneration: number;
-    mutationRate: number;
-    mutationStrength: number;
-    minMse: number;
-    mseDeltaThreshold: number;
-    stableGenerations: number;
-    workScale: number;
-    seed: number;
-  },
+  options: BicPencilOptionsInput,
   shouldCancel?: () => boolean,
   onProgress?: (progress: number, status: string) => void,
 ): Promise<BicPencilResult | null> {
-  const source = fitSourceToMaxWidthCanvas(input, options.maxWidth);
+  const resolved = resolveBicPencilOptions(options);
+  const source = fitSourceToMaxWidthCanvas(input, resolved.maxWidth);
   const width = source.width;
   const height = source.height;
   const context = source.getContext("2d", { willReadFrequently: true });
@@ -3512,33 +3671,29 @@ export async function generateBicPencilSingleLineSvg(
   }
 
   const imageData = context.getImageData(0, 0, width, height);
-  const data = imageData.data;
-  const gamma = clamp(options.gamma, 0.2, 3);
-  const contrast = clamp(options.contrast, 0.2, 4);
-  const targetPoints = clamp(Math.round(options.pointCount), 300, 25000);
-  const simplifyTolerance = clamp(options.simplifyTolerance, 0, 10);
-  const lineWidth = clamp(options.lineWidth, 0.1, 8);
-  const lineAlpha = clamp(options.lineAlpha, 0.01, 1);
-  const optimizePasses = clamp(Math.round(options.optimizePasses), 0, 20);
-  const maxGenerations = clamp(Math.round(options.maxGenerations), 0, 200);
-  const offspringPerGeneration = clamp(Math.round(options.offspringPerGeneration), 1, 16);
-  const mutationRate = clamp(options.mutationRate, 0.001, 0.5);
-  const mutationStrength = clamp(options.mutationStrength, 0.25, 64);
-  const minMse = clamp(options.minMse, 0, 65025);
-  const mseDeltaThreshold = clamp(options.mseDeltaThreshold, 0, 1000);
-  const stableGenerations = clamp(Math.round(options.stableGenerations), 1, 100);
-  const workScale = clamp(options.workScale, 0.1, 1);
-  const rng = createSeededRandom(Math.round(options.seed) || 1);
+  const targetPoints = resolved.pointCount;
+  const simplifyTolerance = resolved.simplifyTolerance;
+  const lineWidth = resolved.lineWidth;
+  const lineAlpha = resolved.lineAlpha;
+  const optimizePasses = resolved.optimizePasses;
+  const maxGenerations = resolved.maxGenerations;
+  const offspringPerGeneration = resolved.offspringPerGeneration;
+  const mutationRate = resolved.mutationRate;
+  const mutationStrength = resolved.mutationStrength;
+  const minMse = resolved.minMse;
+  const mseDeltaThreshold = resolved.mseDeltaThreshold;
+  const stableGenerations = resolved.stableGenerations;
+  const workScale = resolved.workScale;
+  const rng = createSeededRandom(resolved.seed);
 
-  const pixelCount = width * height;
-  const darkness = new Float32Array(pixelCount);
-  let totalDarkness = 0;
-  for (let i = 0, p = 0; p < pixelCount; i += 4, p += 1) {
-    const l = (0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2]) / 255;
-    const d = clamp(Math.pow(1 - l, gamma) * contrast, 0, 1);
-    darkness[p] = d;
-    totalDarkness += d;
-  }
+  const { importance, cumulativeImportance, totalDarkness, totalImportance } =
+    computeDarknessAndImportanceMaps({
+      rgbaData: imageData.data,
+      width,
+      height,
+      gamma: resolved.gamma,
+      contrast: resolved.contrast,
+    });
   if (totalDarkness <= 1e-6) {
     const blank = document.createElement("canvas");
     blank.width = width;
@@ -3562,44 +3717,24 @@ export async function generateBicPencilSingleLineSvg(
       height,
     };
   }
-
-  const cum = new Float64Array(pixelCount);
-  let acc = 0;
-  for (let i = 0; i < pixelCount; i += 1) {
-    acc += darkness[i];
-    cum[i] = acc;
+  if (totalImportance <= 1e-6) {
+    return null;
   }
 
-  const points: Array<{ x: number; y: number }> = [];
-  const occupied = new Uint8Array(pixelCount);
-  const pickWeightedIndex = () => {
-    const r = rng() * acc;
-    let lo = 0;
-    let hi = pixelCount - 1;
-    while (lo < hi) {
-      const mid = (lo + hi) >> 1;
-      if (cum[mid] < r) lo = mid + 1;
-      else hi = mid;
-    }
-    return lo;
-  };
-
-  const reportStep = Math.max(1, Math.floor(targetPoints / 20));
-  for (let i = 0; i < targetPoints; i += 1) {
-    if (shouldCancel?.()) {
-      return null;
-    }
-    const idx = pickWeightedIndex();
-    if (occupied[idx]) {
-      continue;
-    }
-    occupied[idx] = 1;
-    points.push({ x: idx % width, y: Math.floor(idx / width) });
-    if (i % reportStep === 0 || i === targetPoints - 1) {
-      onProgress?.(0.2 * (i / Math.max(1, targetPoints - 1)), `sampling ${i + 1}/${targetPoints}`);
-      await yieldToUi();
-    }
+  const points = sampleImportancePoints({
+    width,
+    height,
+    targetPoints,
+    cumulativeImportance,
+    totalImportance,
+    rng,
+    shouldCancel,
+    onProgress,
+  });
+  if (!points) {
+    return null;
   }
+  await yieldToUi();
 
   if (points.length < 2) {
     const blank = document.createElement("canvas");
@@ -3629,9 +3764,9 @@ export async function generateBicPencilSingleLineSvg(
   let darkest = -1;
   for (let i = 0; i < points.length; i += 1) {
     const p = points[i];
-    const d = darkness[p.y * width + p.x];
-    if (d > darkest) {
-      darkest = d;
+    const score = importance[p.y * width + p.x];
+    if (score > darkest) {
+      darkest = score;
       startIndex = i;
     }
   }
@@ -3659,8 +3794,8 @@ export async function generateBicPencilSingleLineSvg(
       if (used[i]) continue;
       const cand = points[i];
       const dist = sqDist(from, cand);
-      const d = darkness[cand.y * width + cand.x];
-      const score = dist / (0.3 + d); // prefer dark areas when distances are similar
+      const detailWeight = importance[cand.y * width + cand.x];
+      const score = dist / (0.22 + detailWeight); // prefer dark and edge-rich zones when distances are similar
       if (score < bestScore) {
         best = i;
         bestScore = score;
@@ -3724,8 +3859,6 @@ export async function generateBicPencilSingleLineSvg(
   const workHeight = clamp(Math.round(height * workScale), 64, height);
   const scaleX = workWidth / width;
   const scaleY = workHeight / height;
-  const invScaleX = width / workWidth;
-  const invScaleY = height / workHeight;
   const workLineWidth = Math.max(0.1, lineWidth * ((scaleX + scaleY) * 0.5));
 
   const targetCanvas = document.createElement("canvas");
@@ -3778,21 +3911,59 @@ export async function generateBicPencilSingleLineSvg(
     return mse / Math.max(1, targetLum.length);
   };
 
-  const mutatePath = (base: Array<{ x: number; y: number }>) => {
+  const climbImportance = (point: { x: number; y: number }, radius: number) => {
+    let bestX = clamp(Math.round(point.x), 0, width - 1);
+    let bestY = clamp(Math.round(point.y), 0, height - 1);
+    let bestScore = importance[bestY * width + bestX];
+    const tries = 5;
+    for (let i = 0; i < tries; i += 1) {
+      const tx = clamp(Math.round(point.x + (rng() * 2 - 1) * radius), 0, width - 1);
+      const ty = clamp(Math.round(point.y + (rng() * 2 - 1) * radius), 0, height - 1);
+      const score = importance[ty * width + tx];
+      if (score > bestScore) {
+        bestScore = score;
+        bestX = tx;
+        bestY = ty;
+      }
+    }
+    point.x = bestX;
+    point.y = bestY;
+  };
+
+  const mutatePath = (base: Array<{ x: number; y: number }>, temperature = 1) => {
     const candidate = base.map((p) => ({ x: p.x, y: p.y }));
-    const mutateCount = Math.max(2, Math.round(candidate.length * mutationRate));
+    const mutateCount = Math.max(2, Math.round(candidate.length * mutationRate * (0.55 + temperature)));
+    const localStrength = mutationStrength * (0.4 + temperature);
     for (let i = 0; i < mutateCount; i += 1) {
       const idx = Math.floor(rng() * candidate.length);
       const p = candidate[idx];
-      const jx = (rng() * 2 - 1) * mutationStrength;
-      const jy = (rng() * 2 - 1) * mutationStrength;
+      const jx = (rng() * 2 - 1) * localStrength;
+      const jy = (rng() * 2 - 1) * localStrength;
       p.x = clamp(p.x + jx, 0, width - 1);
       p.y = clamp(p.y + jy, 0, height - 1);
+      if (rng() < 0.78) {
+        climbImportance(p, localStrength * 1.2);
+      }
     }
-    if (candidate.length > 12 && rng() < 0.35) {
+    if (candidate.length > 12 && rng() < 0.42) {
       const a = 1 + Math.floor(rng() * Math.max(1, candidate.length - 3));
       const b = a + 1 + Math.floor(rng() * Math.max(1, candidate.length - a - 2));
       reverseSegment(candidate, a, b);
+    }
+    if (candidate.length > 10 && rng() < 0.22) {
+      const removeAt = 1 + Math.floor(rng() * Math.max(1, candidate.length - 2));
+      candidate.splice(removeAt, 1);
+    }
+    if (candidate.length > 4 && rng() < 0.24) {
+      const insertAt = 1 + Math.floor(rng() * Math.max(1, candidate.length - 2));
+      const prev = candidate[Math.max(0, insertAt - 1)];
+      const next = candidate[Math.min(candidate.length - 1, insertAt)];
+      const np = {
+        x: clamp((prev.x + next.x) * 0.5 + (rng() * 2 - 1) * localStrength * 0.35, 0, width - 1),
+        y: clamp((prev.y + next.y) * 0.5 + (rng() * 2 - 1) * localStrength * 0.35, 0, height - 1),
+      };
+      climbImportance(np, localStrength * 0.8);
+      candidate.splice(insertAt, 0, np);
     }
     if (simplifyTolerance > 0 && candidate.length > 12) {
       const simplified = getSimplify()(candidate, simplifyTolerance * 0.25, true);
@@ -3800,6 +3971,8 @@ export async function generateBicPencilSingleLineSvg(
     }
     return candidate;
   };
+
+  type EvolutionCandidate = { points: Array<{ x: number; y: number }>; mse: number };
 
   let bestPoints = finalPoints.map((p) => ({ x: p.x, y: p.y }));
   let bestMse = renderMse(bestPoints);
@@ -3810,47 +3983,57 @@ export async function generateBicPencilSingleLineSvg(
   if (bestMse <= minMse) {
     stopReason = "target_error";
   } else {
+    const populationSize = clamp(Math.max(4, offspringPerGeneration), 4, 20);
+    const eliteCount = Math.min(3, Math.max(2, Math.floor(populationSize / 3)));
+    let population: EvolutionCandidate[] = [{ points: bestPoints, mse: bestMse }];
+    while (population.length < populationSize) {
+      const variant = mutatePath(bestPoints, 1.25);
+      population.push({ points: variant, mse: renderMse(variant) });
+    }
+
     for (let generation = 0; generation < maxGenerations; generation += 1) {
       if (shouldCancel?.()) {
         return null;
       }
-      let improved = false;
-      let generationBest = bestMse;
-      let generationBestPath = bestPoints;
-      for (let child = 0; child < offspringPerGeneration; child += 1) {
-        const candidate = mutatePath(bestPoints);
-        const mse = renderMse(candidate);
-        if (mse < generationBest) {
-          generationBest = mse;
-          generationBestPath = candidate;
-        }
-      }
 
-      const delta = bestMse - generationBest;
+      population.sort((a, b) => a.mse - b.mse);
+      const generationBest = population[0];
+      const delta = bestMse - generationBest.mse;
       if (delta > 0) {
-        improved = true;
-        bestMse = generationBest;
-        bestPoints = generationBestPath;
+        bestMse = generationBest.mse;
+        bestPoints = generationBest.points;
       }
 
-      generations = generation + 1;
       if (bestMse <= minMse) {
+        generations = generation + 1;
         stopReason = "target_error";
         onProgress?.(0.7 + 0.3 * ((generation + 1) / Math.max(1, maxGenerations)), `evolve ${generation + 1} mse ${bestMse.toFixed(2)}`);
         break;
       }
 
-      if (!improved || delta <= mseDeltaThreshold) {
+      if (delta <= mseDeltaThreshold) {
         stableCount += 1;
       } else {
         stableCount = 0;
       }
+      generations = generation + 1;
       if (stableCount >= stableGenerations) {
         stopReason = "stalled";
         onProgress?.(0.7 + 0.3 * ((generation + 1) / Math.max(1, maxGenerations)), `stalled mse ${bestMse.toFixed(2)}`);
         break;
       }
 
+      const temperature = 1 - generation / Math.max(1, maxGenerations);
+      const nextPopulation: EvolutionCandidate[] = population.slice(0, eliteCount).map((entry) => ({
+        points: entry.points.map((p) => ({ x: p.x, y: p.y })),
+        mse: entry.mse,
+      }));
+      while (nextPopulation.length < populationSize) {
+        const parent = population[Math.floor(rng() * eliteCount)];
+        const child = mutatePath(parent.points, temperature);
+        nextPopulation.push({ points: child, mse: renderMse(child) });
+      }
+      population = nextPopulation;
       onProgress?.(0.7 + 0.3 * ((generation + 1) / Math.max(1, maxGenerations)), `evolve ${generation + 1}/${maxGenerations} mse ${bestMse.toFixed(2)}`);
       if ((generation + 1) % 2 === 0) {
         await yieldToUi();
