@@ -1774,7 +1774,8 @@ export function fitSourceToSquareCanvas(input: GraphImage, side: number) {
 }
 
 export function fitSourceToMaxWidthCanvas(input: GraphImage, maxWidth: number) {
-  const safeMaxWidth = Math.max(1, Math.round(maxWidth));
+  const maxWidthNumber = Number(maxWidth);
+  const safeMaxWidth = Number.isFinite(maxWidthNumber) ? Math.max(1, Math.round(maxWidthNumber)) : Math.max(1, input.width);
   const scale = Math.min(1, safeMaxWidth / input.width);
   const width = Math.max(1, Math.round(input.width * scale));
   const height = Math.max(1, Math.round(input.height * scale));
@@ -2042,6 +2043,9 @@ interface BicPencilOptionsInput {
   mseDeltaThreshold?: number;
   stableGenerations?: number;
   workScale?: number;
+  penUpDistanceFactor?: number;
+  curveMode?: "line" | "quadratic" | "cubic";
+  curveTension?: number;
   seed: number;
 }
 
@@ -2062,7 +2066,15 @@ interface BicPencilOptionsResolved {
   mseDeltaThreshold: number;
   stableGenerations: number;
   workScale: number;
+  penUpDistanceFactor: number;
+  curveMode: "line" | "quadratic" | "cubic";
+  curveTension: number;
   seed: number;
+}
+
+function toFiniteNumber(value: unknown, fallback: number) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
 }
 
 interface AsciifyResult {
@@ -3480,24 +3492,49 @@ export async function generateSketchSvg(
 }
 
 function resolveBicPencilOptions(options: BicPencilOptionsInput): BicPencilOptionsResolved {
+  const maxWidthRaw = toFiniteNumber(options.maxWidth, 1000);
+  const pointCountRaw = toFiniteNumber(options.pointCount, 7000);
+  const gammaRaw = toFiniteNumber(options.gamma, 1.2);
+  const contrastRaw = toFiniteNumber(options.contrast, 1.25);
+  const simplifyToleranceRaw = toFiniteNumber(options.simplifyTolerance, 1.1);
+  const lineWidthRaw = toFiniteNumber(options.lineWidth, 0.8);
+  const lineAlphaRaw = toFiniteNumber(options.lineAlpha, 0.95);
+  const optimizePassesRaw = toFiniteNumber(options.optimizePasses, 6);
+  const maxGenerationsRaw = toFiniteNumber(options.maxGenerations, 72);
+  const offspringRaw = toFiniteNumber(options.offspringPerGeneration, 8);
+  const mutationRateRaw = toFiniteNumber(options.mutationRate, 0.02);
+  const mutationStrengthRaw = toFiniteNumber(options.mutationStrength, 8);
+  const minMseRaw = toFiniteNumber(options.minMse, 1050);
+  const mseDeltaRaw = toFiniteNumber(options.mseDeltaThreshold, 0.35);
+  const stableGenerationsRaw = toFiniteNumber(options.stableGenerations, 10);
+  const workScaleRaw = toFiniteNumber(options.workScale, 0.55);
+  const penUpDistanceRaw = toFiniteNumber(options.penUpDistanceFactor, 2.2);
+  const curveTensionRaw = toFiniteNumber(options.curveTension, 0.45);
+  const curveModeRaw = String(options.curveMode ?? "line").toLowerCase();
+  const curveMode: "line" | "quadratic" | "cubic" =
+    curveModeRaw === "quadratic" || curveModeRaw === "cubic" ? curveModeRaw : "line";
+  const seedRaw = toFiniteNumber(options.seed, 1);
   return {
-    maxWidth: clamp(Math.round(options.maxWidth), 256, 2600),
-    pointCount: clamp(Math.round(options.pointCount), 300, 25000),
-    gamma: clamp(options.gamma, 0.2, 3),
-    contrast: clamp(options.contrast, 0.2, 4),
-    simplifyTolerance: clamp(options.simplifyTolerance, 0, 10),
-    lineWidth: clamp(options.lineWidth, 0.1, 8),
-    lineAlpha: clamp(options.lineAlpha, 0.01, 1),
-    optimizePasses: clamp(Math.round(options.optimizePasses), 0, 20),
-    maxGenerations: clamp(Math.round(options.maxGenerations ?? 72), 0, 240),
-    offspringPerGeneration: clamp(Math.round(options.offspringPerGeneration ?? 8), 2, 20),
-    mutationRate: clamp(options.mutationRate ?? 0.02, 0.001, 0.5),
-    mutationStrength: clamp(options.mutationStrength ?? 8, 0.25, 64),
-    minMse: clamp(options.minMse ?? 1050, 0, 65025),
-    mseDeltaThreshold: clamp(options.mseDeltaThreshold ?? 0.35, 0, 1000),
-    stableGenerations: clamp(Math.round(options.stableGenerations ?? 10), 1, 100),
-    workScale: clamp(options.workScale ?? 0.55, 0.1, 1),
-    seed: clamp(Math.round(options.seed) || 1, 1, 1000000),
+    maxWidth: clamp(Math.round(maxWidthRaw), 256, 2600),
+    pointCount: clamp(Math.round(pointCountRaw), 300, 25000),
+    gamma: clamp(gammaRaw, 0.2, 3),
+    contrast: clamp(contrastRaw, 0.2, 4),
+    simplifyTolerance: clamp(simplifyToleranceRaw, 0, 10),
+    lineWidth: clamp(lineWidthRaw, 0.1, 8),
+    lineAlpha: clamp(lineAlphaRaw, 0.01, 1),
+    optimizePasses: clamp(Math.round(optimizePassesRaw), 0, 20),
+    maxGenerations: clamp(Math.round(maxGenerationsRaw), 0, 240),
+    offspringPerGeneration: clamp(Math.round(offspringRaw), 2, 20),
+    mutationRate: clamp(mutationRateRaw, 0.001, 0.5),
+    mutationStrength: clamp(mutationStrengthRaw, 0.25, 64),
+    minMse: clamp(minMseRaw, 0, 65025),
+    mseDeltaThreshold: clamp(mseDeltaRaw, 0, 1000),
+    stableGenerations: clamp(Math.round(stableGenerationsRaw), 1, 100),
+    workScale: clamp(workScaleRaw, 0.1, 1),
+    penUpDistanceFactor: clamp(penUpDistanceRaw, 1, 12),
+    curveMode,
+    curveTension: clamp(curveTensionRaw, 0, 1.5),
+    seed: clamp(Math.round(seedRaw), 1, 1000000),
   };
 }
 
@@ -3655,6 +3692,149 @@ function sampleImportancePoints(options: {
   return points;
 }
 
+function splitBicPencilSegments(
+  points: Array<{ x: number; y: number }>,
+  penUpDistanceFactor: number,
+) {
+  if (points.length <= 2 || penUpDistanceFactor <= 1) {
+    return [points.map((point) => ({ x: point.x, y: point.y }))];
+  }
+  const lengths: number[] = [];
+  for (let i = 1; i < points.length; i += 1) {
+    const dx = points[i].x - points[i - 1].x;
+    const dy = points[i].y - points[i - 1].y;
+    lengths.push(Math.sqrt(dx * dx + dy * dy));
+  }
+  if (lengths.length === 0) {
+    return [points.map((point) => ({ x: point.x, y: point.y }))];
+  }
+  const sorted = [...lengths].sort((a, b) => a - b);
+  const median = sorted[Math.floor(sorted.length * 0.5)] ?? 0;
+  const p85 = sorted[Math.floor(sorted.length * 0.85)] ?? median;
+  const base = Math.max(1e-6, Math.max(median, p85 * 0.7));
+  const jumpThreshold = base * penUpDistanceFactor;
+
+  const segments: Array<Array<{ x: number; y: number }>> = [];
+  let current: Array<{ x: number; y: number }> = [{ x: points[0].x, y: points[0].y }];
+  for (let i = 1; i < points.length; i += 1) {
+    const point = points[i];
+    const prev = points[i - 1];
+    const dx = point.x - prev.x;
+    const dy = point.y - prev.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    if (dist > jumpThreshold && current.length >= 2) {
+      segments.push(current);
+      current = [{ x: point.x, y: point.y }];
+      continue;
+    }
+    current.push({ x: point.x, y: point.y });
+  }
+  if (current.length >= 2) {
+    segments.push(current);
+  }
+  if (segments.length === 0) {
+    segments.push(points.map((point) => ({ x: point.x, y: point.y })));
+  }
+  return segments;
+}
+
+function pathToSvgD(
+  points: Array<{ x: number; y: number }>,
+  mode: "line" | "quadratic" | "cubic",
+  tension: number,
+) {
+  if (points.length === 0) {
+    return "";
+  }
+  let d = `M${points[0].x.toFixed(2)},${points[0].y.toFixed(2)}`;
+  if (points.length === 1) {
+    return d;
+  }
+  if (mode === "line" || points.length < 3) {
+    for (let i = 1; i < points.length; i += 1) {
+      d += ` L${points[i].x.toFixed(2)},${points[i].y.toFixed(2)}`;
+    }
+    return d;
+  }
+  if (mode === "quadratic") {
+    const controlPull = clamp(tension, 0, 1.5) * 0.5;
+    for (let i = 1; i < points.length; i += 1) {
+      const p0 = points[i - 1];
+      const p1 = points[i];
+      const prev = points[Math.max(0, i - 2)];
+      const next = points[Math.min(points.length - 1, i + 1)];
+      const ctrlX = p0.x + (p1.x - prev.x) * controlPull;
+      const ctrlY = p0.y + (p1.y - prev.y) * controlPull;
+      const endX = p1.x + (next.x - p0.x) * controlPull * 0.15;
+      const endY = p1.y + (next.y - p0.y) * controlPull * 0.15;
+      d += ` Q${ctrlX.toFixed(2)},${ctrlY.toFixed(2)} ${endX.toFixed(2)},${endY.toFixed(2)}`;
+    }
+    return d;
+  }
+
+  const smooth = clamp(tension, 0, 1.5) / 6;
+  for (let i = 0; i < points.length - 1; i += 1) {
+    const p0 = points[Math.max(0, i - 1)];
+    const p1 = points[i];
+    const p2 = points[i + 1];
+    const p3 = points[Math.min(points.length - 1, i + 2)];
+    const c1x = p1.x + (p2.x - p0.x) * smooth;
+    const c1y = p1.y + (p2.y - p0.y) * smooth;
+    const c2x = p2.x - (p3.x - p1.x) * smooth;
+    const c2y = p2.y - (p3.y - p1.y) * smooth;
+    d += ` C${c1x.toFixed(2)},${c1y.toFixed(2)} ${c2x.toFixed(2)},${c2y.toFixed(2)} ${p2.x.toFixed(2)},${p2.y.toFixed(2)}`;
+  }
+  return d;
+}
+
+function drawPathOnContext(options: {
+  context: CanvasRenderingContext2D;
+  points: Array<{ x: number; y: number }>;
+  mode: "line" | "quadratic" | "cubic";
+  tension: number;
+  scaleX: number;
+  scaleY: number;
+}) {
+  const { context, points, mode, tension, scaleX, scaleY } = options;
+  if (points.length < 2) {
+    return;
+  }
+  context.moveTo(points[0].x * scaleX, points[0].y * scaleY);
+  if (mode === "line" || points.length < 3) {
+    for (let i = 1; i < points.length; i += 1) {
+      context.lineTo(points[i].x * scaleX, points[i].y * scaleY);
+    }
+    return;
+  }
+  if (mode === "quadratic") {
+    const controlPull = clamp(tension, 0, 1.5) * 0.5;
+    for (let i = 1; i < points.length; i += 1) {
+      const p0 = points[i - 1];
+      const p1 = points[i];
+      const prev = points[Math.max(0, i - 2)];
+      const next = points[Math.min(points.length - 1, i + 1)];
+      const ctrlX = p0.x + (p1.x - prev.x) * controlPull;
+      const ctrlY = p0.y + (p1.y - prev.y) * controlPull;
+      const endX = p1.x + (next.x - p0.x) * controlPull * 0.15;
+      const endY = p1.y + (next.y - p0.y) * controlPull * 0.15;
+      context.quadraticCurveTo(ctrlX * scaleX, ctrlY * scaleY, endX * scaleX, endY * scaleY);
+    }
+    return;
+  }
+  const smooth = clamp(tension, 0, 1.5) / 6;
+  for (let i = 0; i < points.length - 1; i += 1) {
+    const p0 = points[Math.max(0, i - 1)];
+    const p1 = points[i];
+    const p2 = points[i + 1];
+    const p3 = points[Math.min(points.length - 1, i + 2)];
+    const c1x = p1.x + (p2.x - p0.x) * smooth;
+    const c1y = p1.y + (p2.y - p0.y) * smooth;
+    const c2x = p2.x - (p3.x - p1.x) * smooth;
+    const c2y = p2.y - (p3.y - p1.y) * smooth;
+    context.bezierCurveTo(c1x * scaleX, c1y * scaleY, c2x * scaleX, c2y * scaleY, p2.x * scaleX, p2.y * scaleY);
+  }
+}
+
 export async function generateBicPencilSingleLineSvg(
   input: GraphImage,
   options: BicPencilOptionsInput,
@@ -3684,6 +3864,9 @@ export async function generateBicPencilSingleLineSvg(
   const mseDeltaThreshold = resolved.mseDeltaThreshold;
   const stableGenerations = resolved.stableGenerations;
   const workScale = resolved.workScale;
+  const penUpDistanceFactor = resolved.penUpDistanceFactor;
+  const curveMode = resolved.curveMode;
+  const curveTension = resolved.curveTension;
   const rng = createSeededRandom(resolved.seed);
 
   const { importance, cumulativeImportance, totalDarkness, totalImportance } =
@@ -3886,18 +4069,25 @@ export async function generateBicPencilSingleLineSvg(
   }
 
   const renderMse = (pts: Array<{ x: number; y: number }>) => {
+    const segments = splitBicPencilSegments(pts, penUpDistanceFactor);
     workCtx.fillStyle = "#FFFFFF";
     workCtx.fillRect(0, 0, workWidth, workHeight);
-    if (pts.length >= 2) {
+    if (segments.length > 0) {
       workCtx.strokeStyle = "#000000";
       workCtx.globalAlpha = lineAlpha;
       workCtx.lineWidth = workLineWidth;
       workCtx.lineCap = "round";
       workCtx.lineJoin = "round";
       workCtx.beginPath();
-      workCtx.moveTo(pts[0].x * scaleX, pts[0].y * scaleY);
-      for (let i = 1; i < pts.length; i += 1) {
-        workCtx.lineTo(pts[i].x * scaleX, pts[i].y * scaleY);
+      for (let i = 0; i < segments.length; i += 1) {
+        drawPathOnContext({
+          context: workCtx,
+          points: segments[i],
+          mode: curveMode,
+          tension: curveTension,
+          scaleX,
+          scaleY,
+        });
       }
       workCtx.stroke();
     }
@@ -4046,11 +4236,18 @@ export async function generateBicPencilSingleLineSvg(
     y: clamp(p.y, 0, height - 1),
   }));
 
-  let d = `M${finalPoints[0].x.toFixed(2)},${finalPoints[0].y.toFixed(2)}`;
+  const segments = splitBicPencilSegments(finalPoints, penUpDistanceFactor);
+  const pathData: string[] = [];
   let pathLength = 0;
-  for (let i = 1; i < finalPoints.length; i += 1) {
-    d += ` L${finalPoints[i].x.toFixed(2)},${finalPoints[i].y.toFixed(2)}`;
-    pathLength += Math.sqrt(sqDist(finalPoints[i - 1], finalPoints[i]));
+  for (let s = 0; s < segments.length; s += 1) {
+    const segment = segments[s];
+    if (segment.length < 2) {
+      continue;
+    }
+    pathData.push(pathToSvgD(segment, curveMode, curveTension));
+    for (let i = 1; i < segment.length; i += 1) {
+      pathLength += Math.sqrt(sqDist(segment[i - 1], segment[i]));
+    }
   }
 
   const preview = document.createElement("canvas");
@@ -4068,14 +4265,23 @@ export async function generateBicPencilSingleLineSvg(
   previewCtx.lineCap = "round";
   previewCtx.lineJoin = "round";
   previewCtx.beginPath();
-  previewCtx.moveTo(finalPoints[0].x, finalPoints[0].y);
-  for (let i = 1; i < finalPoints.length; i += 1) {
-    previewCtx.lineTo(finalPoints[i].x, finalPoints[i].y);
+  for (let i = 0; i < segments.length; i += 1) {
+    drawPathOnContext({
+      context: previewCtx,
+      points: segments[i],
+      mode: curveMode,
+      tension: curveTension,
+      scaleX: 1,
+      scaleY: 1,
+    });
   }
   previewCtx.stroke();
   onProgress?.(1, "ready");
 
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><rect width="100%" height="100%" fill="#FFFFFF"/><path d="${d}" fill="none" stroke="#00008B" stroke-width="${lineWidth}" stroke-opacity="${lineAlpha.toFixed(4)}" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+  const svgPaths = pathData
+    .map((d) => `<path d="${d}" fill="none" stroke="#00008B" stroke-width="${lineWidth}" stroke-opacity="${lineAlpha.toFixed(4)}" stroke-linecap="round" stroke-linejoin="round"/>`)
+    .join("");
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><rect width="100%" height="100%" fill="#FFFFFF"/>${svgPaths}</svg>`;
   return {
     svg,
     preview,

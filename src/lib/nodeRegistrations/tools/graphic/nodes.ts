@@ -14,6 +14,150 @@ import {
   refreshNode,
 } from "../shared";
 
+function logNodeError(nodeKind: string, error: unknown, details?: Record<string, unknown>) {
+  if (details) {
+    console.error(`[${nodeKind}]`, error, details);
+    return;
+  }
+  console.error(`[${nodeKind}]`, error);
+}
+
+const GRAPHIC_PENCIL_STORAGE_KEY = "plotterfun.tools.graphic.pencil.params.v1";
+
+interface GraphicPencilPersistedProperties {
+  maxWidth: number;
+  pointCount: number;
+  gamma: number;
+  contrast: number;
+  simplifyTolerance: number;
+  lineWidth: number;
+  lineAlpha: number;
+  optimizePasses: number;
+  maxGenerations: number;
+  offspringPerGeneration: number;
+  mutationRate: number;
+  mutationStrength: number;
+  minMse: number;
+  mseDeltaThreshold: number;
+  stableGenerations: number;
+  workScale: number;
+  penUpDistanceFactor: number;
+  curveMode: "line" | "quadratic" | "cubic";
+  curveTension: number;
+  seed: number;
+}
+
+function getDefaultGraphicPencilProperties(): GraphicPencilPersistedProperties {
+  return {
+    maxWidth: 1000,
+    pointCount: 7000,
+    gamma: 1.2,
+    contrast: 1.25,
+    simplifyTolerance: 1.1,
+    lineWidth: 0.8,
+    lineAlpha: 0.95,
+    optimizePasses: 6,
+    maxGenerations: 72,
+    offspringPerGeneration: 8,
+    mutationRate: 0.02,
+    mutationStrength: 8,
+    minMse: 1050,
+    mseDeltaThreshold: 0.35,
+    stableGenerations: 10,
+    workScale: 0.55,
+    penUpDistanceFactor: 2.2,
+    curveMode: "line",
+    curveTension: 0.45,
+    seed: 1,
+  };
+}
+
+function readGraphicPencilPropertiesFromStorage(): Partial<GraphicPencilPersistedProperties> {
+  if (typeof window === "undefined" || !window.localStorage) {
+    return {};
+  }
+  try {
+    const raw = window.localStorage.getItem(GRAPHIC_PENCIL_STORAGE_KEY);
+    if (!raw) {
+      return {};
+    }
+    const parsed = JSON.parse(raw) as Partial<GraphicPencilPersistedProperties>;
+    if (!parsed || typeof parsed !== "object") {
+      return {};
+    }
+    const defaults = getDefaultGraphicPencilProperties();
+    const safeNumber = (value: unknown, fallback: number) => {
+      const numeric = Number(value);
+      return Number.isFinite(numeric) ? numeric : fallback;
+    };
+    const modeRaw = String(parsed.curveMode ?? "line");
+    const curveMode: "line" | "quadratic" | "cubic" =
+      modeRaw === "quadratic" || modeRaw === "cubic" ? modeRaw : "line";
+    return {
+      maxWidth: safeNumber(parsed.maxWidth, defaults.maxWidth),
+      pointCount: safeNumber(parsed.pointCount, defaults.pointCount),
+      gamma: safeNumber(parsed.gamma, defaults.gamma),
+      contrast: safeNumber(parsed.contrast, defaults.contrast),
+      simplifyTolerance: safeNumber(parsed.simplifyTolerance, defaults.simplifyTolerance),
+      lineWidth: safeNumber(parsed.lineWidth, defaults.lineWidth),
+      lineAlpha: safeNumber(parsed.lineAlpha, defaults.lineAlpha),
+      optimizePasses: safeNumber(parsed.optimizePasses, defaults.optimizePasses),
+      maxGenerations: safeNumber(parsed.maxGenerations, defaults.maxGenerations),
+      offspringPerGeneration: safeNumber(parsed.offspringPerGeneration, defaults.offspringPerGeneration),
+      mutationRate: safeNumber(parsed.mutationRate, defaults.mutationRate),
+      mutationStrength: safeNumber(parsed.mutationStrength, defaults.mutationStrength),
+      minMse: safeNumber(parsed.minMse, defaults.minMse),
+      mseDeltaThreshold: safeNumber(parsed.mseDeltaThreshold, defaults.mseDeltaThreshold),
+      stableGenerations: safeNumber(parsed.stableGenerations, defaults.stableGenerations),
+      workScale: safeNumber(parsed.workScale, defaults.workScale),
+      penUpDistanceFactor: safeNumber(parsed.penUpDistanceFactor, defaults.penUpDistanceFactor),
+      curveMode,
+      curveTension: safeNumber(parsed.curveTension, defaults.curveTension),
+      seed: safeNumber(parsed.seed, defaults.seed),
+    };
+  } catch (error) {
+    logNodeError("GraphicPencilToolNode/storage-read", error);
+    return {};
+  }
+}
+
+function saveGraphicPencilPropertiesToStorage(properties: Record<string, unknown>) {
+  if (typeof window === "undefined" || !window.localStorage) {
+    return;
+  }
+  try {
+    const defaults = getDefaultGraphicPencilProperties();
+    const modeRaw = String(properties.curveMode ?? defaults.curveMode);
+    const safeMode: "line" | "quadratic" | "cubic" =
+      modeRaw === "quadratic" || modeRaw === "cubic" ? modeRaw : "line";
+    const payload: GraphicPencilPersistedProperties = {
+      maxWidth: Number(properties.maxWidth ?? defaults.maxWidth),
+      pointCount: Number(properties.pointCount ?? defaults.pointCount),
+      gamma: Number(properties.gamma ?? defaults.gamma),
+      contrast: Number(properties.contrast ?? defaults.contrast),
+      simplifyTolerance: Number(properties.simplifyTolerance ?? defaults.simplifyTolerance),
+      lineWidth: Number(properties.lineWidth ?? defaults.lineWidth),
+      lineAlpha: Number(properties.lineAlpha ?? defaults.lineAlpha),
+      optimizePasses: Number(properties.optimizePasses ?? defaults.optimizePasses),
+      maxGenerations: Number(properties.maxGenerations ?? defaults.maxGenerations),
+      offspringPerGeneration: Number(properties.offspringPerGeneration ?? defaults.offspringPerGeneration),
+      mutationRate: Number(properties.mutationRate ?? defaults.mutationRate),
+      mutationStrength: Number(properties.mutationStrength ?? defaults.mutationStrength),
+      minMse: Number(properties.minMse ?? defaults.minMse),
+      mseDeltaThreshold: Number(properties.mseDeltaThreshold ?? defaults.mseDeltaThreshold),
+      stableGenerations: Number(properties.stableGenerations ?? defaults.stableGenerations),
+      workScale: Number(properties.workScale ?? defaults.workScale),
+      penUpDistanceFactor: Number(properties.penUpDistanceFactor ?? defaults.penUpDistanceFactor),
+      curveMode: safeMode,
+      curveTension: Number(properties.curveTension ?? defaults.curveTension),
+      seed: Number(properties.seed ?? defaults.seed),
+    };
+    window.localStorage.setItem(GRAPHIC_PENCIL_STORAGE_KEY, JSON.stringify(payload));
+  } catch (error) {
+    logNodeError("GraphicPencilToolNode/storage-write", error);
+  }
+}
+
 export class GraphicSketchToolNode {
   size: [number, number] = [280, 760];
   properties!: Record<string, unknown>;
@@ -323,6 +467,10 @@ export class GraphicSketchToolNode {
           if (renderToken !== this.renderToken) {
             return;
           }
+          logNodeError("GraphicSketchToolNode", error, {
+            options,
+            inputSize: `${input.width}x${input.height}`,
+          });
           this.preview = input;
           this.svg = null;
           this.pathCount = 0;
@@ -378,62 +526,75 @@ export class GraphicPencilToolNode {
   constructor() {
     const node = this as unknown as PreviewAwareNode & GraphicPencilToolNode;
     node.title = createToolTitle("Graphic Pencil");
+    const defaults = getDefaultGraphicPencilProperties();
     node.properties = {
-      maxWidth: 1000,
-      pointCount: 7000,
-      gamma: 1.2,
-      contrast: 1.25,
-      simplifyTolerance: 1.1,
-      lineWidth: 0.8,
-      lineAlpha: 0.95,
-      optimizePasses: 6,
-      maxGenerations: 72,
-      offspringPerGeneration: 8,
-      mutationRate: 0.02,
-      mutationStrength: 8,
-      minMse: 1050,
-      mseDeltaThreshold: 0.35,
-      stableGenerations: 10,
-      workScale: 0.55,
-      seed: 1,
+      ...defaults,
+      ...readGraphicPencilPropertiesFromStorage(),
     };
+    const persistParams = () => saveGraphicPencilPropertiesToStorage(node.properties);
     node.addInput("image", "image");
     node.addOutput("image", "image");
     node.addOutput("svg", "svg");
-    node.addWidget("slider", "Max width", 1000, (value) => {
+    node.addWidget("slider", "Max width", Number(node.properties.maxWidth), (value) => {
       node.properties.maxWidth = Math.round(Number(value));
+      persistParams();
       notifyGraphStateChange(node);
     }, { min: 256, max: 2600, step: 8 });
-    node.addWidget("slider", "Points", 7000, (value) => {
+    node.addWidget("slider", "Points", Number(node.properties.pointCount), (value) => {
       node.properties.pointCount = Math.round(Number(value));
+      persistParams();
       notifyGraphStateChange(node);
     }, { min: 300, max: 25000, step: 1 });
-    node.addWidget("slider", "Gamma", 1.2, (value) => {
+    node.addWidget("slider", "Gamma", Number(node.properties.gamma), (value) => {
       node.properties.gamma = Number(value);
+      persistParams();
       notifyGraphStateChange(node);
     }, { min: 0.2, max: 3, step: 0.01, precision: 2 });
-    node.addWidget("slider", "Contrast", 1.25, (value) => {
+    node.addWidget("slider", "Contrast", Number(node.properties.contrast), (value) => {
       node.properties.contrast = Number(value);
+      persistParams();
       notifyGraphStateChange(node);
     }, { min: 0.2, max: 4, step: 0.01, precision: 2 });
-    node.addWidget("slider", "Simplify", 1.1, (value) => {
+    node.addWidget("slider", "Simplify", Number(node.properties.simplifyTolerance), (value) => {
       node.properties.simplifyTolerance = Number(value);
+      persistParams();
       notifyGraphStateChange(node);
     }, { min: 0, max: 10, step: 0.1, precision: 1 });
-    node.addWidget("slider", "Line width", 0.8, (value) => {
+    node.addWidget("slider", "Line width", Number(node.properties.lineWidth), (value) => {
       node.properties.lineWidth = Number(value);
+      persistParams();
       notifyGraphStateChange(node);
     }, { min: 0.1, max: 8, step: 0.1, precision: 1 });
-    node.addWidget("slider", "Line alpha", 0.95, (value) => {
+    node.addWidget("slider", "Line alpha", Number(node.properties.lineAlpha), (value) => {
       node.properties.lineAlpha = Number(value);
+      persistParams();
       notifyGraphStateChange(node);
     }, { min: 0.01, max: 1, step: 0.01, precision: 2 });
-    node.addWidget("slider", "Optimize", 6, (value) => {
+    node.addWidget("slider", "Optimize", Number(node.properties.optimizePasses), (value) => {
       node.properties.optimizePasses = Math.round(Number(value));
+      persistParams();
       notifyGraphStateChange(node);
     }, { min: 0, max: 20, step: 1 });
-    node.addWidget("slider", "Seed", 1, (value) => {
+    node.addWidget("slider", "Pen-up jump", Number(node.properties.penUpDistanceFactor), (value) => {
+      node.properties.penUpDistanceFactor = Number(value);
+      persistParams();
+      notifyGraphStateChange(node);
+    }, { min: 1, max: 12, step: 0.1, precision: 1 });
+    node.addWidget("combo", "Curve", String(node.properties.curveMode), (value) => {
+      const mode = String(value);
+      node.properties.curveMode =
+        mode === "quadratic" || mode === "cubic" ? mode : "line";
+      persistParams();
+      notifyGraphStateChange(node);
+    }, { values: ["line", "quadratic", "cubic"] });
+    node.addWidget("slider", "Curve T", Number(node.properties.curveTension), (value) => {
+      node.properties.curveTension = Number(value);
+      persistParams();
+      notifyGraphStateChange(node);
+    }, { min: 0, max: 1.5, step: 0.01, precision: 2 });
+    node.addWidget("slider", "Seed", Number(node.properties.seed), (value) => {
       node.properties.seed = Math.round(Number(value));
+      persistParams();
       notifyGraphStateChange(node);
     }, { min: 1, max: 1000000, step: 1 });
     node.refreshPreviewLayout = () => refreshNode(node, node.preview, 4);
@@ -479,6 +640,12 @@ export class GraphicPencilToolNode {
       mseDeltaThreshold: clamp(Number(this.properties.mseDeltaThreshold ?? 0.35), 0, 1000),
       stableGenerations: clamp(Math.round(Number(this.properties.stableGenerations ?? 10)), 1, 100),
       workScale: clamp(Number(this.properties.workScale ?? 0.55), 0.1, 1),
+      penUpDistanceFactor: clamp(Number(this.properties.penUpDistanceFactor ?? 2.2), 1, 12),
+      curveMode: ((modeRaw: unknown): "line" | "quadratic" | "cubic" => {
+        const mode = String(modeRaw ?? "line");
+        return mode === "quadratic" || mode === "cubic" ? mode : "line";
+      })(this.properties.curveMode),
+      curveTension: clamp(Number(this.properties.curveTension ?? 0.45), 0, 1.5),
       seed: clamp(Math.round(Number(this.properties.seed ?? 1)), 1, 1000000),
     };
     const signature = getGraphImageSignature(input);
@@ -517,6 +684,10 @@ export class GraphicPencilToolNode {
         })
         .catch((error) => {
           if (renderToken !== this.renderToken) return;
+          logNodeError("GraphicPencilToolNode", error, {
+            options,
+            inputSize: `${input.width}x${input.height}`,
+          });
           this.preview = input;
           this.svg = null;
           this.pointCount = 0;
