@@ -1323,8 +1323,73 @@ export class BlendToolNode extends OptimizedToolNode {
 
 export class LayersToolNode extends OptimizedToolNode {
   size: [number, number] = [280, 500];
+  properties!: Record<string, unknown>;
   preview: GraphImage | null = null;
   static MAX_LAYERS = 6;
+  layerRects: Array<{ x: number; y: number; width: number; height: number } | null> = [];
+  previewViewport: { x: number; y: number; width: number; height: number; ratio: number } | null = null;
+  dragState:
+    | {
+        layerIndex: number;
+        mode: "move" | "scale";
+        startLocalX: number;
+        startLocalY: number;
+        startOffsetX: number;
+        startOffsetY: number;
+        startScale: number;
+      }
+    | null = null;
+
+  private setWidgetValue(this: LayersToolNode, name: string, value: unknown) {
+    const widgets = (this as unknown as LiteNode).widgets;
+    if (!widgets?.length) {
+      return;
+    }
+    const widget = widgets.find((item) => {
+      if (!item || typeof item !== "object") {
+        return false;
+      }
+      return (item as { name?: unknown }).name === name;
+    }) as { value?: unknown } | undefined;
+    if (widget) {
+      widget.value = value;
+    }
+  }
+
+  private getActiveLayerIndex(this: LayersToolNode) {
+    const activeLayer = clamp(
+      Math.round(Number(this.properties.activeLayer ?? 1)),
+      1,
+      LayersToolNode.MAX_LAYERS,
+    );
+    return activeLayer - 1;
+  }
+
+  private getLayerOffsetX(this: LayersToolNode, index: number) {
+    return Number(this.properties[`layer${index + 1}OffsetX`] ?? 0);
+  }
+
+  private getLayerOffsetY(this: LayersToolNode, index: number) {
+    return Number(this.properties[`layer${index + 1}OffsetY`] ?? 0);
+  }
+
+  private getLayerScale(this: LayersToolNode, index: number) {
+    return clamp(Number(this.properties[`layer${index + 1}Scale`] ?? 1), 0.05, 8);
+  }
+
+  private setLayerTransform(this: LayersToolNode, index: number, offsetX: number, offsetY: number, scale: number) {
+    this.properties[`layer${index + 1}OffsetX`] = offsetX;
+    this.properties[`layer${index + 1}OffsetY`] = offsetY;
+    this.properties[`layer${index + 1}Scale`] = clamp(scale, 0.05, 8);
+  }
+
+  private syncActiveLayerWidgets(this: LayersToolNode) {
+    const activeLayer = this.getActiveLayerIndex() + 1;
+    this.setWidgetValue("Active layer", activeLayer);
+    this.setWidgetValue("Offset X", Number(this.properties[`layer${activeLayer}OffsetX`] ?? 0));
+    this.setWidgetValue("Offset Y", Number(this.properties[`layer${activeLayer}OffsetY`] ?? 0));
+    this.setWidgetValue("Scale", Number(this.properties[`layer${activeLayer}Scale`] ?? 1));
+  }
 
   constructor() {
     super();
@@ -1335,9 +1400,13 @@ export class LayersToolNode extends OptimizedToolNode {
       const layer = index + 1;
       layerDefaults[`layer${layer}Mode`] = "normal";
       layerDefaults[`layer${layer}Alpha`] = 1;
+      layerDefaults[`layer${layer}OffsetX`] = 0;
+      layerDefaults[`layer${layer}OffsetY`] = 0;
+      layerDefaults[`layer${layer}Scale`] = 1;
     }
     node.properties = {
       layerCount: 3,
+      activeLayer: 1,
       ...layerDefaults,
     };
     for (let index = 0; index < LayersToolNode.MAX_LAYERS; index += 1) {
@@ -1353,6 +1422,50 @@ export class LayersToolNode extends OptimizedToolNode {
         notifyGraphStateChange(node);
       },
       { min: 1, max: LayersToolNode.MAX_LAYERS, step: 1 },
+    );
+    node.addWidget(
+      "combo",
+      "Active layer",
+      1,
+      (value) => {
+        node.properties.activeLayer = clamp(Math.round(Number(value)), 1, LayersToolNode.MAX_LAYERS);
+        node.syncActiveLayerWidgets();
+        node.setDirtyCanvas(true, true);
+      },
+      { values: Array.from({ length: LayersToolNode.MAX_LAYERS }).map((_, i) => i + 1) },
+    );
+    node.addWidget(
+      "slider",
+      "Offset X",
+      0,
+      (value) => {
+        const active = node.getActiveLayerIndex();
+        node.properties[`layer${active + 1}OffsetX`] = Number(value);
+        notifyGraphStateChange(node);
+      },
+      { min: -3000, max: 3000, step: 1 },
+    );
+    node.addWidget(
+      "slider",
+      "Offset Y",
+      0,
+      (value) => {
+        const active = node.getActiveLayerIndex();
+        node.properties[`layer${active + 1}OffsetY`] = Number(value);
+        notifyGraphStateChange(node);
+      },
+      { min: -3000, max: 3000, step: 1 },
+    );
+    node.addWidget(
+      "slider",
+      "Scale",
+      1,
+      (value) => {
+        const active = node.getActiveLayerIndex();
+        node.properties[`layer${active + 1}Scale`] = clamp(Number(value), 0.05, 8);
+        notifyGraphStateChange(node);
+      },
+      { min: 0.05, max: 8, step: 0.01, precision: 2 },
     );
     for (let index = 0; index < LayersToolNode.MAX_LAYERS; index += 1) {
       const layer = index + 1;
@@ -1377,6 +1490,7 @@ export class LayersToolNode extends OptimizedToolNode {
         { min: 0, max: 1, step: 0.05, precision: 2 },
       );
     }
+    node.syncActiveLayerWidgets();
     node.refreshPreviewLayout = () => {
       refreshNode(node, node.preview, 2);
     };
@@ -1393,6 +1507,9 @@ export class LayersToolNode extends OptimizedToolNode {
       layers: Array.from({ length: layerCount }).map((_, index) => ({
         mode: String(this.properties[`layer${index + 1}Mode`] ?? "normal"),
         alpha: Number(this.properties[`layer${index + 1}Alpha`] ?? 1).toFixed(3),
+        offsetX: Number(this.properties[`layer${index + 1}OffsetX`] ?? 0).toFixed(2),
+        offsetY: Number(this.properties[`layer${index + 1}OffsetY`] ?? 0).toFixed(2),
+        scale: Number(this.properties[`layer${index + 1}Scale`] ?? 1).toFixed(4),
       })),
     });
     const signature = signatures.join("|");
@@ -1406,6 +1523,8 @@ export class LayersToolNode extends OptimizedToolNode {
     const availableLayers = layers.filter((image): image is GraphImage => Boolean(image));
     if (!availableLayers.length) {
       this.preview = null;
+      this.layerRects = [];
+      this.previewViewport = null;
       this.completeOptimizedExecution(start);
       this.resetOptimizedCache();
       this.setOutputData(0, null);
@@ -1428,6 +1547,7 @@ export class LayersToolNode extends OptimizedToolNode {
       return;
     }
     context.clearRect(0, 0, width, height);
+    this.layerRects = Array.from({ length: layerCount }).map(() => null);
 
     for (let index = 0; index < layerCount; index += 1) {
       const image = layers[index];
@@ -1436,14 +1556,30 @@ export class LayersToolNode extends OptimizedToolNode {
       }
       const mode = String(this.properties[`layer${index + 1}Mode`] ?? "normal") as BlendMode;
       const alpha = clamp(Number(this.properties[`layer${index + 1}Alpha`] ?? 1), 0, 1);
+      const offsetX = this.getLayerOffsetX(index);
+      const offsetY = this.getLayerOffsetY(index);
+      const userScale = this.getLayerScale(index);
+      const fitScale = Math.min(width / image.width, height / image.height);
+      const finalScale = fitScale * userScale;
+      const drawWidth = image.width * finalScale;
+      const drawHeight = image.height * finalScale;
+      const drawX = (width - drawWidth) * 0.5 + offsetX;
+      const drawY = (height - drawHeight) * 0.5 + offsetY;
+      this.layerRects[index] = {
+        x: drawX,
+        y: drawY,
+        width: drawWidth,
+        height: drawHeight,
+      };
       context.save();
       context.globalCompositeOperation = blendModeToCompositeOperation[mode] ?? "source-over";
       context.globalAlpha = alpha;
-      context.drawImage(image, 0, 0, width, height);
+      context.drawImage(image, drawX, drawY, drawWidth, drawHeight);
       context.restore();
     }
 
     this.preview = canvas;
+    this.previewViewport = null;
     this.completeOptimizedExecution(start, signature, optionsSignature);
     this.setOutputData(0, this.preview);
     this.refreshPreviewLayout();
@@ -1451,12 +1587,131 @@ export class LayersToolNode extends OptimizedToolNode {
 
   onDrawBackground(this: PreviewAwareNode & LayersToolNode, context: CanvasRenderingContext2D) {
     const layout = drawImagePreview(context, this, this.preview, { footerLines: 2 });
+    this.previewViewport = null;
+    if (this.preview) {
+      const ratio = Math.min(layout.previewWidth / this.preview.width, layout.previewHeight / this.preview.height);
+      const width = this.preview.width * ratio;
+      const height = this.preview.height * ratio;
+      const x = layout.padding + (layout.previewWidth - width) * 0.5;
+      const y = layout.previewTop + (layout.previewHeight - height) * 0.5;
+      this.previewViewport = { x, y, width, height, ratio };
+
+      const activeLayerIndex = this.getActiveLayerIndex();
+      const activeRect = this.layerRects[activeLayerIndex];
+      if (activeRect) {
+        const rx = x + activeRect.x * ratio;
+        const ry = y + activeRect.y * ratio;
+        const rw = activeRect.width * ratio;
+        const rh = activeRect.height * ratio;
+        context.save();
+        context.strokeStyle = "rgba(255, 198, 64, 0.95)";
+        context.lineWidth = 1.5;
+        context.strokeRect(rx, ry, rw, rh);
+        context.fillStyle = "rgba(255, 198, 64, 0.95)";
+        context.fillRect(rx + rw - 5, ry + rh - 5, 10, 10);
+        context.restore();
+      }
+    }
+
     context.save();
     context.fillStyle = "rgba(255,255,255,0.65)";
     context.font = "12px sans-serif";
     const layerCount = clamp(Math.round(Number(this.properties.layerCount ?? 3)), 1, LayersToolNode.MAX_LAYERS);
-    context.fillText(`layers:${layerCount} | blend stack`, 10, layout.footerTop + 12);
+    const activeLayer = this.getActiveLayerIndex() + 1;
+    context.fillText(`layers:${layerCount} | active:L${activeLayer} drag=move resize=corner`, 10, layout.footerTop + 12);
     context.fillText(formatExecutionInfo(this.executionMs), 10, layout.footerTop + 30);
     context.restore();
+  }
+
+  onMouseDown(this: PreviewAwareNode & LayersToolNode, event: PointerEvent, pos?: [number, number]) {
+    if (!this.preview || !this.previewViewport || !Array.isArray(pos)) {
+      return false;
+    }
+    const self = this as unknown as { pos?: [number, number]; captureInput?: (enable: boolean) => void };
+    const nodePos = self.pos ?? [0, 0];
+    const localX = pos[0] - nodePos[0];
+    const localY = pos[1] - nodePos[1];
+    const viewport = this.previewViewport;
+    if (
+      localX < viewport.x ||
+      localY < viewport.y ||
+      localX > viewport.x + viewport.width ||
+      localY > viewport.y + viewport.height
+    ) {
+      return false;
+    }
+    const activeLayerIndex = this.getActiveLayerIndex();
+    const activeRect = this.layerRects[activeLayerIndex];
+    if (!activeRect) {
+      return false;
+    }
+    const ratio = viewport.ratio;
+    const rx = viewport.x + activeRect.x * ratio;
+    const ry = viewport.y + activeRect.y * ratio;
+    const rw = activeRect.width * ratio;
+    const rh = activeRect.height * ratio;
+    const inRect = localX >= rx && localY >= ry && localX <= rx + rw && localY <= ry + rh;
+    const handleSize = 8;
+    const inHandle = localX >= rx + rw - handleSize && localY >= ry + rh - handleSize && localX <= rx + rw + handleSize && localY <= ry + rh + handleSize;
+    if (!inRect && !inHandle) {
+      return false;
+    }
+    this.dragState = {
+      layerIndex: activeLayerIndex,
+      mode: inHandle ? "scale" : "move",
+      startLocalX: localX,
+      startLocalY: localY,
+      startOffsetX: this.getLayerOffsetX(activeLayerIndex),
+      startOffsetY: this.getLayerOffsetY(activeLayerIndex),
+      startScale: this.getLayerScale(activeLayerIndex),
+    };
+    self.captureInput?.(true);
+    event.preventDefault();
+    return true;
+  }
+
+  onMouseMove(this: PreviewAwareNode & LayersToolNode, event: PointerEvent, pos?: [number, number]) {
+    if (!this.dragState || !this.previewViewport || !Array.isArray(pos)) {
+      return false;
+    }
+    const self = this as unknown as { pos?: [number, number] };
+    const nodePos = self.pos ?? [0, 0];
+    const localX = pos[0] - nodePos[0];
+    const localY = pos[1] - nodePos[1];
+    const ratio = this.previewViewport.ratio;
+    const dx = (localX - this.dragState.startLocalX) / Math.max(1e-6, ratio);
+    const dy = (localY - this.dragState.startLocalY) / Math.max(1e-6, ratio);
+    if (this.dragState.mode === "move") {
+      this.setLayerTransform(
+        this.dragState.layerIndex,
+        this.dragState.startOffsetX + dx,
+        this.dragState.startOffsetY + dy,
+        this.dragState.startScale,
+      );
+    } else {
+      const base = Math.max(24, (this.previewViewport.width + this.previewViewport.height) * 0.5);
+      const delta = Math.max(dx, dy);
+      const scale = clamp(this.dragState.startScale * (1 + delta / base), 0.05, 8);
+      this.setLayerTransform(
+        this.dragState.layerIndex,
+        this.dragState.startOffsetX,
+        this.dragState.startOffsetY,
+        scale,
+      );
+    }
+    this.syncActiveLayerWidgets();
+    notifyGraphStateChange(this);
+    event.preventDefault();
+    return true;
+  }
+
+  onMouseUp(this: PreviewAwareNode & LayersToolNode) {
+    if (!this.dragState) {
+      return false;
+    }
+    const self = this as unknown as { captureInput?: (enable: boolean) => void };
+    this.dragState = null;
+    self.captureInput?.(false);
+    return true;
   }
 }

@@ -27,6 +27,7 @@ export {
   generateMatitaSvg,
   generateOil2Svg,
   generateOil3Svg,
+  generateWatercolourSvg,
   generateSketchSvg,
   generateStippleSvg,
   getAverageColorFromImageData,

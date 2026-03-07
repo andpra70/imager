@@ -3,6 +3,7 @@ import {
   OilToolNode,
   Oil2ToolNode,
   Oil3ToolNode,
+  WatercolourToolNode,
   LinesToolNode,
   DotsToolNode,
   AsciifyToolNode,
@@ -26,6 +27,7 @@ export interface ToolArtNodeCtors {
   OilToolNode: NodeCtor;
   Oil2ToolNode: NodeCtor;
   Oil3ToolNode: NodeCtor;
+  WatercolourToolNode: NodeCtor;
   LinesToolNode: NodeCtor;
   DotsToolNode: NodeCtor;
   AsciifyToolNode: NodeCtor;
@@ -50,6 +52,7 @@ export function createToolArtNodeCtors(): ToolArtNodeCtors {
     OilToolNode: OilToolNode as NodeCtor,
     Oil2ToolNode: Oil2ToolNode as NodeCtor,
     Oil3ToolNode: Oil3ToolNode as NodeCtor,
+    WatercolourToolNode: WatercolourToolNode as NodeCtor,
     LinesToolNode: LinesToolNode as NodeCtor,
     DotsToolNode: DotsToolNode as NodeCtor,
     AsciifyToolNode: AsciifyToolNode as NodeCtor,

@@ -22,6 +22,7 @@ import {
   generateLinefySvg,
   generateOil2Svg,
   generateOil3Svg,
+  generateWatercolourSvg,
   generateMatitaSvg,
   generateSketchSvg,
   generateStippleSvg,
@@ -1399,6 +1400,342 @@ export class Oil3ToolNode {
   }
 
   onDrawBackground(this: PreviewAwareNode & Oil3ToolNode, context: CanvasRenderingContext2D) {
+    const layout = drawImagePreview(context, this, this.preview, { footerLines: 4 });
+    context.save();
+    context.fillStyle = "rgba(255,255,255,0.65)";
+    context.font = "12px sans-serif";
+    context.fillText(`${this.status}${this.isRendering ? "..." : ""}`, 10, layout.footerTop + 12);
+    context.fillText(
+      `progress ${Math.round(this.progress * 100)}% | strokes ${this.strokeCount} | paths ${this.pathCount}`,
+      10,
+      layout.footerTop + 30,
+    );
+    context.fillText(`out ${this.outputWidth || "-"}x${this.outputHeight || "-"}`, 10, layout.footerTop + 48);
+    context.fillText(formatExecutionInfo(this.executionMs), 10, layout.footerTop + 66);
+    context.restore();
+  }
+}
+
+export class WatercolourToolNode {
+  size: [number, number] = [280, 840];
+  properties!: Record<string, unknown>;
+  preview: GraphImage | null = null;
+  svg: GraphSvg | null = null;
+  status = "idle";
+  progress = 0;
+  strokeCount = 0;
+  pathCount = 0;
+  outputWidth = 0;
+  outputHeight = 0;
+  isRendering = false;
+  executionMs: number | null = null;
+  lastSignature = "";
+  lastOptionsSignature = "";
+  renderToken = 0;
+
+  setWidgetValue(this: WatercolourToolNode, name: string, value: unknown) {
+    const widgets = (this as unknown as LiteNode).widgets;
+    if (!widgets?.length) {
+      return;
+    }
+    const widget = widgets.find((item) => {
+      if (!item || typeof item !== "object") {
+        return false;
+      }
+      return (item as { name?: unknown }).name === name;
+    }) as { value?: unknown } | undefined;
+    if (widget) {
+      widget.value = value;
+    }
+  }
+
+  applyPreset(
+    this: PreviewAwareNode & WatercolourToolNode,
+    preset: "fast" | "normal" | "slow",
+    notify = true,
+  ) {
+    const values =
+      preset === "fast"
+        ? {
+            maxWidth: 800,
+            baseCell: 14,
+            washLayers: 2,
+            bleedSteps: 2,
+            strokeDensity: 0.35,
+            maxSvgPaths: 35000,
+            refreshEvery: 24,
+          }
+        : preset === "slow"
+          ? {
+              maxWidth: 1600,
+              baseCell: 9,
+              washLayers: 5,
+              bleedSteps: 5,
+              strokeDensity: 0.9,
+              maxSvgPaths: 180000,
+              refreshEvery: 8,
+            }
+          : {
+              maxWidth: 1200,
+              baseCell: 12,
+              washLayers: 3,
+              bleedSteps: 3,
+              strokeDensity: 0.55,
+              maxSvgPaths: 90000,
+              refreshEvery: 14,
+            };
+    Object.assign(this.properties, values, { preset });
+    this.setWidgetValue("Preset", preset);
+    this.setWidgetValue("Max width", values.maxWidth);
+    this.setWidgetValue("Base cell", values.baseCell);
+    this.setWidgetValue("Wash layers", values.washLayers);
+    this.setWidgetValue("Bleed steps", values.bleedSteps);
+    this.setWidgetValue("Stroke dens", values.strokeDensity);
+    this.setWidgetValue("Max SVG", values.maxSvgPaths);
+    this.setWidgetValue("Refresh", values.refreshEvery);
+    this.setDirtyCanvas(true, true);
+    if (notify) {
+      notifyGraphStateChange(this);
+    }
+  }
+
+  markCustom(this: PreviewAwareNode & WatercolourToolNode) {
+    if (String(this.properties.preset ?? "normal") !== "custom") {
+      this.properties.preset = "custom";
+      this.setWidgetValue("Preset", "custom");
+    }
+  }
+
+  constructor() {
+    const node = this as unknown as PreviewAwareNode & WatercolourToolNode;
+    node.title = createToolTitle("Watercolour");
+    node.properties = {
+      preset: "normal",
+      maxWidth: 1200,
+      baseCell: 12,
+      washLayers: 3,
+      bleedSteps: 3,
+      bleedStrength: 0.65,
+      transparency: 0.72,
+      strokeDensity: 0.55,
+      strokeLength: 12,
+      lineWidth: 1.2,
+      threshold: 0.08,
+      colorBleed: 0.5,
+      granulation: 0.4,
+      seed: 1337,
+      refreshEvery: 14,
+      maxSvgPaths: 90000,
+      backgroundColor: "#FFFFFF",
+    };
+    node.addInput("image", "image");
+    node.addOutput("image", "image");
+    node.addOutput("svg", "svg");
+    node.addWidget("combo", "Preset", "normal", (value) => {
+      const preset = String(value);
+      if (preset === "fast" || preset === "normal" || preset === "slow") {
+        node.applyPreset(preset, true);
+      } else {
+        node.properties.preset = "custom";
+        node.setDirtyCanvas(true, true);
+        notifyGraphStateChange(node);
+      }
+    }, { values: ["fast", "normal", "slow", "custom"] });
+    node.addWidget("slider", "Max width", 1200, (value) => {
+      node.properties.maxWidth = Math.round(Number(value));
+      node.markCustom();
+      notifyGraphStateChange(node);
+    }, { min: 128, max: 3200, step: 8 });
+    node.addWidget("slider", "Base cell", 12, (value) => {
+      node.properties.baseCell = Number(value);
+      node.markCustom();
+      notifyGraphStateChange(node);
+    }, { min: 2, max: 64, step: 0.5, precision: 1 });
+    node.addWidget("slider", "Wash layers", 3, (value) => {
+      node.properties.washLayers = Math.round(Number(value));
+      node.markCustom();
+      notifyGraphStateChange(node);
+    }, { min: 1, max: 8, step: 1 });
+    node.addWidget("slider", "Bleed steps", 3, (value) => {
+      node.properties.bleedSteps = Math.round(Number(value));
+      node.markCustom();
+      notifyGraphStateChange(node);
+    }, { min: 0, max: 8, step: 1 });
+    node.addWidget("slider", "Bleed strength", 0.65, (value) => {
+      node.properties.bleedStrength = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0, max: 2, step: 0.01, precision: 2 });
+    node.addWidget("slider", "Transparency", 0.72, (value) => {
+      node.properties.transparency = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0.05, max: 1, step: 0.01, precision: 2 });
+    node.addWidget("slider", "Stroke dens", 0.55, (value) => {
+      node.properties.strokeDensity = Number(value);
+      node.markCustom();
+      notifyGraphStateChange(node);
+    }, { min: 0, max: 2, step: 0.01, precision: 2 });
+    node.addWidget("slider", "Stroke len", 12, (value) => {
+      node.properties.strokeLength = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 1, max: 80, step: 0.1, precision: 1 });
+    node.addWidget("slider", "Line width", 1.2, (value) => {
+      node.properties.lineWidth = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0.1, max: 12, step: 0.1, precision: 1 });
+    node.addWidget("slider", "Threshold", 0.08, (value) => {
+      node.properties.threshold = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0, max: 1, step: 0.01, precision: 2 });
+    node.addWidget("slider", "Color bleed", 0.5, (value) => {
+      node.properties.colorBleed = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0, max: 1, step: 0.01, precision: 2 });
+    node.addWidget("slider", "Granulation", 0.4, (value) => {
+      node.properties.granulation = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0, max: 1, step: 0.01, precision: 2 });
+    node.addWidget("number", "Seed", 1337, (value) => {
+      node.properties.seed = Math.round(Number(value));
+      notifyGraphStateChange(node);
+    }, { step: 1 });
+    node.addWidget("slider", "Refresh", 14, (value) => {
+      node.properties.refreshEvery = Math.round(Number(value));
+      node.markCustom();
+      notifyGraphStateChange(node);
+    }, { min: 1, max: 512, step: 1 });
+    node.addWidget("slider", "Max SVG", 90000, (value) => {
+      node.properties.maxSvgPaths = Math.round(Number(value));
+      notifyGraphStateChange(node);
+    }, { min: 1000, max: 320000, step: 500 });
+    node.addWidget("text", "BG color", "#FFFFFF", (value) => {
+      node.properties.backgroundColor = normalizeHexColor(String(value));
+      notifyGraphStateChange(node);
+    });
+    node.refreshPreviewLayout = () => {
+      refreshNode(node, node.preview, 4);
+    };
+    node.applyPreset("normal", false);
+    node.refreshPreviewLayout();
+  }
+
+  onExecute(this: PreviewAwareNode & WatercolourToolNode) {
+    const inputValue = this.getInputData(0);
+    const input = isGraphImageReady(inputValue) ? inputValue : null;
+    if (!input) {
+      this.preview = null;
+      this.svg = null;
+      this.status = "waiting valid image";
+      this.progress = 0;
+      this.strokeCount = 0;
+      this.pathCount = 0;
+      this.outputWidth = 0;
+      this.outputHeight = 0;
+      this.executionMs = null;
+      this.isRendering = false;
+      this.lastSignature = "";
+      this.lastOptionsSignature = "";
+      this.setOutputData(0, null);
+      this.setOutputData(1, null);
+      this.refreshPreviewLayout();
+      return;
+    }
+
+    const presetRaw = String(this.properties.preset ?? "normal").toLowerCase();
+    const preset: "fast" | "normal" | "slow" =
+      presetRaw === "fast" || presetRaw === "slow" ? presetRaw : "normal";
+    const options = {
+      maxWidth: clamp(Math.round(Number(this.properties.maxWidth ?? 1200)), 128, 3200),
+      preset,
+      baseCell: clamp(Number(this.properties.baseCell ?? 12), 2, 64),
+      washLayers: clamp(Math.round(Number(this.properties.washLayers ?? 3)), 1, 8),
+      bleedSteps: clamp(Math.round(Number(this.properties.bleedSteps ?? 3)), 0, 8),
+      bleedStrength: clamp(Number(this.properties.bleedStrength ?? 0.65), 0, 2),
+      transparency: clamp(Number(this.properties.transparency ?? 0.72), 0.05, 1),
+      strokeDensity: clamp(Number(this.properties.strokeDensity ?? 0.55), 0, 2),
+      strokeLength: clamp(Number(this.properties.strokeLength ?? 12), 1, 80),
+      lineWidth: clamp(Number(this.properties.lineWidth ?? 1.2), 0.1, 12),
+      threshold: clamp(Number(this.properties.threshold ?? 0.08), 0, 1),
+      colorBleed: clamp(Number(this.properties.colorBleed ?? 0.5), 0, 1),
+      granulation: clamp(Number(this.properties.granulation ?? 0.4), 0, 1),
+      seed: Math.round(Number(this.properties.seed ?? 1337)),
+      refreshEvery: clamp(Math.round(Number(this.properties.refreshEvery ?? 14)), 1, 512),
+      maxSvgPaths: clamp(Math.round(Number(this.properties.maxSvgPaths ?? 90000)), 1000, 320000),
+      backgroundColor: normalizeHexColor(String(this.properties.backgroundColor ?? "#FFFFFF")),
+    };
+    const signature = getGraphImageSignature(input);
+    const optionsSignature = JSON.stringify(options);
+    if (signature !== this.lastSignature || optionsSignature !== this.lastOptionsSignature) {
+      this.lastSignature = signature;
+      this.lastOptionsSignature = optionsSignature;
+      const renderToken = ++this.renderToken;
+      const start = performance.now();
+      this.isRendering = true;
+      this.progress = 0;
+      this.status = "generating watercolour...";
+      this.setDirtyCanvas(true, true);
+
+      const shouldCancel = () => renderToken !== this.renderToken;
+      const updateProgress = (value: number, status?: string) => {
+        this.progress = clamp(value, 0, 1);
+        if (status) {
+          this.status = status;
+        }
+        this.setDirtyCanvas(true, true);
+      };
+
+      void generateWatercolourSvg(
+        input,
+        options,
+        shouldCancel,
+        updateProgress,
+        (partialPreview) => {
+          if (shouldCancel()) {
+            return;
+          }
+          this.preview = partialPreview;
+          this.setDirtyCanvas(true, true);
+        },
+      )
+        .then((result) => {
+          if (renderToken !== this.renderToken || !result) {
+            return;
+          }
+          this.preview = result.preview;
+          this.svg = result.svg;
+          this.strokeCount = result.strokeCount;
+          this.pathCount = result.pathCount;
+          this.outputWidth = result.width;
+          this.outputHeight = result.height;
+          this.progress = 1;
+          this.status = "ready";
+          this.executionMs = performance.now() - start;
+          this.isRendering = false;
+          this.setDirtyCanvas(true, true);
+        })
+        .catch((error) => {
+          if (renderToken !== this.renderToken) {
+            return;
+          }
+          this.preview = input;
+          this.svg = null;
+          this.strokeCount = 0;
+          this.pathCount = 0;
+          this.outputWidth = 0;
+          this.outputHeight = 0;
+          this.progress = 0;
+          this.status = error instanceof Error ? error.message : "watercolour error";
+          this.executionMs = null;
+          this.isRendering = false;
+          this.setDirtyCanvas(true, true);
+        });
+    }
+
+    this.setOutputData(0, this.preview ?? input);
+    this.setOutputData(1, this.svg);
+    this.refreshPreviewLayout();
+  }
+
+  onDrawBackground(this: PreviewAwareNode & WatercolourToolNode, context: CanvasRenderingContext2D) {
     const layout = drawImagePreview(context, this, this.preview, { footerLines: 4 });
     context.save();
     context.fillStyle = "rgba(255,255,255,0.65)";

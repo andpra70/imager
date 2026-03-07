@@ -7,6 +7,8 @@ import {
   createToolTitle,
   formatExecutionInfo,
   generateBicPencilSingleLineSvg,
+  generateGraphicHatchingSvg,
+  generateGraphicScumblingSvg,
   generateGraphicCrosshatichingSvg,
   generateGraphicScribblingSvg,
   generateSketchSvg,
@@ -942,6 +944,536 @@ export class GraphicTonalShadingToolNode {
   }
 
   onDrawBackground(this: PreviewAwareNode & GraphicTonalShadingToolNode, context: CanvasRenderingContext2D) {
+    const layout = drawImagePreview(context, this, this.preview, { footerLines: 5 });
+    context.save();
+    context.fillStyle = "rgba(255,255,255,0.65)";
+    context.font = "12px sans-serif";
+    context.fillText(`${this.status}${this.isRendering ? "..." : ""}`, 10, layout.footerTop + 12);
+    context.fillText(`progress ${Math.round(this.progress * 100)}% | strokes ${this.strokeCount}`, 10, layout.footerTop + 30);
+    context.fillText(`paths ${this.pathCount}`, 10, layout.footerTop + 48);
+    context.fillText(`out ${this.outputWidth || "-"}x${this.outputHeight || "-"}`, 10, layout.footerTop + 66);
+    context.fillText(formatExecutionInfo(this.executionMs), 10, layout.footerTop + 84);
+    context.restore();
+  }
+}
+
+export class GraphicHatchingToolNode {
+  size: [number, number] = [280, 920];
+  properties!: Record<string, unknown>;
+  preview: GraphImage | null = null;
+  svg: GraphSvg | null = null;
+  status = "idle";
+  progress = 0;
+  lineCount = 0;
+  pathCount = 0;
+  outputWidth = 0;
+  outputHeight = 0;
+  isRendering = false;
+  executionMs: number | null = null;
+  lastSignature = "";
+  lastOptionsSignature = "";
+  renderToken = 0;
+
+  constructor() {
+    const node = this as unknown as PreviewAwareNode & GraphicHatchingToolNode;
+    node.title = createToolTitle("Graphic Hatching");
+    node.properties = {
+      maxWidth: 1500,
+      preset: "NORMAL",
+      angleCount: 6,
+      baseSpacing: 5.6,
+      sampleStep: 1.4,
+      toneGamma: 1.08,
+      contrast: 1.16,
+      detailBoost: 0.88,
+      threshold: 0.1,
+      minSegmentLength: 3,
+      lineWidth: 0.58,
+      lineAlpha: 0.93,
+      lineColor: "#101010",
+      curveSmoothing: 0.68,
+      penUpDistanceFactor: 2.35,
+      maxPaths: 120000,
+      seed: 1,
+      simulateHand: false,
+      handWobble: 0.6,
+      handJitter: 0.35,
+      handBreakProb: 0.02,
+      handPressure: 0.24,
+    };
+    node.addInput("image", "image");
+    node.addOutput("image", "image");
+    node.addOutput("svg", "svg");
+    node.addWidget("slider", "Max width", 1500, (value) => {
+      node.properties.maxWidth = Math.round(Number(value));
+      notifyGraphStateChange(node);
+    }, { min: 256, max: 3200, step: 8 });
+    node.addWidget("combo", "Preset", "NORMAL", (value) => {
+      const raw = String(value).toUpperCase();
+      node.properties.preset = raw === "FAST" || raw === "SLOW" ? raw : "NORMAL";
+      notifyGraphStateChange(node);
+    }, { values: ["FAST", "NORMAL", "SLOW"] });
+    node.addWidget("slider", "Angles", 6, (value) => {
+      node.properties.angleCount = Math.round(Number(value));
+      notifyGraphStateChange(node);
+    }, { min: 2, max: 14, step: 1 });
+    node.addWidget("slider", "Spacing", 5.6, (value) => {
+      node.properties.baseSpacing = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 1.4, max: 64, step: 0.1, precision: 1 });
+    node.addWidget("slider", "Sample step", 1.4, (value) => {
+      node.properties.sampleStep = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0.45, max: 14, step: 0.05, precision: 2 });
+    node.addWidget("slider", "Tone gamma", 1.08, (value) => {
+      node.properties.toneGamma = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0.2, max: 4, step: 0.01, precision: 2 });
+    node.addWidget("slider", "Contrast", 1.16, (value) => {
+      node.properties.contrast = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0.2, max: 4, step: 0.01, precision: 2 });
+    node.addWidget("slider", "Detail", 0.88, (value) => {
+      node.properties.detailBoost = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0, max: 3.2, step: 0.01, precision: 2 });
+    node.addWidget("slider", "Threshold", 0.1, (value) => {
+      node.properties.threshold = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0, max: 0.99, step: 0.01, precision: 2 });
+    node.addWidget("slider", "Min seg", 3, (value) => {
+      node.properties.minSegmentLength = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0.5, max: 180, step: 0.1, precision: 1 });
+    node.addWidget("slider", "Line width", 0.58, (value) => {
+      node.properties.lineWidth = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0.08, max: 8, step: 0.01, precision: 2 });
+    node.addWidget("slider", "Line alpha", 0.93, (value) => {
+      node.properties.lineAlpha = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0.01, max: 1, step: 0.01, precision: 2 });
+    node.addWidget("text", "Line color", "#101010", (value) => {
+      node.properties.lineColor = normalizeHexColor(String(value));
+      notifyGraphStateChange(node);
+    });
+    node.addWidget("slider", "Smoothing", 0.68, (value) => {
+      node.properties.curveSmoothing = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0, max: 1.7, step: 0.01, precision: 2 });
+    node.addWidget("slider", "Pen-up jump", 2.35, (value) => {
+      node.properties.penUpDistanceFactor = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 1, max: 16, step: 0.1, precision: 1 });
+    node.addWidget("slider", "Max paths", 120000, (value) => {
+      node.properties.maxPaths = Math.round(Number(value));
+      notifyGraphStateChange(node);
+    }, { min: 300, max: 320000, step: 100 });
+    node.addWidget("combo", "Manual", "off", (value) => {
+      node.properties.simulateHand = String(value) === "on";
+      notifyGraphStateChange(node);
+    }, { values: ["off", "on"] });
+    node.addWidget("slider", "Hand wobble", 0.6, (value) => {
+      node.properties.handWobble = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0, max: 8, step: 0.01, precision: 2 });
+    node.addWidget("slider", "Hand jitter", 0.35, (value) => {
+      node.properties.handJitter = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0, max: 5, step: 0.01, precision: 2 });
+    node.addWidget("slider", "Hand breaks", 0.02, (value) => {
+      node.properties.handBreakProb = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0, max: 0.75, step: 0.001, precision: 3 });
+    node.addWidget("slider", "Hand pressure", 0.24, (value) => {
+      node.properties.handPressure = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0, max: 1, step: 0.01, precision: 2 });
+    node.addWidget("slider", "Seed", 1, (value) => {
+      node.properties.seed = Math.round(Number(value));
+      notifyGraphStateChange(node);
+    }, { min: 1, max: 1000000, step: 1 });
+    node.refreshPreviewLayout = () => refreshNode(node, node.preview, 5);
+    node.refreshPreviewLayout();
+  }
+
+  onExecute(this: PreviewAwareNode & GraphicHatchingToolNode) {
+    const inputValue = this.getInputData(0);
+    const input = isGraphImageReady(inputValue) ? inputValue : null;
+    if (!input) {
+      this.preview = null;
+      this.svg = null;
+      this.status = "waiting valid image";
+      this.progress = 0;
+      this.lineCount = 0;
+      this.pathCount = 0;
+      this.outputWidth = 0;
+      this.outputHeight = 0;
+      this.executionMs = null;
+      this.isRendering = false;
+      this.lastSignature = "";
+      this.lastOptionsSignature = "";
+      this.setOutputData(0, null);
+      this.setOutputData(1, null);
+      this.refreshPreviewLayout();
+      return;
+    }
+
+    const presetRaw = String(this.properties.preset ?? "NORMAL").toUpperCase();
+    const preset: "FAST" | "NORMAL" | "SLOW" =
+      presetRaw === "FAST" || presetRaw === "SLOW" ? presetRaw : "NORMAL";
+    const options = {
+      maxWidth: clamp(Math.round(Number(this.properties.maxWidth ?? 1500)), 256, 3200),
+      preset,
+      angleCount: clamp(Math.round(Number(this.properties.angleCount ?? 6)), 2, 14),
+      baseSpacing: clamp(Number(this.properties.baseSpacing ?? 5.6), 1.4, 64),
+      sampleStep: clamp(Number(this.properties.sampleStep ?? 1.4), 0.45, 14),
+      toneGamma: clamp(Number(this.properties.toneGamma ?? 1.08), 0.2, 4),
+      contrast: clamp(Number(this.properties.contrast ?? 1.16), 0.2, 4),
+      detailBoost: clamp(Number(this.properties.detailBoost ?? 0.88), 0, 3.2),
+      threshold: clamp(Number(this.properties.threshold ?? 0.1), 0, 0.99),
+      minSegmentLength: clamp(Number(this.properties.minSegmentLength ?? 3), 0.5, 180),
+      lineWidth: clamp(Number(this.properties.lineWidth ?? 0.58), 0.08, 8),
+      lineAlpha: clamp(Number(this.properties.lineAlpha ?? 0.93), 0.01, 1),
+      lineColor: normalizeHexColor(String(this.properties.lineColor ?? "#101010")),
+      curveSmoothing: clamp(Number(this.properties.curveSmoothing ?? 0.68), 0, 1.7),
+      penUpDistanceFactor: clamp(Number(this.properties.penUpDistanceFactor ?? 2.35), 1, 16),
+      maxPaths: clamp(Math.round(Number(this.properties.maxPaths ?? 120000)), 300, 320000),
+      seed: clamp(Math.round(Number(this.properties.seed ?? 1)), 1, 1000000),
+      simulateHand: Boolean(this.properties.simulateHand),
+      handWobble: clamp(Number(this.properties.handWobble ?? 0.6), 0, 8),
+      handJitter: clamp(Number(this.properties.handJitter ?? 0.35), 0, 5),
+      handBreakProb: clamp(Number(this.properties.handBreakProb ?? 0.02), 0, 0.75),
+      handPressure: clamp(Number(this.properties.handPressure ?? 0.24), 0, 1),
+    };
+
+    const signature = getGraphImageSignature(input);
+    const optionsSignature = JSON.stringify(options);
+    if (signature !== this.lastSignature || optionsSignature !== this.lastOptionsSignature) {
+      this.lastSignature = signature;
+      this.lastOptionsSignature = optionsSignature;
+      const renderToken = ++this.renderToken;
+      const start = performance.now();
+      this.isRendering = true;
+      this.progress = 0;
+      this.status = "generating hatching...";
+      this.setDirtyCanvas(true, true);
+
+      const shouldCancel = () => renderToken !== this.renderToken;
+      const updateProgress = (value: number, status?: string) => {
+        this.progress = clamp(value, 0, 1);
+        if (status) {
+          this.status = status;
+        }
+        this.setDirtyCanvas(true, true);
+      };
+
+      void generateGraphicHatchingSvg(input, options, shouldCancel, updateProgress)
+        .then((result) => {
+          if (renderToken !== this.renderToken || !result) return;
+          this.preview = result.preview;
+          this.svg = result.svg;
+          this.lineCount = result.lineCount;
+          this.pathCount = result.pathCount;
+          this.outputWidth = result.width;
+          this.outputHeight = result.height;
+          this.progress = 1;
+          this.status = "ready";
+          this.executionMs = performance.now() - start;
+          this.isRendering = false;
+          this.setDirtyCanvas(true, true);
+        })
+        .catch((error) => {
+          if (renderToken !== this.renderToken) return;
+          logNodeError("GraphicHatchingToolNode", error, {
+            options,
+            inputSize: `${input.width}x${input.height}`,
+          });
+          this.preview = input;
+          this.svg = null;
+          this.lineCount = 0;
+          this.pathCount = 0;
+          this.outputWidth = 0;
+          this.outputHeight = 0;
+          this.progress = 0;
+          this.status = error instanceof Error ? error.message : "graphic hatching error";
+          this.executionMs = null;
+          this.isRendering = false;
+          this.setDirtyCanvas(true, true);
+        });
+    }
+
+    this.setOutputData(0, this.preview ?? input);
+    this.setOutputData(1, this.svg);
+    this.refreshPreviewLayout();
+  }
+
+  onDrawBackground(this: PreviewAwareNode & GraphicHatchingToolNode, context: CanvasRenderingContext2D) {
+    const layout = drawImagePreview(context, this, this.preview, { footerLines: 5 });
+    context.save();
+    context.fillStyle = "rgba(255,255,255,0.65)";
+    context.font = "12px sans-serif";
+    context.fillText(`${this.status}${this.isRendering ? "..." : ""}`, 10, layout.footerTop + 12);
+    context.fillText(`progress ${Math.round(this.progress * 100)}% | lines ${this.lineCount}`, 10, layout.footerTop + 30);
+    context.fillText(`paths ${this.pathCount}`, 10, layout.footerTop + 48);
+    context.fillText(`out ${this.outputWidth || "-"}x${this.outputHeight || "-"}`, 10, layout.footerTop + 66);
+    context.fillText(formatExecutionInfo(this.executionMs), 10, layout.footerTop + 84);
+    context.restore();
+  }
+}
+
+export class GraphicScumblingToolNode {
+  size: [number, number] = [280, 940];
+  properties!: Record<string, unknown>;
+  preview: GraphImage | null = null;
+  svg: GraphSvg | null = null;
+  status = "idle";
+  progress = 0;
+  strokeCount = 0;
+  pathCount = 0;
+  outputWidth = 0;
+  outputHeight = 0;
+  isRendering = false;
+  executionMs: number | null = null;
+  lastSignature = "";
+  lastOptionsSignature = "";
+  renderToken = 0;
+
+  constructor() {
+    const node = this as unknown as PreviewAwareNode & GraphicScumblingToolNode;
+    node.title = createToolTitle("Graphic Scumbling");
+    node.properties = {
+      maxWidth: 1500,
+      preset: "NORMAL",
+      sampleGrid: 4.4,
+      baseRadius: 1.7,
+      radiusJitter: 0.8,
+      loopTurns: 1.8,
+      pointsPerTurn: 16,
+      toneGamma: 1.06,
+      contrast: 1.14,
+      detailBoost: 0.92,
+      threshold: 0.08,
+      lineWidth: 0.48,
+      lineAlpha: 0.92,
+      lineColor: "#111111",
+      curveSmoothing: 0.72,
+      maxPaths: 140000,
+      seed: 1,
+      simulateHand: true,
+      handWobble: 0.35,
+      handJitter: 0.25,
+      handBreakProb: 0.012,
+      handPressure: 0.24,
+    };
+    node.addInput("image", "image");
+    node.addOutput("image", "image");
+    node.addOutput("svg", "svg");
+    node.addWidget("slider", "Max width", 1500, (value) => {
+      node.properties.maxWidth = Math.round(Number(value));
+      notifyGraphStateChange(node);
+    }, { min: 256, max: 3200, step: 8 });
+    node.addWidget("combo", "Preset", "NORMAL", (value) => {
+      const raw = String(value).toUpperCase();
+      node.properties.preset = raw === "FAST" || raw === "SLOW" ? raw : "NORMAL";
+      notifyGraphStateChange(node);
+    }, { values: ["FAST", "NORMAL", "SLOW"] });
+    node.addWidget("slider", "Grid", 4.4, (value) => {
+      node.properties.sampleGrid = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 1.2, max: 24, step: 0.1, precision: 1 });
+    node.addWidget("slider", "Base radius", 1.7, (value) => {
+      node.properties.baseRadius = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0.3, max: 12, step: 0.05, precision: 2 });
+    node.addWidget("slider", "Radius jitter", 0.8, (value) => {
+      node.properties.radiusJitter = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0, max: 3, step: 0.01, precision: 2 });
+    node.addWidget("slider", "Turns", 1.8, (value) => {
+      node.properties.loopTurns = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0.5, max: 5, step: 0.05, precision: 2 });
+    node.addWidget("slider", "Pts/turn", 16, (value) => {
+      node.properties.pointsPerTurn = Math.round(Number(value));
+      notifyGraphStateChange(node);
+    }, { min: 4, max: 48, step: 1 });
+    node.addWidget("slider", "Tone gamma", 1.06, (value) => {
+      node.properties.toneGamma = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0.2, max: 4, step: 0.01, precision: 2 });
+    node.addWidget("slider", "Contrast", 1.14, (value) => {
+      node.properties.contrast = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0.2, max: 4, step: 0.01, precision: 2 });
+    node.addWidget("slider", "Detail", 0.92, (value) => {
+      node.properties.detailBoost = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0, max: 3.2, step: 0.01, precision: 2 });
+    node.addWidget("slider", "Threshold", 0.08, (value) => {
+      node.properties.threshold = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0, max: 0.99, step: 0.01, precision: 2 });
+    node.addWidget("slider", "Line width", 0.48, (value) => {
+      node.properties.lineWidth = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0.05, max: 8, step: 0.01, precision: 2 });
+    node.addWidget("slider", "Line alpha", 0.92, (value) => {
+      node.properties.lineAlpha = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0.01, max: 1, step: 0.01, precision: 2 });
+    node.addWidget("text", "Line color", "#111111", (value) => {
+      node.properties.lineColor = normalizeHexColor(String(value));
+      notifyGraphStateChange(node);
+    });
+    node.addWidget("slider", "Smoothing", 0.72, (value) => {
+      node.properties.curveSmoothing = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0, max: 1.8, step: 0.01, precision: 2 });
+    node.addWidget("slider", "Max paths", 140000, (value) => {
+      node.properties.maxPaths = Math.round(Number(value));
+      notifyGraphStateChange(node);
+    }, { min: 300, max: 320000, step: 100 });
+    node.addWidget("combo", "Manual", "on", (value) => {
+      node.properties.simulateHand = String(value) === "on";
+      notifyGraphStateChange(node);
+    }, { values: ["on", "off"] });
+    node.addWidget("slider", "Hand wobble", 0.35, (value) => {
+      node.properties.handWobble = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0, max: 4, step: 0.01, precision: 2 });
+    node.addWidget("slider", "Hand jitter", 0.25, (value) => {
+      node.properties.handJitter = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0, max: 4, step: 0.01, precision: 2 });
+    node.addWidget("slider", "Hand breaks", 0.012, (value) => {
+      node.properties.handBreakProb = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0, max: 0.6, step: 0.001, precision: 3 });
+    node.addWidget("slider", "Hand pressure", 0.24, (value) => {
+      node.properties.handPressure = Number(value);
+      notifyGraphStateChange(node);
+    }, { min: 0, max: 1, step: 0.01, precision: 2 });
+    node.addWidget("slider", "Seed", 1, (value) => {
+      node.properties.seed = Math.round(Number(value));
+      notifyGraphStateChange(node);
+    }, { min: 1, max: 1000000, step: 1 });
+    node.refreshPreviewLayout = () => refreshNode(node, node.preview, 5);
+    node.refreshPreviewLayout();
+  }
+
+  onExecute(this: PreviewAwareNode & GraphicScumblingToolNode) {
+    const inputValue = this.getInputData(0);
+    const input = isGraphImageReady(inputValue) ? inputValue : null;
+    if (!input) {
+      this.preview = null;
+      this.svg = null;
+      this.status = "waiting valid image";
+      this.progress = 0;
+      this.strokeCount = 0;
+      this.pathCount = 0;
+      this.outputWidth = 0;
+      this.outputHeight = 0;
+      this.executionMs = null;
+      this.isRendering = false;
+      this.lastSignature = "";
+      this.lastOptionsSignature = "";
+      this.setOutputData(0, null);
+      this.setOutputData(1, null);
+      this.refreshPreviewLayout();
+      return;
+    }
+
+    const presetRaw = String(this.properties.preset ?? "NORMAL").toUpperCase();
+    const preset: "FAST" | "NORMAL" | "SLOW" =
+      presetRaw === "FAST" || presetRaw === "SLOW" ? presetRaw : "NORMAL";
+    const options = {
+      maxWidth: clamp(Math.round(Number(this.properties.maxWidth ?? 1500)), 256, 3200),
+      preset,
+      sampleGrid: clamp(Number(this.properties.sampleGrid ?? 4.4), 1.2, 24),
+      baseRadius: clamp(Number(this.properties.baseRadius ?? 1.7), 0.3, 12),
+      radiusJitter: clamp(Number(this.properties.radiusJitter ?? 0.8), 0, 3),
+      loopTurns: clamp(Number(this.properties.loopTurns ?? 1.8), 0.5, 5),
+      pointsPerTurn: clamp(Math.round(Number(this.properties.pointsPerTurn ?? 16)), 4, 48),
+      toneGamma: clamp(Number(this.properties.toneGamma ?? 1.06), 0.2, 4),
+      contrast: clamp(Number(this.properties.contrast ?? 1.14), 0.2, 4),
+      detailBoost: clamp(Number(this.properties.detailBoost ?? 0.92), 0, 3.2),
+      threshold: clamp(Number(this.properties.threshold ?? 0.08), 0, 0.99),
+      lineWidth: clamp(Number(this.properties.lineWidth ?? 0.48), 0.05, 8),
+      lineAlpha: clamp(Number(this.properties.lineAlpha ?? 0.92), 0.01, 1),
+      lineColor: normalizeHexColor(String(this.properties.lineColor ?? "#111111")),
+      curveSmoothing: clamp(Number(this.properties.curveSmoothing ?? 0.72), 0, 1.8),
+      maxPaths: clamp(Math.round(Number(this.properties.maxPaths ?? 140000)), 300, 320000),
+      seed: clamp(Math.round(Number(this.properties.seed ?? 1)), 1, 1000000),
+      simulateHand: Boolean(this.properties.simulateHand),
+      handWobble: clamp(Number(this.properties.handWobble ?? 0.35), 0, 4),
+      handJitter: clamp(Number(this.properties.handJitter ?? 0.25), 0, 4),
+      handBreakProb: clamp(Number(this.properties.handBreakProb ?? 0.012), 0, 0.6),
+      handPressure: clamp(Number(this.properties.handPressure ?? 0.24), 0, 1),
+    };
+
+    const signature = getGraphImageSignature(input);
+    const optionsSignature = JSON.stringify(options);
+    if (signature !== this.lastSignature || optionsSignature !== this.lastOptionsSignature) {
+      this.lastSignature = signature;
+      this.lastOptionsSignature = optionsSignature;
+      const renderToken = ++this.renderToken;
+      const start = performance.now();
+      this.isRendering = true;
+      this.progress = 0;
+      this.status = "generating scumbling...";
+      this.setDirtyCanvas(true, true);
+
+      const shouldCancel = () => renderToken !== this.renderToken;
+      const updateProgress = (value: number, status?: string) => {
+        this.progress = clamp(value, 0, 1);
+        if (status) {
+          this.status = status;
+        }
+        this.setDirtyCanvas(true, true);
+      };
+
+      void generateGraphicScumblingSvg(input, options, shouldCancel, updateProgress)
+        .then((result) => {
+          if (renderToken !== this.renderToken || !result) return;
+          this.preview = result.preview;
+          this.svg = result.svg;
+          this.strokeCount = result.strokeCount;
+          this.pathCount = result.pathCount;
+          this.outputWidth = result.width;
+          this.outputHeight = result.height;
+          this.progress = 1;
+          this.status = "ready";
+          this.executionMs = performance.now() - start;
+          this.isRendering = false;
+          this.setDirtyCanvas(true, true);
+        })
+        .catch((error) => {
+          if (renderToken !== this.renderToken) return;
+          logNodeError("GraphicScumblingToolNode", error, {
+            options,
+            inputSize: `${input.width}x${input.height}`,
+          });
+          this.preview = input;
+          this.svg = null;
+          this.strokeCount = 0;
+          this.pathCount = 0;
+          this.outputWidth = 0;
+          this.outputHeight = 0;
+          this.progress = 0;
+          this.status = error instanceof Error ? error.message : "graphic scumbling error";
+          this.executionMs = null;
+          this.isRendering = false;
+          this.setDirtyCanvas(true, true);
+        });
+    }
+
+    this.setOutputData(0, this.preview ?? input);
+    this.setOutputData(1, this.svg);
+    this.refreshPreviewLayout();
+  }
+
+  onDrawBackground(this: PreviewAwareNode & GraphicScumblingToolNode, context: CanvasRenderingContext2D) {
     const layout = drawImagePreview(context, this, this.preview, { footerLines: 5 });
     context.save();
     context.fillStyle = "rgba(255,255,255,0.65)";

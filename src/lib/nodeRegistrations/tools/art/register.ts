@@ -4,6 +4,7 @@ interface ArtToolNodeCtors {
   OilToolNode: NodeCtor;
   Oil2ToolNode: NodeCtor;
   Oil3ToolNode: NodeCtor;
+  WatercolourToolNode: NodeCtor;
   LinesToolNode: NodeCtor;
   DotsToolNode: NodeCtor;
   AsciifyToolNode: NodeCtor;
@@ -27,6 +28,7 @@ export function registerArtToolNodes(registerNodeType: RegisterNodeTypeFn, ctors
   registerNodeType("tools/art/oil", ctors.OilToolNode);
   registerNodeType("tools/art/oil2", ctors.Oil2ToolNode);
   registerNodeType("tools/art/oil3", ctors.Oil3ToolNode);
+  registerNodeType("tools/art/watercolour", ctors.WatercolourToolNode);
   registerNodeType("tools/art/lines", ctors.LinesToolNode);
   registerNodeType("tools/art/dots", ctors.DotsToolNode);
   registerNodeType("tools/art/asciify", ctors.AsciifyToolNode);

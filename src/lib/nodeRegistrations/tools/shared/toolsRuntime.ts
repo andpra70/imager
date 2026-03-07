@@ -2035,6 +2035,24 @@ interface TonalShadingResult {
   height: number;
 }
 
+interface GraphicHatchingResult {
+  svg: GraphSvg;
+  preview: GraphImage;
+  lineCount: number;
+  pathCount: number;
+  width: number;
+  height: number;
+}
+
+interface GraphicScumblingResult {
+  svg: GraphSvg;
+  preview: GraphImage;
+  strokeCount: number;
+  pathCount: number;
+  width: number;
+  height: number;
+}
+
 interface GraphicCrosshatichingResult {
   svg: GraphSvg;
   preview: GraphImage;
@@ -2124,6 +2142,15 @@ interface Oil2Result {
 }
 
 interface Oil3Result {
+  svg: GraphSvg;
+  preview: GraphImage;
+  strokeCount: number;
+  pathCount: number;
+  width: number;
+  height: number;
+}
+
+interface WatercolourResult {
   svg: GraphSvg;
   preview: GraphImage;
   strokeCount: number;
@@ -4653,6 +4680,808 @@ export async function generateTonalShadingSvg(
   };
 }
 
+export async function generateGraphicHatchingSvg(
+  input: GraphImage,
+  options: {
+    maxWidth: number;
+    preset: "FAST" | "NORMAL" | "SLOW";
+    angleCount: number;
+    baseSpacing: number;
+    sampleStep: number;
+    toneGamma: number;
+    contrast: number;
+    detailBoost: number;
+    threshold: number;
+    minSegmentLength: number;
+    lineWidth: number;
+    lineAlpha: number;
+    lineColor: string;
+    curveSmoothing: number;
+    penUpDistanceFactor: number;
+    maxPaths: number;
+    seed: number;
+    simulateHand: boolean;
+    handWobble: number;
+    handJitter: number;
+    handBreakProb: number;
+    handPressure: number;
+  },
+  shouldCancel?: () => boolean,
+  onProgress?: (progress: number, status: string) => void,
+): Promise<GraphicHatchingResult | null> {
+  const maxWidth = clamp(Math.round(toFiniteNumber(options.maxWidth, 1400)), 256, 3200);
+  const presetRaw = String(options.preset ?? "NORMAL").toUpperCase();
+  const preset: "FAST" | "NORMAL" | "SLOW" =
+    presetRaw === "FAST" || presetRaw === "SLOW" ? presetRaw : "NORMAL";
+  const presetProfile =
+    preset === "FAST"
+      ? {
+        angleMul: 0.75,
+        spacingMul: 1.35,
+        stepMul: 1.25,
+        thresholdMul: 1.22,
+        detailMul: 0.85,
+        smoothingMul: 0.85,
+        maxPathsMul: 0.75,
+        alignBias: 0.6,
+        inkMul: 1.05,
+        refineMul: 0,
+      }
+      : preset === "SLOW"
+        ? {
+          angleMul: 1.45,
+          spacingMul: 0.8,
+          stepMul: 0.72,
+          thresholdMul: 0.84,
+          detailMul: 1.2,
+          smoothingMul: 1.2,
+          maxPathsMul: 1.45,
+          alignBias: 1.15,
+          inkMul: 0.92,
+          refineMul: 1,
+        }
+        : {
+          angleMul: 1,
+          spacingMul: 1,
+          stepMul: 1,
+          thresholdMul: 1,
+          detailMul: 1,
+          smoothingMul: 1,
+          maxPathsMul: 1,
+          alignBias: 1,
+          inkMul: 1,
+          refineMul: 0.35,
+        };
+
+  const angleCount = clamp(Math.round(toFiniteNumber(options.angleCount, 6) * presetProfile.angleMul), 2, 14);
+  const baseSpacing = clamp(toFiniteNumber(options.baseSpacing, 5.6) * presetProfile.spacingMul, 1.4, 64);
+  const sampleStep = clamp(toFiniteNumber(options.sampleStep, 1.4) * presetProfile.stepMul, 0.45, 14);
+  const toneGamma = clamp(toFiniteNumber(options.toneGamma, 1.08), 0.2, 4);
+  const contrast = clamp(toFiniteNumber(options.contrast, 1.16), 0.2, 4);
+  const detailBoost = clamp(toFiniteNumber(options.detailBoost, 0.88) * presetProfile.detailMul, 0, 3.2);
+  const threshold = clamp(toFiniteNumber(options.threshold, 0.1) * presetProfile.thresholdMul, 0, 0.99);
+  const minSegmentLength = clamp(toFiniteNumber(options.minSegmentLength, 3), 0.5, 180);
+  const lineWidth = clamp(toFiniteNumber(options.lineWidth, 0.58), 0.08, 8);
+  const lineAlpha = clamp(toFiniteNumber(options.lineAlpha, 0.93), 0.01, 1);
+  const lineColor = normalizeHexColor(String(options.lineColor ?? "#101010"));
+  const curveSmoothing = clamp(toFiniteNumber(options.curveSmoothing, 0.68) * presetProfile.smoothingMul, 0, 1.7);
+  const penUpDistanceFactor = clamp(toFiniteNumber(options.penUpDistanceFactor, 2.35), 1, 16);
+  const maxPaths = clamp(
+    Math.round(toFiniteNumber(options.maxPaths, 120000) * presetProfile.maxPathsMul),
+    300,
+    320000,
+  );
+  const seed = clamp(Math.round(toFiniteNumber(options.seed, 1)), 1, 1000000);
+  const simulateHand = Boolean(options.simulateHand);
+  const handWobble = clamp(toFiniteNumber(options.handWobble, 0.6), 0, 8);
+  const handJitter = clamp(toFiniteNumber(options.handJitter, 0.35), 0, 5);
+  const handBreakProb = clamp(toFiniteNumber(options.handBreakProb, 0.02), 0, 0.75);
+  const handPressure = clamp(toFiniteNumber(options.handPressure, 0.24), 0, 1);
+
+  const source = fitSourceToMaxWidthCanvas(input, maxWidth);
+  const width = source.width;
+  const height = source.height;
+  const sourceContext = source.getContext("2d", { willReadFrequently: true });
+  if (!sourceContext) {
+    throw new Error("2D context not available.");
+  }
+  const imageData = sourceContext.getImageData(0, 0, width, height);
+  const data = imageData.data;
+  const pixelCount = width * height;
+
+  const luminance = new Float32Array(pixelCount);
+  const darkness = new Float32Array(pixelCount);
+  for (let i = 0, p = 0; p < pixelCount; i += 4, p += 1) {
+    const lum = (0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2]) / 255;
+    luminance[p] = lum;
+    darkness[p] = clamp(Math.pow(1 - lum, toneGamma) * contrast, 0, 1);
+  }
+  const residual = new Float32Array(darkness);
+
+  const gxMap = new Float32Array(pixelCount);
+  const gyMap = new Float32Array(pixelCount);
+  const gradient = new Float32Array(pixelCount);
+  let maxGradient = 1e-6;
+  for (let y = 1; y < height - 1; y += 1) {
+    const row = y * width;
+    for (let x = 1; x < width - 1; x += 1) {
+      const i = row + x;
+      const tl = luminance[i - width - 1];
+      const tc = luminance[i - width];
+      const tr = luminance[i - width + 1];
+      const ml = luminance[i - 1];
+      const mr = luminance[i + 1];
+      const bl = luminance[i + width - 1];
+      const bc = luminance[i + width];
+      const br = luminance[i + width + 1];
+      const gx = -tl + tr - 2 * ml + 2 * mr - bl + br;
+      const gy = tl + 2 * tc + tr - bl - 2 * bc - br;
+      const g = Math.sqrt(gx * gx + gy * gy);
+      gxMap[i] = gx;
+      gyMap[i] = gy;
+      gradient[i] = g;
+      if (g > maxGradient) {
+        maxGradient = g;
+      }
+    }
+  }
+
+  const sampleMap = (map: Float32Array, x: number, y: number) => {
+    const sx = clamp(x, 0, width - 1);
+    const sy = clamp(y, 0, height - 1);
+    const x0 = Math.floor(sx);
+    const y0 = Math.floor(sy);
+    const x1 = Math.min(width - 1, x0 + 1);
+    const y1 = Math.min(height - 1, y0 + 1);
+    const fx = sx - x0;
+    const fy = sy - y0;
+    const v00 = map[y0 * width + x0];
+    const v10 = map[y0 * width + x1];
+    const v01 = map[y1 * width + x0];
+    const v11 = map[y1 * width + x1];
+    const vx0 = v00 + (v10 - v00) * fx;
+    const vx1 = v01 + (v11 - v01) * fx;
+    return vx0 + (vx1 - vx0) * fy;
+  };
+
+  const blendAngle = (a: number, b: number, amount: number) => {
+    const t = clamp(amount, 0, 1);
+    let delta = ((b - a + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
+    if (delta < -Math.PI) {
+      delta += Math.PI * 2;
+    } else if (delta > Math.PI) {
+      delta -= Math.PI * 2;
+    }
+    return a + delta * t;
+  };
+
+  const subtractInk = (x: number, y: number, amount: number, radius: number) => {
+    const minX = Math.max(0, Math.floor(x - radius));
+    const maxX = Math.min(width - 1, Math.ceil(x + radius));
+    const minY = Math.max(0, Math.floor(y - radius));
+    const maxY = Math.min(height - 1, Math.ceil(y + radius));
+    const r2 = radius * radius;
+    for (let py = minY; py <= maxY; py += 1) {
+      const row = py * width;
+      for (let px = minX; px <= maxX; px += 1) {
+        const dx = px + 0.5 - x;
+        const dy = py + 0.5 - y;
+        const dist2 = dx * dx + dy * dy;
+        if (dist2 > r2) {
+          continue;
+        }
+        const weight = 1 - dist2 / Math.max(r2, 1e-6);
+        const idx = row + px;
+        residual[idx] = Math.max(0, residual[idx] - amount * weight);
+      }
+    }
+  };
+
+  const rng = createSeededRandom(seed);
+  const preview = document.createElement("canvas");
+  preview.width = width;
+  preview.height = height;
+  const previewContext = preview.getContext("2d");
+  if (!previewContext) {
+    throw new Error("2D context not available.");
+  }
+  previewContext.fillStyle = "#FFFFFF";
+  previewContext.fillRect(0, 0, width, height);
+  previewContext.lineCap = "round";
+  previewContext.lineJoin = "round";
+
+  const svgPaths: string[] = [];
+  let lineCount = 0;
+  const centerX = width * 0.5;
+  const centerY = height * 0.5;
+  const baseRadius = Math.sqrt(width * width + height * height) * 0.62;
+  const thresholdStep = (1 - threshold) / Math.max(1, angleCount + 1);
+  const maxJumpDistance = Math.max(sampleStep * 1.5, baseSpacing * penUpDistanceFactor);
+  const minInkRadius = Math.max(0.55, lineWidth * (simulateHand ? 1.45 : 1.2));
+
+  const pushPath = (pts: Array<{ x: number; y: number }>, strokeWidth: number, strokeOpacity: number) => {
+    if (pts.length < 2 || svgPaths.length >= maxPaths) {
+      return;
+    }
+    let d = `M${pts[0].x.toFixed(2)},${pts[0].y.toFixed(2)}`;
+    if (curveSmoothing <= 0 || pts.length < 3) {
+      for (let i = 1; i < pts.length; i += 1) {
+        d += ` L${pts[i].x.toFixed(2)},${pts[i].y.toFixed(2)}`;
+      }
+    } else {
+      const smooth = curveSmoothing / 6;
+      for (let i = 0; i < pts.length - 1; i += 1) {
+        const p0 = pts[Math.max(0, i - 1)];
+        const p1 = pts[i];
+        const p2 = pts[i + 1];
+        const p3 = pts[Math.min(pts.length - 1, i + 2)];
+        const c1x = p1.x + (p2.x - p0.x) * smooth;
+        const c1y = p1.y + (p2.y - p0.y) * smooth;
+        const c2x = p2.x - (p3.x - p1.x) * smooth;
+        const c2y = p2.y - (p3.y - p1.y) * smooth;
+        d += ` C${c1x.toFixed(2)},${c1y.toFixed(2)} ${c2x.toFixed(2)},${c2y.toFixed(2)} ${p2.x.toFixed(2)},${p2.y.toFixed(2)}`;
+      }
+    }
+    svgPaths.push(
+      `<path d="${d}" fill="none" stroke="${lineColor}" stroke-width="${strokeWidth.toFixed(3)}" stroke-opacity="${strokeOpacity.toFixed(4)}" stroke-linecap="round" stroke-linejoin="round"/>`,
+    );
+  };
+
+  const drawSegment = (pts: Array<{ x: number; y: number }>, avgTone: number, avgDetail: number) => {
+    if (pts.length < 2 || svgPaths.length >= maxPaths) {
+      return;
+    }
+    const pressure = simulateHand ? (rng() * 2 - 1) * handPressure : 0;
+    const toneFactor = 0.76 + avgTone * 0.45 + avgDetail * 0.16;
+    const strokeWidth = Math.max(0.05, lineWidth * (toneFactor + pressure * 0.25));
+    const strokeOpacity = clamp(lineAlpha * (0.86 + avgTone * 0.22), 0.03, 1);
+    previewContext.strokeStyle = lineColor;
+    previewContext.globalAlpha = strokeOpacity;
+    previewContext.lineWidth = strokeWidth;
+    previewContext.beginPath();
+    previewContext.moveTo(pts[0].x, pts[0].y);
+    for (let i = 1; i < pts.length; i += 1) {
+      previewContext.lineTo(pts[i].x, pts[i].y);
+    }
+    previewContext.stroke();
+    pushPath(pts, strokeWidth, strokeOpacity);
+    lineCount += 1;
+
+    const inkAmount = avgTone * 0.12 * presetProfile.inkMul + avgDetail * 0.05;
+    const inkRadius = minInkRadius * (0.9 + avgTone * 0.9);
+    for (let i = 0; i < pts.length; i += 1) {
+      subtractInk(pts[i].x, pts[i].y, inkAmount, inkRadius);
+    }
+  };
+
+  for (let layer = 0; layer < angleCount; layer += 1) {
+    if (shouldCancel?.()) {
+      return null;
+    }
+    const layerAngle = (layer / angleCount) * Math.PI;
+    const dirX = Math.cos(layerAngle);
+    const dirY = Math.sin(layerAngle);
+    const normalX = -dirY;
+    const normalY = dirX;
+    const layerThreshold = threshold + thresholdStep * layer;
+    const spacing = baseSpacing * (1 + layer * 0.12);
+    const lineTotal = Math.ceil((baseRadius * 2) / spacing) + 2;
+
+    for (let lineIndex = 0; lineIndex < lineTotal; lineIndex += 1) {
+      if (shouldCancel?.()) {
+        return null;
+      }
+      if (svgPaths.length >= maxPaths) {
+        break;
+      }
+      const offset = -baseRadius + lineIndex * spacing;
+      const anchorX = centerX + normalX * offset;
+      const anchorY = centerY + normalY * offset;
+      const tStart = -baseRadius;
+      const tEnd = baseRadius;
+      let segment: Array<{ x: number; y: number }> = [];
+      let segmentLen = 0;
+      let toneAcc = 0;
+      let detailAcc = 0;
+      let samples = 0;
+      let prev: { x: number; y: number } | null = null;
+
+      const flush = () => {
+        if (segment.length >= 2 && segmentLen >= minSegmentLength) {
+          drawSegment(
+            segment,
+            samples > 0 ? toneAcc / samples : 0,
+            samples > 0 ? detailAcc / samples : 0,
+          );
+        }
+        segment = [];
+        segmentLen = 0;
+        toneAcc = 0;
+        detailAcc = 0;
+        samples = 0;
+      };
+
+      for (let t = tStart; t <= tEnd; t += sampleStep) {
+        const bx = anchorX + dirX * t;
+        const by = anchorY + dirY * t;
+        if (bx < 0 || by < 0 || bx >= width || by >= height) {
+          flush();
+          prev = null;
+          continue;
+        }
+        const residualTone = sampleMap(residual, bx, by);
+        const gradNorm = clamp(sampleMap(gradient, bx, by) / maxGradient, 0, 1);
+        const activity = clamp(residualTone * (0.82 + detailBoost * gradNorm), 0, 1);
+        const isActive = activity >= layerThreshold;
+        if (!isActive || (simulateHand && rng() < handBreakProb * (0.55 + activity * 0.9))) {
+          flush();
+          prev = null;
+          continue;
+        }
+
+        const gx = sampleMap(gxMap, bx, by);
+        const gy = sampleMap(gyMap, bx, by);
+        const tangentAngle = Math.atan2(gy, gx) + Math.PI * 0.5;
+        const localAngle = blendAngle(
+          layerAngle,
+          tangentAngle,
+          clamp(gradNorm * 0.58 * presetProfile.alignBias, 0, 0.88),
+        );
+        const localPerpX = -Math.sin(localAngle);
+        const localPerpY = Math.cos(localAngle);
+        const wobble =
+          simulateHand
+            ? Math.sin(t * 0.21 + layer * 0.57) * handWobble * (0.35 + activity * 0.7)
+            : 0;
+        const px = clamp(bx + localPerpX * wobble + (simulateHand ? (rng() * 2 - 1) * handJitter : 0), 0, width);
+        const py = clamp(by + localPerpY * wobble + (simulateHand ? (rng() * 2 - 1) * handJitter : 0), 0, height);
+        const point = { x: px, y: py };
+        if (prev) {
+          const dx = point.x - prev.x;
+          const dy = point.y - prev.y;
+          const jump = Math.sqrt(dx * dx + dy * dy);
+          if (jump > maxJumpDistance) {
+            flush();
+            segment.push(point);
+            prev = point;
+            toneAcc += residualTone;
+            detailAcc += gradNorm;
+            samples += 1;
+            continue;
+          }
+          segmentLen += jump;
+        }
+        segment.push(point);
+        prev = point;
+        toneAcc += residualTone;
+        detailAcc += gradNorm;
+        samples += 1;
+      }
+      flush();
+    }
+
+    onProgress?.((layer + 1) / (angleCount + 1), `hatching ${layer + 1}/${angleCount}`);
+    await yieldToUi();
+  }
+
+  if (presetProfile.refineMul > 0 && svgPaths.length < maxPaths) {
+    const refineStep = Math.max(2, baseSpacing * 0.7);
+    const refineLength = Math.max(3, baseSpacing * 1.45);
+    const refineThreshold = Math.max(0.09, threshold * 0.78);
+    const refineCap = Math.floor((width * height) / 320 * presetProfile.refineMul);
+    let produced = 0;
+    for (let y = refineStep * 0.5; y < height; y += refineStep) {
+      if (shouldCancel?.()) {
+        return null;
+      }
+      if (produced >= refineCap || svgPaths.length >= maxPaths) {
+        break;
+      }
+      for (let x = refineStep * 0.5; x < width; x += refineStep) {
+        if (produced >= refineCap || svgPaths.length >= maxPaths) {
+          break;
+        }
+        const tone = sampleMap(residual, x, y);
+        if (tone < refineThreshold) {
+          continue;
+        }
+        const gx = sampleMap(gxMap, x, y);
+        const gy = sampleMap(gyMap, x, y);
+        const tangentAngle = Math.atan2(gy, gx) + Math.PI * 0.5;
+        const half = refineLength * (0.55 + tone * 0.65) * 0.5;
+        const x1 = clamp(x - Math.cos(tangentAngle) * half, 0, width);
+        const y1 = clamp(y - Math.sin(tangentAngle) * half, 0, height);
+        const x2 = clamp(x + Math.cos(tangentAngle) * half, 0, width);
+        const y2 = clamp(y + Math.sin(tangentAngle) * half, 0, height);
+        drawSegment([{ x: x1, y: y1 }, { x: x2, y: y2 }], tone, clamp(sampleMap(gradient, x, y) / maxGradient, 0, 1));
+        produced += 1;
+      }
+      onProgress?.(clamp(0.92 + (produced / Math.max(1, refineCap)) * 0.08, 0, 1), `refine ${produced}/${Math.max(1, refineCap)}`);
+      await yieldToUi();
+    }
+  }
+
+  onProgress?.(1, "ready");
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><rect width="100%" height="100%" fill="#FFFFFF"/>${svgPaths.join("")}</svg>`;
+  return {
+    svg,
+    preview,
+    lineCount,
+    pathCount: svgPaths.length,
+    width,
+    height,
+  };
+}
+
+export async function generateGraphicScumblingSvg(
+  input: GraphImage,
+  options: {
+    maxWidth: number;
+    preset: "FAST" | "NORMAL" | "SLOW";
+    sampleGrid: number;
+    baseRadius: number;
+    radiusJitter: number;
+    loopTurns: number;
+    pointsPerTurn: number;
+    toneGamma: number;
+    contrast: number;
+    detailBoost: number;
+    threshold: number;
+    lineWidth: number;
+    lineAlpha: number;
+    lineColor: string;
+    curveSmoothing: number;
+    maxPaths: number;
+    seed: number;
+    simulateHand: boolean;
+    handWobble: number;
+    handJitter: number;
+    handBreakProb: number;
+    handPressure: number;
+  },
+  shouldCancel?: () => boolean,
+  onProgress?: (progress: number, status: string) => void,
+): Promise<GraphicScumblingResult | null> {
+  const maxWidth = clamp(Math.round(toFiniteNumber(options.maxWidth, 1500)), 256, 3200);
+  const presetRaw = String(options.preset ?? "NORMAL").toUpperCase();
+  const preset: "FAST" | "NORMAL" | "SLOW" =
+    presetRaw === "FAST" || presetRaw === "SLOW" ? presetRaw : "NORMAL";
+  const presetProfile =
+    preset === "FAST"
+      ? {
+        gridMul: 1.45,
+        radiusMul: 1.05,
+        turnsMul: 0.78,
+        pointsMul: 0.8,
+        detailMul: 0.85,
+        thresholdMul: 1.22,
+        smoothingMul: 0.9,
+        maxPathsMul: 0.7,
+        passCount: 1,
+        residualMul: 1.08,
+      }
+      : preset === "SLOW"
+        ? {
+          gridMul: 0.72,
+          radiusMul: 0.92,
+          turnsMul: 1.28,
+          pointsMul: 1.3,
+          detailMul: 1.22,
+          thresholdMul: 0.82,
+          smoothingMul: 1.15,
+          maxPathsMul: 1.45,
+          passCount: 3,
+          residualMul: 0.9,
+        }
+        : {
+          gridMul: 1,
+          radiusMul: 1,
+          turnsMul: 1,
+          pointsMul: 1,
+          detailMul: 1,
+          thresholdMul: 1,
+          smoothingMul: 1,
+          maxPathsMul: 1,
+          passCount: 2,
+          residualMul: 1,
+        };
+
+  const sampleGrid = clamp(toFiniteNumber(options.sampleGrid, 4.4) * presetProfile.gridMul, 1, 32);
+  const baseRadius = clamp(toFiniteNumber(options.baseRadius, 1.7) * presetProfile.radiusMul, 0.2, 14);
+  const radiusJitter = clamp(toFiniteNumber(options.radiusJitter, 0.8), 0, 4);
+  const loopTurns = clamp(toFiniteNumber(options.loopTurns, 1.8) * presetProfile.turnsMul, 0.4, 6);
+  const pointsPerTurn = clamp(
+    Math.round(toFiniteNumber(options.pointsPerTurn, 16) * presetProfile.pointsMul),
+    4,
+    64,
+  );
+  const toneGamma = clamp(toFiniteNumber(options.toneGamma, 1.06), 0.2, 4);
+  const contrast = clamp(toFiniteNumber(options.contrast, 1.14), 0.2, 4);
+  const detailBoost = clamp(toFiniteNumber(options.detailBoost, 0.92) * presetProfile.detailMul, 0, 3.4);
+  const threshold = clamp(toFiniteNumber(options.threshold, 0.08) * presetProfile.thresholdMul, 0, 0.99);
+  const lineWidth = clamp(toFiniteNumber(options.lineWidth, 0.48), 0.05, 8);
+  const lineAlpha = clamp(toFiniteNumber(options.lineAlpha, 0.92), 0.01, 1);
+  const lineColor = normalizeHexColor(String(options.lineColor ?? "#111111"));
+  const curveSmoothing = clamp(toFiniteNumber(options.curveSmoothing, 0.72) * presetProfile.smoothingMul, 0, 2);
+  const maxPaths = clamp(
+    Math.round(toFiniteNumber(options.maxPaths, 140000) * presetProfile.maxPathsMul),
+    300,
+    320000,
+  );
+  const seed = clamp(Math.round(toFiniteNumber(options.seed, 1)), 1, 1000000);
+  const simulateHand = Boolean(options.simulateHand);
+  const handWobble = clamp(toFiniteNumber(options.handWobble, 0.35), 0, 6);
+  const handJitter = clamp(toFiniteNumber(options.handJitter, 0.25), 0, 5);
+  const handBreakProb = clamp(toFiniteNumber(options.handBreakProb, 0.012), 0, 0.7);
+  const handPressure = clamp(toFiniteNumber(options.handPressure, 0.24), 0, 1);
+
+  const source = fitSourceToMaxWidthCanvas(input, maxWidth);
+  const width = source.width;
+  const height = source.height;
+  const sourceContext = source.getContext("2d", { willReadFrequently: true });
+  if (!sourceContext) {
+    throw new Error("2D context not available.");
+  }
+  const imageData = sourceContext.getImageData(0, 0, width, height);
+  const data = imageData.data;
+  const pixelCount = width * height;
+
+  const luminance = new Float32Array(pixelCount);
+  const darkness = new Float32Array(pixelCount);
+  for (let i = 0, p = 0; p < pixelCount; i += 4, p += 1) {
+    const lum = (0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2]) / 255;
+    luminance[p] = lum;
+    darkness[p] = clamp(Math.pow(1 - lum, toneGamma) * contrast, 0, 1);
+  }
+  const residual = new Float32Array(darkness);
+
+  const gxMap = new Float32Array(pixelCount);
+  const gyMap = new Float32Array(pixelCount);
+  const gradient = new Float32Array(pixelCount);
+  let maxGradient = 1e-6;
+  for (let y = 1; y < height - 1; y += 1) {
+    const row = y * width;
+    for (let x = 1; x < width - 1; x += 1) {
+      const i = row + x;
+      const tl = luminance[i - width - 1];
+      const tc = luminance[i - width];
+      const tr = luminance[i - width + 1];
+      const ml = luminance[i - 1];
+      const mr = luminance[i + 1];
+      const bl = luminance[i + width - 1];
+      const bc = luminance[i + width];
+      const br = luminance[i + width + 1];
+      const gx = -tl + tr - 2 * ml + 2 * mr - bl + br;
+      const gy = tl + 2 * tc + tr - bl - 2 * bc - br;
+      const g = Math.sqrt(gx * gx + gy * gy);
+      gxMap[i] = gx;
+      gyMap[i] = gy;
+      gradient[i] = g;
+      if (g > maxGradient) {
+        maxGradient = g;
+      }
+    }
+  }
+
+  const sampleMap = (map: Float32Array, x: number, y: number) => {
+    const sx = clamp(x, 0, width - 1);
+    const sy = clamp(y, 0, height - 1);
+    const x0 = Math.floor(sx);
+    const y0 = Math.floor(sy);
+    const x1 = Math.min(width - 1, x0 + 1);
+    const y1 = Math.min(height - 1, y0 + 1);
+    const fx = sx - x0;
+    const fy = sy - y0;
+    const v00 = map[y0 * width + x0];
+    const v10 = map[y0 * width + x1];
+    const v01 = map[y1 * width + x0];
+    const v11 = map[y1 * width + x1];
+    const vx0 = v00 + (v10 - v00) * fx;
+    const vx1 = v01 + (v11 - v01) * fx;
+    return vx0 + (vx1 - vx0) * fy;
+  };
+
+  const subtractInk = (x: number, y: number, amount: number, radius: number) => {
+    const minX = Math.max(0, Math.floor(x - radius));
+    const maxX = Math.min(width - 1, Math.ceil(x + radius));
+    const minY = Math.max(0, Math.floor(y - radius));
+    const maxY = Math.min(height - 1, Math.ceil(y + radius));
+    const r2 = radius * radius;
+    for (let py = minY; py <= maxY; py += 1) {
+      const row = py * width;
+      for (let px = minX; px <= maxX; px += 1) {
+        const dx = px + 0.5 - x;
+        const dy = py + 0.5 - y;
+        const dist2 = dx * dx + dy * dy;
+        if (dist2 > r2) {
+          continue;
+        }
+        const weight = 1 - dist2 / Math.max(1e-6, r2);
+        const idx = row + px;
+        residual[idx] = Math.max(0, residual[idx] - amount * weight * presetProfile.residualMul);
+      }
+    }
+  };
+
+  const rng = createSeededRandom(seed);
+  const preview = document.createElement("canvas");
+  preview.width = width;
+  preview.height = height;
+  const previewContext = preview.getContext("2d");
+  if (!previewContext) {
+    throw new Error("2D context not available.");
+  }
+  previewContext.fillStyle = "#FFFFFF";
+  previewContext.fillRect(0, 0, width, height);
+  previewContext.lineCap = "round";
+  previewContext.lineJoin = "round";
+
+  const pathElements: string[] = [];
+  let strokeCount = 0;
+
+  const drawPath = (
+    points: Array<{ x: number; y: number }>,
+    tone: number,
+    detail: number,
+  ) => {
+    if (points.length < 2 || pathElements.length >= maxPaths) {
+      return;
+    }
+    const widthNoise = simulateHand ? (rng() * 2 - 1) * handPressure * 0.3 : 0;
+    const strokeWidth = Math.max(0.05, lineWidth * (0.82 + tone * 0.48 + detail * 0.12 + widthNoise));
+    const strokeOpacity = clamp(lineAlpha * (0.84 + tone * 0.24), 0.03, 1);
+
+    previewContext.strokeStyle = lineColor;
+    previewContext.lineWidth = strokeWidth;
+    previewContext.globalAlpha = strokeOpacity;
+    previewContext.beginPath();
+    previewContext.moveTo(points[0].x, points[0].y);
+    for (let i = 1; i < points.length; i += 1) {
+      previewContext.lineTo(points[i].x, points[i].y);
+    }
+    previewContext.stroke();
+
+    let d = `M${points[0].x.toFixed(2)},${points[0].y.toFixed(2)}`;
+    if (curveSmoothing <= 0 || points.length < 3) {
+      for (let i = 1; i < points.length; i += 1) {
+        d += ` L${points[i].x.toFixed(2)},${points[i].y.toFixed(2)}`;
+      }
+    } else {
+      const smooth = curveSmoothing / 6;
+      for (let i = 0; i < points.length - 1; i += 1) {
+        const p0 = points[Math.max(0, i - 1)];
+        const p1 = points[i];
+        const p2 = points[i + 1];
+        const p3 = points[Math.min(points.length - 1, i + 2)];
+        const c1x = p1.x + (p2.x - p0.x) * smooth;
+        const c1y = p1.y + (p2.y - p0.y) * smooth;
+        const c2x = p2.x - (p3.x - p1.x) * smooth;
+        const c2y = p2.y - (p3.y - p1.y) * smooth;
+        d += ` C${c1x.toFixed(2)},${c1y.toFixed(2)} ${c2x.toFixed(2)},${c2y.toFixed(2)} ${p2.x.toFixed(2)},${p2.y.toFixed(2)}`;
+      }
+    }
+    pathElements.push(
+      `<path d="${d}" fill="none" stroke="${lineColor}" stroke-width="${strokeWidth.toFixed(3)}" stroke-opacity="${strokeOpacity.toFixed(4)}" stroke-linecap="round" stroke-linejoin="round"/>`,
+    );
+    strokeCount += 1;
+  };
+
+  let totalRowsEstimate = 0;
+  for (let pass = 0; pass < presetProfile.passCount; pass += 1) {
+    totalRowsEstimate += height / Math.max(1, sampleGrid * (1 + pass * 0.33));
+  }
+  const totalRowsApprox = Math.max(1, Math.round(totalRowsEstimate));
+  let processedRows = 0;
+
+  for (let pass = 0; pass < presetProfile.passCount; pass += 1) {
+    if (shouldCancel?.()) {
+      return null;
+    }
+    const passGrid = sampleGrid * (1 + pass * 0.33);
+    const passThreshold = clamp(threshold * (1 + pass * 0.08), 0, 0.995);
+    const rowStep = Math.max(0.75, passGrid);
+    const colStep = Math.max(0.75, passGrid);
+    const yStart = (pass % 2) * rowStep * 0.45;
+
+    for (let y = yStart; y < height; y += rowStep) {
+      if (shouldCancel?.()) {
+        return null;
+      }
+      if (pathElements.length >= maxPaths) {
+        break;
+      }
+      const xStart = ((Math.floor(y / rowStep) + pass) % 2) * colStep * 0.5;
+      for (let x = xStart; x < width; x += colStep) {
+        if (pathElements.length >= maxPaths) {
+          break;
+        }
+        const cx = clamp(x + (rng() * 2 - 1) * colStep * 0.35, 0, width - 1e-3);
+        const cy = clamp(y + (rng() * 2 - 1) * rowStep * 0.35, 0, height - 1e-3);
+        const tone = sampleMap(residual, cx, cy);
+        const detail = clamp(sampleMap(gradient, cx, cy) / maxGradient, 0, 1);
+        const activity = clamp(tone * (0.78 + detail * detailBoost), 0, 1);
+        if (activity < passThreshold) {
+          continue;
+        }
+
+        const gx = sampleMap(gxMap, cx, cy);
+        const gy = sampleMap(gyMap, cx, cy);
+        const tangentAngle = Math.atan2(gy, gx) + Math.PI * 0.5;
+        const orientation = tangentAngle + (rng() * 2 - 1) * Math.PI * 0.12;
+        const radiusBase = baseRadius * (0.62 + activity * 1.45);
+        const rx = Math.max(
+          0.18,
+          radiusBase * (1 + (rng() * 2 - 1) * radiusJitter * 0.55),
+        );
+        const ry = Math.max(
+          0.18,
+          radiusBase * (0.62 + detail * 0.55 + (rng() * 2 - 1) * radiusJitter * 0.35),
+        );
+        const turns = loopTurns * (0.72 + activity * 1.05 + pass * 0.12);
+        const sampleCount = clamp(Math.round(pointsPerTurn * turns), 6, 520);
+        const thetaMax = Math.PI * 2 * turns;
+        const points: Array<{ x: number; y: number }> = [];
+        let kept = 0;
+        for (let i = 0; i <= sampleCount; i += 1) {
+          if (simulateHand && rng() < handBreakProb * 0.22) {
+            continue;
+          }
+          const t = i / Math.max(1, sampleCount);
+          const theta = thetaMax * t;
+          const pressurePulse = simulateHand
+            ? 1 + Math.sin(theta * 0.8 + pass * 0.6) * handWobble * 0.11
+            : 1;
+          const spiral = 1 - t * 0.34 + (rng() * 2 - 1) * 0.03;
+          const localRx = rx * spiral * pressurePulse;
+          const localRy = ry * spiral * pressurePulse;
+          const sx = Math.cos(theta) * localRx;
+          const sy = Math.sin(theta) * localRy;
+          const rotX = sx * Math.cos(orientation) - sy * Math.sin(orientation);
+          const rotY = sx * Math.sin(orientation) + sy * Math.cos(orientation);
+          const px = clamp(
+            cx + rotX + (simulateHand ? (rng() * 2 - 1) * handJitter : 0),
+            0,
+            width,
+          );
+          const py = clamp(
+            cy + rotY + (simulateHand ? (rng() * 2 - 1) * handJitter : 0),
+            0,
+            height,
+          );
+          points.push({ x: px, y: py });
+          kept += 1;
+        }
+        if (kept < 4) {
+          continue;
+        }
+        drawPath(points, activity, detail);
+        const inkAmount = activity * 0.095 + detail * 0.03;
+        const inkRadius = Math.max(0.5, Math.max(rx, ry) * 0.65);
+        subtractInk(cx, cy, inkAmount, inkRadius);
+      }
+      processedRows += 1;
+      onProgress?.(
+        clamp(processedRows / totalRowsApprox, 0, 1),
+        `scumbling pass ${pass + 1}/${presetProfile.passCount}`,
+      );
+      if (processedRows % 4 === 0) {
+        await yieldToUi();
+      }
+    }
+  }
+
+  onProgress?.(1, "ready");
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><rect width="100%" height="100%" fill="#FFFFFF"/>${pathElements.join("")}</svg>`;
+  return {
+    svg,
+    preview,
+    strokeCount,
+    pathCount: pathElements.length,
+    width,
+    height,
+  };
+}
+
 export async function generateGraphicCrosshatichingSvg(
   input: GraphImage,
   options: {
@@ -5659,6 +6488,284 @@ export async function generateOil3Svg(
   const pathCount = svgPaths.length;
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><rect width="100%" height="100%" fill="${backgroundColor}"/>${svgPaths.join("")}</svg>`;
   onProgress?.(1, "ready");
+  return { svg, preview, strokeCount, pathCount, width, height };
+}
+
+export async function generateWatercolourSvg(
+  input: GraphImage,
+  options: {
+    maxWidth: number;
+    preset: "fast" | "normal" | "slow";
+    baseCell: number;
+    washLayers: number;
+    bleedSteps: number;
+    bleedStrength: number;
+    transparency: number;
+    strokeDensity: number;
+    strokeLength: number;
+    lineWidth: number;
+    threshold: number;
+    colorBleed: number;
+    granulation: number;
+    seed: number;
+    refreshEvery: number;
+    maxSvgPaths: number;
+    backgroundColor: string;
+  },
+  shouldCancel?: () => boolean,
+  onProgress?: (progress: number, status: string) => void,
+  onPreview?: (preview: GraphImage) => void,
+): Promise<WatercolourResult | null> {
+  const maxWidth = clamp(Math.round(toFiniteNumber(options.maxWidth, 1200)), 128, 3200);
+  const presetRaw = String(options.preset ?? "normal").toLowerCase();
+  const preset: "fast" | "normal" | "slow" =
+    presetRaw === "fast" || presetRaw === "slow" ? presetRaw : "normal";
+  const presetProfile =
+    preset === "fast"
+      ? { cellMul: 1.35, layerMul: 0.7, bleedMul: 0.75, densityMul: 0.65, pathMul: 0.7 }
+      : preset === "slow"
+        ? { cellMul: 0.78, layerMul: 1.4, bleedMul: 1.25, densityMul: 1.35, pathMul: 1.45 }
+        : { cellMul: 1, layerMul: 1, bleedMul: 1, densityMul: 1, pathMul: 1 };
+
+  const source = fitSourceToMaxWidthCanvas(input, maxWidth);
+  const width = source.width;
+  const height = source.height;
+  const sourceCtx = source.getContext("2d", { willReadFrequently: true });
+  if (!sourceCtx) {
+    throw new Error("2D context not available.");
+  }
+  const imageData = sourceCtx.getImageData(0, 0, width, height);
+  const pixels = imageData.data;
+
+  const cellSize = clamp(toFiniteNumber(options.baseCell, 12) * presetProfile.cellMul, 2, 64);
+  const washLayers = clamp(Math.round(toFiniteNumber(options.washLayers, 3) * presetProfile.layerMul), 1, 8);
+  const bleedSteps = clamp(Math.round(toFiniteNumber(options.bleedSteps, 3) * presetProfile.bleedMul), 0, 8);
+  const bleedStrength = clamp(toFiniteNumber(options.bleedStrength, 0.65), 0, 2);
+  const transparency = clamp(toFiniteNumber(options.transparency, 0.7), 0.05, 1);
+  const strokeDensity = clamp(toFiniteNumber(options.strokeDensity, 0.55) * presetProfile.densityMul, 0, 2);
+  const strokeLength = clamp(toFiniteNumber(options.strokeLength, 12), 1, 80);
+  const lineWidth = clamp(toFiniteNumber(options.lineWidth, 1.2), 0.1, 12);
+  const threshold = clamp(toFiniteNumber(options.threshold, 0.08), 0, 1);
+  const colorBleed = clamp(toFiniteNumber(options.colorBleed, 0.5), 0, 1);
+  const granulation = clamp(toFiniteNumber(options.granulation, 0.4), 0, 1);
+  const seed = Math.round(toFiniteNumber(options.seed, 1337));
+  const refreshEvery = clamp(Math.round(toFiniteNumber(options.refreshEvery, 18)), 1, 512);
+  const maxSvgPaths = clamp(
+    Math.round(toFiniteNumber(options.maxSvgPaths, 90000) * presetProfile.pathMul),
+    1000,
+    320000,
+  );
+  const backgroundColor = normalizeHexColor(String(options.backgroundColor ?? "#FFFFFF"));
+
+  const preview = document.createElement("canvas");
+  preview.width = width;
+  preview.height = height;
+  const previewCtx = preview.getContext("2d");
+  if (!previewCtx) {
+    throw new Error("2D context not available.");
+  }
+  previewCtx.fillStyle = backgroundColor;
+  previewCtx.fillRect(0, 0, width, height);
+
+  const luminance = new Float32Array(width * height);
+  const gxMap = new Float32Array(width * height);
+  const gyMap = new Float32Array(width * height);
+  for (let y = 0; y < height; y += 1) {
+    const row = y * width;
+    for (let x = 0; x < width; x += 1) {
+      const i = (row + x) * 4;
+      luminance[row + x] = (0.299 * pixels[i] + 0.587 * pixels[i + 1] + 0.114 * pixels[i + 2]) / 255;
+    }
+  }
+  for (let y = 1; y < height - 1; y += 1) {
+    const row = y * width;
+    for (let x = 1; x < width - 1; x += 1) {
+      const i = row + x;
+      const tl = luminance[i - width - 1];
+      const tc = luminance[i - width];
+      const tr = luminance[i - width + 1];
+      const ml = luminance[i - 1];
+      const mr = luminance[i + 1];
+      const bl = luminance[i + width - 1];
+      const bc = luminance[i + width];
+      const br = luminance[i + width + 1];
+      gxMap[i] = -tl + tr - 2 * ml + 2 * mr - bl + br;
+      gyMap[i] = tl + 2 * tc + tr - bl - 2 * bc - br;
+    }
+  }
+
+  const samplePixel = (x: number, y: number) => {
+    const sx = clamp(Math.round(x), 0, width - 1);
+    const sy = clamp(Math.round(y), 0, height - 1);
+    const i = (sy * width + sx) * 4;
+    const r = pixels[i];
+    const g = pixels[i + 1];
+    const b = pixels[i + 2];
+    const max = Math.max(r, g, b);
+    const min = Math.min(r, g, b);
+    const sat = max === 0 ? 0 : (max - min) / max;
+    const lum = luminance[sy * width + sx];
+    const gx = gxMap[sy * width + sx];
+    const gy = gyMap[sy * width + sx];
+    return { r, g, b, sat, lum, gx, gy };
+  };
+
+  const rng = createSeededRandom(seed);
+  const svgPaths: string[] = [];
+  let strokeCount = 0;
+
+  const drawBlot = (
+    cx: number,
+    cy: number,
+    radius: number,
+    color: { r: number; g: number; b: number },
+    alpha: number,
+    addSvg = true,
+  ) => {
+    const innerAlpha = clamp(alpha, 0.01, 1);
+    const outerAlpha = clamp(innerAlpha * 0.04, 0, 0.2);
+    const gradient = previewCtx.createRadialGradient(cx, cy, radius * 0.1, cx, cy, radius);
+    gradient.addColorStop(0, oil2RgbaCss(color.r, color.g, color.b, innerAlpha));
+    gradient.addColorStop(1, oil2RgbaCss(color.r, color.g, color.b, outerAlpha));
+    previewCtx.fillStyle = gradient;
+    previewCtx.beginPath();
+    previewCtx.arc(cx, cy, radius, 0, Math.PI * 2);
+    previewCtx.fill();
+    if (addSvg && svgPaths.length < maxSvgPaths) {
+      svgPaths.push(
+        `<circle cx="${cx.toFixed(2)}" cy="${cy.toFixed(2)}" r="${radius.toFixed(2)}" fill="${oil2RgbaCss(
+          color.r,
+          color.g,
+          color.b,
+          innerAlpha * 0.58,
+        )}"/>`,
+      );
+    }
+  };
+
+  const drawStroke = (
+    x: number,
+    y: number,
+    angle: number,
+    length: number,
+    widthPx: number,
+    color: { r: number; g: number; b: number },
+    alpha: number,
+  ) => {
+    const x1 = x - Math.cos(angle) * length * 0.5;
+    const y1 = y - Math.sin(angle) * length * 0.5;
+    const x2 = x + Math.cos(angle) * length * 0.5;
+    const y2 = y + Math.sin(angle) * length * 0.5;
+    const mx = (x1 + x2) * 0.5 + Math.cos(angle + Math.PI * 0.5) * (rng() * 2 - 1) * length * 0.22;
+    const my = (y1 + y2) * 0.5 + Math.sin(angle + Math.PI * 0.5) * (rng() * 2 - 1) * length * 0.22;
+    const css = oil2RgbaCss(color.r, color.g, color.b, alpha);
+    previewCtx.strokeStyle = css;
+    previewCtx.lineWidth = Math.max(0.1, widthPx);
+    previewCtx.lineCap = "round";
+    previewCtx.lineJoin = "round";
+    previewCtx.beginPath();
+    previewCtx.moveTo(x1, y1);
+    previewCtx.quadraticCurveTo(mx, my, x2, y2);
+    previewCtx.stroke();
+    if (svgPaths.length < maxSvgPaths) {
+      svgPaths.push(
+        `<path d="M ${x1.toFixed(2)} ${y1.toFixed(2)} Q ${mx.toFixed(2)} ${my.toFixed(2)} ${x2.toFixed(2)} ${y2.toFixed(2)}" fill="none" stroke="${css}" stroke-width="${Math.max(0.1, widthPx).toFixed(2)}" stroke-linecap="round" stroke-linejoin="round"/>`,
+      );
+    }
+  };
+
+  const rows = Math.max(1, Math.ceil(height / cellSize));
+  const cols = Math.max(1, Math.ceil(width / cellSize));
+  const totalSteps = rows * cols * washLayers;
+  let stepCount = 0;
+
+  for (let layer = 0; layer < washLayers; layer += 1) {
+    if (shouldCancel?.()) {
+      return null;
+    }
+    const layerScale = 1 + layer * 0.25;
+    const layerAlphaScale = 1 / (1 + layer * 0.6);
+    const layerCell = cellSize * layerScale;
+    for (let row = 0; row < rows; row += 1) {
+      if (shouldCancel?.()) {
+        return null;
+      }
+      const y = row * layerCell + (layer % 2) * layerCell * 0.5;
+      if (y >= height) {
+        continue;
+      }
+      for (let col = 0; col < cols; col += 1) {
+        if (svgPaths.length >= maxSvgPaths) {
+          break;
+        }
+        const x = col * layerCell + ((row + layer) % 2) * layerCell * 0.35;
+        if (x >= width) {
+          continue;
+        }
+        const px = clamp(x + (rng() * 2 - 1) * layerCell * 0.4, 0, width - 1);
+        const py = clamp(y + (rng() * 2 - 1) * layerCell * 0.4, 0, height - 1);
+        const sample = samplePixel(px, py);
+        const detail = clamp(Math.sqrt(sample.gx * sample.gx + sample.gy * sample.gy) / 8, 0, 1);
+        const pigment = clamp((1 - sample.lum) * 0.62 + sample.sat * 0.44 + detail * granulation, 0, 1);
+        if (pigment < 0.08) {
+          stepCount += 1;
+          continue;
+        }
+        const activeThreshold = threshold + layer * 0.06;
+        if (pigment < activeThreshold) {
+          stepCount += 1;
+          continue;
+        }
+
+        const baseAlpha = transparency * (0.12 + pigment * 0.36) * layerAlphaScale;
+        const radius = Math.max(0.4, layerCell * (0.38 + pigment * 0.52));
+        const color = {
+          r: sample.r + (rng() * 2 - 1) * 20 * colorBleed,
+          g: sample.g + (rng() * 2 - 1) * 20 * colorBleed,
+          b: sample.b + (rng() * 2 - 1) * 20 * colorBleed,
+        };
+        drawBlot(px, py, radius, color, baseAlpha, true);
+        strokeCount += 1;
+
+        for (let b = 0; b < bleedSteps; b += 1) {
+          if (svgPaths.length >= maxSvgPaths) {
+            break;
+          }
+          const bleedRadius = radius * (1 + 0.2 * (b + 1));
+          const spread = bleedRadius * bleedStrength * (0.2 + b * 0.12);
+          const bx = clamp(px + (rng() * 2 - 1) * spread, 0, width - 1);
+          const by = clamp(py + (rng() * 2 - 1) * spread, 0, height - 1);
+          const bleedAlpha = baseAlpha * (0.42 / (b + 1));
+          drawBlot(bx, by, bleedRadius, color, bleedAlpha, true);
+          strokeCount += 1;
+        }
+
+        if (rng() < strokeDensity * pigment) {
+          const ang = Math.atan2(sample.gy, sample.gx) + Math.PI * 0.5 + (rng() * 2 - 1) * 0.6;
+          const len = strokeLength * (0.45 + pigment * 0.9);
+          const w = lineWidth * (0.72 + pigment * 0.7);
+          const a = baseAlpha * (0.55 + pigment * 0.4);
+          drawStroke(px, py, ang, len, w, color, a);
+          strokeCount += 1;
+        }
+        stepCount += 1;
+      }
+      if (stepCount % refreshEvery === 0 || stepCount >= totalSteps) {
+        onProgress?.(
+          clamp(stepCount / Math.max(1, totalSteps), 0, 1),
+          `watercolour layer ${layer + 1}/${washLayers}`,
+        );
+        onPreview?.(preview);
+      }
+      if (stepCount % Math.max(4, refreshEvery) === 0) {
+        await yieldToUi();
+      }
+    }
+  }
+
+  onProgress?.(1, "ready");
+  const pathCount = svgPaths.length;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><rect width="100%" height="100%" fill="${backgroundColor}"/>${svgPaths.join("")}</svg>`;
   return { svg, preview, strokeCount, pathCount, width, height };
 }
 

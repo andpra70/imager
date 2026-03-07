@@ -151,6 +151,7 @@ export function registerImageNodes() {
     OilToolNode: artToolCtors.OilToolNode,
     Oil2ToolNode: artToolCtors.Oil2ToolNode,
     Oil3ToolNode: artToolCtors.Oil3ToolNode,
+    WatercolourToolNode: artToolCtors.WatercolourToolNode,
     LinesToolNode: artToolCtors.LinesToolNode,
     DotsToolNode: artToolCtors.DotsToolNode,
     AsciifyToolNode: artToolCtors.AsciifyToolNode,
@@ -188,6 +189,8 @@ export function registerImageNodes() {
     GraphicSketchToolNode: graphicToolCtors.GraphicSketchToolNode,
     GraphicPencilToolNode: graphicToolCtors.GraphicPencilToolNode,
     GraphicTonalShadingToolNode: graphicToolCtors.GraphicTonalShadingToolNode,
+    GraphicHatchingToolNode: graphicToolCtors.GraphicHatchingToolNode,
+    GraphicScumblingToolNode: graphicToolCtors.GraphicScumblingToolNode,
     GraphicCrosshatichingToolNode: graphicToolCtors.GraphicCrosshatichingToolNode,
     GraphicScribblingToolNode: graphicToolCtors.GraphicScribblingToolNode,
   });
