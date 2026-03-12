@@ -1185,6 +1185,196 @@ export class QuantizeToolNode {
   }
 }
 
+export class QuantizeLevelsToolNode extends OptimizedToolNode {
+  size: [number, number] = [320, 430];
+  preview: GraphImage | null = null;
+  masks: GraphImage[] = [];
+  outputCount = 0;
+
+  constructor() {
+    super();
+    const node = this as unknown as PreviewAwareNode & QuantizeLevelsToolNode;
+    node.title = createToolTitle("Quantize Levels");
+    node.properties = {
+      levels: 8,
+      previewLevel: 1,
+    };
+    node.addInput("image", "image");
+
+    node.addWidget(
+      "slider",
+      "Levels",
+      8,
+      (value) => {
+        node.properties.levels = clamp(Math.round(Number(value)), 2, 64);
+        const currentPreview = clamp(Math.round(Number(node.properties.previewLevel ?? 1)), 1, Number(node.properties.levels));
+        node.properties.previewLevel = currentPreview;
+        this.syncLevelOutputs(Number(node.properties.levels));
+        notifyGraphStateChange(node);
+      },
+      { min: 2, max: 64, step: 1 },
+    );
+    node.addWidget(
+      "slider",
+      "Preview L",
+      1,
+      (value) => {
+        node.properties.previewLevel = clamp(Math.round(Number(value)), 1, Number(node.properties.levels ?? 8));
+        notifyGraphStateChange(node);
+      },
+      { min: 1, max: 64, step: 1 },
+    );
+
+    this.syncLevelOutputs(8);
+    node.refreshPreviewLayout = () => {
+      refreshNode(node, node.preview, 2);
+    };
+    node.refreshPreviewLayout();
+  }
+
+  private syncLevelOutputs(this: QuantizeLevelsToolNode, requestedLevels: number) {
+    const node = this as unknown as PreviewAwareNode & QuantizeLevelsToolNode & {
+      outputs?: Array<{ name?: string; type?: string }>;
+      removeOutput?: (slot: number) => void;
+    };
+    const targetCount = clamp(Math.round(Number(requestedLevels)), 2, 64);
+
+    if (!Array.isArray(node.outputs)) {
+      for (let index = 0; index < targetCount; index += 1) {
+        node.addOutput(`L${index + 1}`, "image");
+      }
+      this.outputCount = targetCount;
+      return;
+    }
+
+    if (typeof node.removeOutput === "function") {
+      while ((node.outputs?.length ?? 0) > targetCount) {
+        node.removeOutput((node.outputs?.length ?? 1) - 1);
+      }
+    }
+
+    while ((node.outputs?.length ?? 0) < targetCount) {
+      const outputIndex = (node.outputs?.length ?? 0) + 1;
+      node.addOutput(`L${outputIndex}`, "image");
+    }
+
+    for (let index = 0; index < (node.outputs?.length ?? 0); index += 1) {
+      if (!node.outputs) {
+        break;
+      }
+      node.outputs[index].name = `L${index + 1}`;
+      node.outputs[index].type = "image";
+    }
+
+    this.outputCount = node.outputs?.length ?? targetCount;
+  }
+
+  onExecute(this: PreviewAwareNode & QuantizeLevelsToolNode) {
+    const start = performance.now();
+    const input = this.getInputData(0) ?? null;
+    const levels = clamp(Math.round(Number(this.properties.levels ?? 8)), 2, 64);
+    this.syncLevelOutputs(levels);
+
+    if (!input) {
+      this.preview = null;
+      this.masks = [];
+      this.completeOptimizedExecution(start);
+      this.resetOptimizedCache();
+      for (let slot = 0; slot < this.outputCount; slot += 1) {
+        this.setOutputData(slot, null);
+      }
+      this.refreshPreviewLayout();
+      return;
+    }
+
+    const signature = getGraphImageSignature(input);
+    const optionsSignature = `levels:${levels}`;
+    if (this.canReuseOptimizedResult(signature, optionsSignature)) {
+      for (let slot = 0; slot < this.outputCount; slot += 1) {
+        this.setOutputData(slot, this.masks[slot] ?? null);
+      }
+      this.refreshPreviewLayout();
+      return;
+    }
+
+    const sourceContext = input.getContext("2d", { willReadFrequently: true });
+    if (!sourceContext) {
+      this.preview = null;
+      this.masks = [];
+      this.completeOptimizedExecution(start);
+      this.resetOptimizedCache();
+      for (let slot = 0; slot < this.outputCount; slot += 1) {
+        this.setOutputData(slot, null);
+      }
+      this.refreshPreviewLayout();
+      return;
+    }
+
+    const width = input.width;
+    const height = input.height;
+    const pixels = width * height;
+    const sourceData = sourceContext.getImageData(0, 0, width, height).data;
+    const levelIndexByPixel = new Uint8Array(pixels);
+
+    for (let pixel = 0; pixel < pixels; pixel += 1) {
+      const dataIndex = pixel * 4;
+      const luminance = Math.round(
+        0.299 * sourceData[dataIndex]
+        + 0.587 * sourceData[dataIndex + 1]
+        + 0.114 * sourceData[dataIndex + 2],
+      );
+      const levelIndex = Math.min(levels - 1, Math.floor((luminance / 256) * levels));
+      levelIndexByPixel[pixel] = levelIndex;
+    }
+
+    const nextMasks: GraphImage[] = [];
+    for (let level = 0; level < levels; level += 1) {
+      const mask = document.createElement("canvas");
+      mask.width = width;
+      mask.height = height;
+      const maskContext = mask.getContext("2d");
+      if (!maskContext) {
+        continue;
+      }
+
+      const maskImage = maskContext.createImageData(width, height);
+      const target = maskImage.data;
+      for (let pixel = 0; pixel < pixels; pixel += 1) {
+        const dataIndex = pixel * 4;
+        const on = levelIndexByPixel[pixel] === level ? 255 : 0;
+        target[dataIndex] = on;
+        target[dataIndex + 1] = on;
+        target[dataIndex + 2] = on;
+        target[dataIndex + 3] = 255;
+      }
+      maskContext.putImageData(maskImage, 0, 0);
+      nextMasks.push(mask);
+    }
+
+    this.masks = nextMasks;
+    const previewLevel = clamp(Math.round(Number(this.properties.previewLevel ?? 1)), 1, levels) - 1;
+    this.preview = this.masks[previewLevel] ?? this.masks[0] ?? null;
+
+    this.completeOptimizedExecution(start, signature, optionsSignature);
+    for (let slot = 0; slot < this.outputCount; slot += 1) {
+      this.setOutputData(slot, this.masks[slot] ?? null);
+    }
+    this.refreshPreviewLayout();
+  }
+
+  onDrawBackground(this: PreviewAwareNode & QuantizeLevelsToolNode, context: CanvasRenderingContext2D) {
+    const layout = drawImagePreview(context, this, this.preview, { footerLines: 2 });
+    context.save();
+    context.fillStyle = "rgba(255,255,255,0.65)";
+    context.font = "12px sans-serif";
+    const levels = clamp(Math.round(Number(this.properties.levels ?? 8)), 2, 64);
+    const previewLevel = clamp(Math.round(Number(this.properties.previewLevel ?? 1)), 1, levels);
+    context.fillText(`levels: ${levels} | preview: L${previewLevel}`, 10, layout.footerTop + 12);
+    context.fillText(formatExecutionInfo(this.executionMs), 10, layout.footerTop + 30);
+    context.restore();
+  }
+}
+
 export class BlendToolNode extends OptimizedToolNode {
   size: [number, number] = [280, 420];
   preview: GraphImage | null = null;

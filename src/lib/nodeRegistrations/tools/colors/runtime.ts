@@ -11,6 +11,7 @@ import {
   RgbCombineToolNode,
   CmykCombineToolNode,
   QuantizeToolNode,
+  QuantizeLevelsToolNode,
   BlendToolNode,
   LayersToolNode,
   BrightnessContrastToolNode,
@@ -28,6 +29,7 @@ export interface ToolColorsNodeCtors {
   RgbCombineToolNode: NodeCtor;
   CmykCombineToolNode: NodeCtor;
   QuantizeToolNode: NodeCtor;
+  QuantizeLevelsToolNode: NodeCtor;
   BlendToolNode: NodeCtor;
   LayersToolNode: NodeCtor;
   BrightnessContrastToolNode: NodeCtor;
@@ -46,6 +48,7 @@ export function createToolColorsNodeCtors(): ToolColorsNodeCtors {
     RgbCombineToolNode: RgbCombineToolNode as NodeCtor,
     CmykCombineToolNode: CmykCombineToolNode as NodeCtor,
     QuantizeToolNode: QuantizeToolNode as NodeCtor,
+    QuantizeLevelsToolNode: QuantizeLevelsToolNode as NodeCtor,
     BlendToolNode: BlendToolNode as NodeCtor,
     LayersToolNode: LayersToolNode as NodeCtor,
     BrightnessContrastToolNode: BrightnessContrastToolNode as NodeCtor,

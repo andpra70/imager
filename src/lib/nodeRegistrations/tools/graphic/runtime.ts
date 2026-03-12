@@ -7,6 +7,7 @@ import {
   GraphicSketchToolNode,
   GraphicScribblingToolNode,
   GraphicTonalShadingToolNode,
+  GraphicPotraceToolNode,
 } from "./nodes";
 
 export interface ToolGraphicNodeCtors {
@@ -17,6 +18,7 @@ export interface ToolGraphicNodeCtors {
   GraphicScumblingToolNode: NodeCtor;
   GraphicCrosshatichingToolNode: NodeCtor;
   GraphicScribblingToolNode: NodeCtor;
+  GraphicPotraceToolNode: NodeCtor;
 }
 
 export function createToolGraphicNodeCtors(): ToolGraphicNodeCtors {
@@ -28,5 +30,6 @@ export function createToolGraphicNodeCtors(): ToolGraphicNodeCtors {
     GraphicScumblingToolNode: GraphicScumblingToolNode as NodeCtor,
     GraphicCrosshatichingToolNode: GraphicCrosshatichingToolNode as NodeCtor,
     GraphicScribblingToolNode: GraphicScribblingToolNode as NodeCtor,
+    GraphicPotraceToolNode: GraphicPotraceToolNode as NodeCtor,
   };
 }

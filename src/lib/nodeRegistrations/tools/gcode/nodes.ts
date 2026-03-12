@@ -32,6 +32,8 @@ function getPrecisionFromStep(step: number | undefined) {
 function normalizeConverterOptions(properties: Record<string, unknown>): SvgToGcodeOptions {
   return {
     sampleStep: clamp(Number(properties.sampleStep ?? svgToGcodeDefaults.sampleStep), 0.1, 20),
+    fastDraft: Boolean(properties.fastDraft ?? svgToGcodeDefaults.fastDraft),
+    maxPointsPerPath: clamp(Math.round(Number(properties.maxPointsPerPath ?? svgToGcodeDefaults.maxPointsPerPath)), 50, 20000),
     scale: clamp(Number(properties.scale ?? svgToGcodeDefaults.scale), 0.001, 100),
     offsetX: clamp(Number(properties.offsetX ?? svgToGcodeDefaults.offsetX), -100000, 100000),
     offsetY: clamp(Number(properties.offsetY ?? svgToGcodeDefaults.offsetY), -100000, 100000),
@@ -85,6 +87,16 @@ export class SvgToGcodeToolNode {
       node.properties.sampleStep = clamp(Number(value), 0.1, 20);
       notifyGraphStateChange(node);
     }, { min: 0.1, max: 20, step: 0.1, precision: 1 });
+
+    node.addWidget("toggle", "Fast draft", svgToGcodeDefaults.fastDraft, (value) => {
+      node.properties.fastDraft = Boolean(value);
+      notifyGraphStateChange(node);
+    });
+
+    node.addWidget("slider", "Max pts/path", svgToGcodeDefaults.maxPointsPerPath, (value) => {
+      node.properties.maxPointsPerPath = clamp(Math.round(Number(value)), 50, 20000);
+      notifyGraphStateChange(node);
+    }, { min: 50, max: 20000, step: 1 });
 
     node.addWidget("slider", "Scale", svgToGcodeDefaults.scale, (value) => {
       node.properties.scale = clamp(Number(value), 0.001, 100);
@@ -194,7 +206,7 @@ export class SvgToGcodeToolNode {
       this.gcode = "";
       this.payload = null;
       this.progress = 0;
-      this.progressLabel = "waiting 5s stable input";
+      this.progressLabel = "waiting 1s stable input";
       this.status = "pending";
       this.executionMs = null;
       this.lastCompletedSignature = "";
@@ -279,7 +291,7 @@ export class SvgToGcodeToolNode {
               this.isRendering = false;
             }
           });
-      }, 5000);
+      }, 1000);
     }
 
     this.setOutputData(0, this.gcode || null);
@@ -561,6 +573,22 @@ function formatDuration(seconds: number) {
   return `${String(minutes).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
 }
 
+function normalizeHexColor(value: unknown, fallback: string) {
+  const raw = String(value ?? "").trim();
+  const hex = raw.startsWith("#") ? raw.slice(1) : raw;
+  if (/^[0-9a-fA-F]{6}$/.test(hex)) {
+    return `#${hex.toUpperCase()}`;
+  }
+  if (/^[0-9a-fA-F]{3}$/.test(hex)) {
+    const expanded = hex
+      .split("")
+      .map((channel) => `${channel}${channel}`)
+      .join("");
+    return `#${expanded.toUpperCase()}`;
+  }
+  return fallback;
+}
+
 export class GcodeCncToolNode {
   size: [number, number] = [420, 520];
   program: CncProgram | null = null;
@@ -572,6 +600,9 @@ export class GcodeCncToolNode {
   isPlaying = false;
   lastTickAtMs = 0;
   lastInputSignature = "";
+  pendingSignature = "";
+  pendingGcode: GraphGcode = "";
+  debounceTimerId: number | null = null;
   executionMs: number | null = null;
 
   constructor() {
@@ -583,6 +614,9 @@ export class GcodeCncToolNode {
       showTravelMoves: true,
       invertX: false,
       invertY: false,
+      bgColor: "#000000",
+      traceColor: "#00AA00",
+      travelColor: "#303030",
       drawWidth: 1.4,
       travelWidth: 0.8,
     };
@@ -631,6 +665,21 @@ export class GcodeCncToolNode {
 
     node.addWidget("toggle", "Invert Y", false, (value) => {
       node.properties.invertY = Boolean(value);
+      notifyGraphStateChange(node);
+    });
+
+    node.addWidget("text", "BG color", "#000000", (value) => {
+      node.properties.bgColor = normalizeHexColor(value, "#000000");
+      notifyGraphStateChange(node);
+    });
+
+    node.addWidget("text", "Trace color", "#00AA00", (value) => {
+      node.properties.traceColor = normalizeHexColor(value, "#00AA00");
+      notifyGraphStateChange(node);
+    });
+
+    node.addWidget("text", "Travel color", "#303030", (value) => {
+      node.properties.travelColor = normalizeHexColor(value, "#303030");
       notifyGraphStateChange(node);
     });
 
@@ -695,6 +744,10 @@ export class GcodeCncToolNode {
     const signature = gcode;
 
     if (!gcode) {
+      if (this.debounceTimerId !== null) {
+        window.clearTimeout(this.debounceTimerId);
+        this.debounceTimerId = null;
+      }
       this.gcode = "";
       this.program = null;
       this.status = "waiting gcode";
@@ -704,32 +757,60 @@ export class GcodeCncToolNode {
       this.currentSegmentT = 0;
       this.executionMs = null;
       this.lastInputSignature = "";
+      this.pendingSignature = "";
+      this.pendingGcode = "";
       this.setOutputData(0, null);
       this.setDirtyCanvas(true, true);
       return;
     }
 
-    if (signature !== this.lastInputSignature) {
-      const wasPlaying = this.isPlaying;
-      const startedAt = performance.now();
-      try {
-        this.program = parseGcodeProgram(gcode);
-        this.gcode = gcode;
-        this.status = this.program.segments.length > 0 ? (wasPlaying ? "playing" : "ready") : "empty";
-        this.progressSec = 0;
-        this.currentSegmentIndex = 0;
-        this.currentSegmentT = 0;
-        this.isPlaying = wasPlaying && this.program.segments.length > 0;
-        this.lastTickAtMs = performance.now();
-        this.executionMs = performance.now() - startedAt;
-      } catch (error) {
-        this.program = null;
-        this.gcode = "";
-        this.status = error instanceof Error ? error.message : "gcode parse error";
-        this.isPlaying = false;
-        this.executionMs = null;
+    if (signature !== this.pendingSignature) {
+      this.pendingSignature = signature;
+      this.pendingGcode = gcode;
+      this.program = null;
+      this.gcode = "";
+      this.progressSec = 0;
+      this.currentSegmentIndex = 0;
+      this.currentSegmentT = 0;
+      this.isPlaying = false;
+      this.status = "waiting 2s stable input";
+      this.executionMs = null;
+      this.lastInputSignature = "";
+
+      if (this.debounceTimerId !== null) {
+        window.clearTimeout(this.debounceTimerId);
       }
-      this.lastInputSignature = signature;
+
+      const queuedSignature = signature;
+      this.debounceTimerId = window.setTimeout(() => {
+        if (queuedSignature !== this.pendingSignature) {
+          return;
+        }
+
+        const startedAt = performance.now();
+        try {
+          this.program = parseGcodeProgram(this.pendingGcode);
+          this.gcode = this.pendingGcode;
+          this.progressSec = 0;
+          this.currentSegmentIndex = 0;
+          this.currentSegmentT = 0;
+          this.isPlaying = this.program.segments.length > 0;
+          this.status = this.program.segments.length > 0 ? "playing" : "empty";
+          this.lastTickAtMs = performance.now();
+          this.executionMs = performance.now() - startedAt;
+          this.lastInputSignature = queuedSignature;
+        } catch (error) {
+          this.program = null;
+          this.gcode = "";
+          this.status = error instanceof Error ? error.message : "gcode parse error";
+          this.isPlaying = false;
+          this.executionMs = null;
+          this.lastInputSignature = "";
+        }
+
+        this.setOutputData(0, this.gcode || null);
+        this.setDirtyCanvas(true, true);
+      }, 2000);
     }
 
     const nowMs = performance.now();
@@ -744,6 +825,13 @@ export class GcodeCncToolNode {
     this.setOutputData(0, this.gcode || null);
   }
 
+  onRemoved(this: GcodeCncToolNode) {
+    if (this.debounceTimerId !== null) {
+      window.clearTimeout(this.debounceTimerId);
+      this.debounceTimerId = null;
+    }
+  }
+
   onDrawBackground(this: PreviewAwareNode & GcodeCncToolNode, context: CanvasRenderingContext2D) {
     const padding = 10;
     const headerHeight = 34 + (this.widgets?.length ?? 0) * 28;
@@ -755,7 +843,11 @@ export class GcodeCncToolNode {
     const plotHeight = Math.max(120, this.size[1] - headerHeight - footerHeight - 8);
 
     context.save();
-    context.fillStyle = "#0f1117";
+    const bgColor = normalizeHexColor(this.properties.bgColor, "#000000");
+    const traceColor = normalizeHexColor(this.properties.traceColor, "#00AA00");
+    const travelColor = normalizeHexColor(this.properties.travelColor, "#303030");
+
+    context.fillStyle = bgColor;
     context.fillRect(plotLeft, plotTop, plotWidth, plotHeight);
 
     if (this.program && this.program.bounds && this.program.segments.length > 0) {
@@ -792,7 +884,7 @@ export class GcodeCncToolNode {
         const end = project(segment.end);
         context.beginPath();
         context.lineWidth = penDown ? drawWidth : travelWidth;
-        context.strokeStyle = penDown ? "rgba(54, 215, 183, 0.96)" : "rgba(117, 122, 137, 0.75)";
+        context.strokeStyle = penDown ? traceColor : travelColor;
         context.moveTo(start.x, start.y);
         context.lineTo(end.x, end.y);
         context.stroke();
@@ -818,7 +910,7 @@ export class GcodeCncToolNode {
           const partial = project(partialPoint);
           context.beginPath();
           context.lineWidth = penDown ? drawWidth : travelWidth;
-          context.strokeStyle = penDown ? "rgba(102, 240, 208, 0.98)" : "rgba(176, 182, 201, 0.92)";
+          context.strokeStyle = penDown ? traceColor : travelColor;
           context.moveTo(start.x, start.y);
           context.lineTo(partial.x, partial.y);
           context.stroke();

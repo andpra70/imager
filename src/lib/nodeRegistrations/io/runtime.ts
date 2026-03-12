@@ -407,14 +407,28 @@ export function createIoNodeCtors(deps: IoNodeRuntimeDeps): IoNodeCtors {
     infoText = "no svg";
     svgBytes = 0;
     renderToken = 0;
+    backgroundColor = "#FFFFFF";
 
     constructor() {
       const node = this as unknown as PreviewAwareNode & InputSvgNode;
       node.title = "SVG IN";
-      node.properties = {};
+      node.properties = {
+        bgColor: "#FFFFFF",
+      };
       node.addOutput("svg", "svg");
       node.addWidget("button", "Load SVG", null, () => {
         node.fileInput.click();
+      });
+      node.addWidget("text", "BG color", "#FFFFFF", (value) => {
+        const nextColor = node.normalizeBackgroundColor(String(value ?? "#FFFFFF"));
+        node.properties.bgColor = nextColor;
+        node.backgroundColor = nextColor;
+        if (node.svg) {
+          node.renderSvgPreview(node.svg);
+        } else {
+          node.refreshPreviewLayout();
+        }
+        deps.notifyGraphStateChange(node);
       });
 
       node.fileInput = document.createElement("input");
@@ -437,6 +451,62 @@ export function createIoNodeCtors(deps: IoNodeRuntimeDeps): IoNodeCtors {
       node.refreshPreviewLayout();
     }
 
+    normalizeBackgroundColor(this: InputSvgNode, raw: string) {
+      const trimmed = raw.trim();
+      const hex = trimmed.startsWith("#") ? trimmed.slice(1) : trimmed;
+      if (/^[0-9a-fA-F]{6}$/.test(hex)) {
+        return `#${hex.toUpperCase()}`;
+      }
+      if (/^[0-9a-fA-F]{3}$/.test(hex)) {
+        const expanded = hex
+          .split("")
+          .map((channel) => `${channel}${channel}`)
+          .join("");
+        return `#${expanded.toUpperCase()}`;
+      }
+      return "#FFFFFF";
+    }
+
+    renderSvgPreview(this: PreviewAwareNode & InputSvgNode, svgText: string) {
+      const renderToken = ++this.renderToken;
+      const backgroundColor = this.normalizeBackgroundColor(String(this.properties.bgColor ?? "#FFFFFF"));
+      this.backgroundColor = backgroundColor;
+
+      void rasterizeGraphSvg(svgText)
+        .then((preview) => {
+          if (renderToken !== this.renderToken) {
+            return;
+          }
+
+          const composed = document.createElement("canvas");
+          composed.width = preview.width;
+          composed.height = preview.height;
+          const context = composed.getContext("2d");
+          if (!context) {
+            this.preview = preview;
+            this.refreshPreviewLayout();
+            deps.notifyGraphStateChange(this);
+            return;
+          }
+
+          context.fillStyle = backgroundColor;
+          context.fillRect(0, 0, composed.width, composed.height);
+          context.drawImage(preview, 0, 0);
+
+          this.preview = composed;
+          this.refreshPreviewLayout();
+          deps.notifyGraphStateChange(this);
+        })
+        .catch(() => {
+          if (renderToken !== this.renderToken) {
+            return;
+          }
+          this.preview = null;
+          this.refreshPreviewLayout();
+          deps.notifyGraphStateChange(this);
+        });
+    }
+
     loadSvgText(this: PreviewAwareNode & InputSvgNode, svgText: string) {
       const normalized = svgText.trim();
       if (!normalized.toLowerCase().includes("<svg")) {
@@ -452,24 +522,7 @@ export function createIoNodeCtors(deps: IoNodeRuntimeDeps): IoNodeCtors {
       this.serializedSvg = normalized;
       this.svgBytes = new Blob([normalized], { type: "image/svg+xml" }).size;
       this.infoText = `svg ${this.svgBytes} bytes`;
-      const renderToken = ++this.renderToken;
-      void rasterizeGraphSvg(normalized)
-        .then((preview) => {
-          if (renderToken !== this.renderToken) {
-            return;
-          }
-          this.preview = preview;
-          this.refreshPreviewLayout();
-          deps.notifyGraphStateChange(this);
-        })
-        .catch(() => {
-          if (renderToken !== this.renderToken) {
-            return;
-          }
-          this.preview = null;
-          this.refreshPreviewLayout();
-          deps.notifyGraphStateChange(this);
-        });
+      this.renderSvgPreview(normalized);
     }
 
     loadSvgFile(this: PreviewAwareNode & InputSvgNode, file: File) {
@@ -503,6 +556,8 @@ export function createIoNodeCtors(deps: IoNodeRuntimeDeps): IoNodeCtors {
     onConfigure(this: PreviewAwareNode & InputSvgNode, data: Record<string, unknown>) {
       const serializedSvg = getSerializedSvgFromConfig(data);
       this.serializedSvg = serializedSvg;
+      this.backgroundColor = this.normalizeBackgroundColor(String(this.properties.bgColor ?? "#FFFFFF"));
+      this.properties.bgColor = this.backgroundColor;
 
       if (!serializedSvg) {
         this.svg = null;

@@ -1,7 +1,8 @@
-import { drawImagePreview } from "../../../imageUtils";
+import { drawImagePreview, rasterizeGraphSvg } from "../../../imageUtils";
 import type { GraphImage } from "../../../../models/graphImage";
 import type { GraphSvg } from "../../../../models/graphSvg";
 import type { LiteNode, PreviewAwareNode } from "../../shared";
+import potraceRuntime, { type PotraceTurnPolicy } from "../../../../vendor/potrace-runtime";
 import {
   clamp,
   createToolTitle,
@@ -2009,6 +2010,354 @@ export class GraphicScribblingToolNode {
     context.fillText(`paths ${this.pathCount}`, 10, layout.footerTop + 48);
     context.fillText(`out ${this.outputWidth || "-"}x${this.outputHeight || "-"}`, 10, layout.footerTop + 66);
     context.fillText(formatExecutionInfo(this.executionMs), 10, layout.footerTop + 84);
+    context.restore();
+  }
+}
+
+export class GraphicPotraceToolNode {
+  size: [number, number] = [320, 500];
+  preview: GraphImage | null = null;
+  svg: GraphSvg | null = null;
+  status = "idle";
+  pathCount = 0;
+  outputWidth = 0;
+  outputHeight = 0;
+  executionMs: number | null = null;
+  lastSignature = "";
+  lastOptionsSignature = "";
+  pendingRunSignature = "";
+  debouncedRunSignature = "";
+  debounceTimerId: number | null = null;
+  renderToken = 0;
+  isRendering = false;
+
+  constructor() {
+    const node = this as unknown as PreviewAwareNode & GraphicPotraceToolNode;
+    node.title = createToolTitle("Graphic Potrace");
+    node.properties = {
+      maxWidth: 1200,
+      svgScale: 1,
+      turnpolicy: "minority",
+      turdsize: 2,
+      optcurve: true,
+      alphamax: 1,
+      opttolerance: 0.2,
+      curveOnly: false,
+      bgColor: "#FFFFFF",
+      traceColor: "#000000",
+    };
+
+    node.addInput("image", "image");
+    node.addOutput("image", "image");
+    node.addOutput("svg", "svg");
+
+    node.addWidget("slider", "Max width", 1200, (value) => {
+      node.properties.maxWidth = clamp(Math.round(Number(value)), 128, 4096);
+      notifyGraphStateChange(node);
+    }, { min: 128, max: 4096, step: 1 });
+
+    node.addWidget("slider", "SVG scale", 1, (value) => {
+      node.properties.svgScale = clamp(Number(value), 0.1, 8);
+      notifyGraphStateChange(node);
+    }, { min: 0.1, max: 8, step: 0.1, precision: 1 });
+
+    node.addWidget("combo", "Turnpolicy", "minority", (value) => {
+      node.properties.turnpolicy = String(value);
+      notifyGraphStateChange(node);
+    }, { values: ["black", "white", "left", "right", "minority", "majority"] });
+
+    node.addWidget("slider", "Turd size", 2, (value) => {
+      node.properties.turdsize = clamp(Math.round(Number(value)), 0, 100);
+      notifyGraphStateChange(node);
+    }, { min: 0, max: 100, step: 1 });
+
+    node.addWidget("toggle", "Optcurve", true, (value) => {
+      node.properties.optcurve = Boolean(value);
+      notifyGraphStateChange(node);
+    });
+
+    node.addWidget("slider", "Alpha max", 1, (value) => {
+      node.properties.alphamax = clamp(Number(value), 0, 4);
+      notifyGraphStateChange(node);
+    }, { min: 0, max: 4, step: 0.05, precision: 2 });
+
+    node.addWidget("slider", "Opt tolerance", 0.2, (value) => {
+      node.properties.opttolerance = clamp(Number(value), 0, 2);
+      notifyGraphStateChange(node);
+    }, { min: 0, max: 2, step: 0.01, precision: 2 });
+
+    node.addWidget("toggle", "Curve only", false, (value) => {
+      node.properties.curveOnly = Boolean(value);
+      notifyGraphStateChange(node);
+    });
+
+    node.addWidget("text", "BG color", "#FFFFFF", (value) => {
+      node.properties.bgColor = normalizeHexColor(String(value ?? "#FFFFFF"));
+      notifyGraphStateChange(node);
+    });
+
+    node.addWidget("text", "Trace color", "#000000", (value) => {
+      node.properties.traceColor = normalizeHexColor(String(value ?? "#000000"));
+      notifyGraphStateChange(node);
+    });
+
+    node.refreshPreviewLayout = () => refreshNode(node, node.preview, 4);
+    node.refreshPreviewLayout();
+  }
+
+  onExecute(this: PreviewAwareNode & GraphicPotraceToolNode) {
+    const inputValue = this.getInputData(0);
+    const input = isGraphImageReady(inputValue) ? inputValue : null;
+    if (!input) {
+      if (this.debounceTimerId !== null) {
+        window.clearTimeout(this.debounceTimerId);
+        this.debounceTimerId = null;
+      }
+      this.preview = null;
+      this.svg = null;
+      this.status = "waiting valid image";
+      this.pathCount = 0;
+      this.outputWidth = 0;
+      this.outputHeight = 0;
+      this.executionMs = null;
+      this.isRendering = false;
+      this.lastSignature = "";
+      this.lastOptionsSignature = "";
+      this.pendingRunSignature = "";
+      this.debouncedRunSignature = "";
+      this.setOutputData(0, null);
+      this.setOutputData(1, null);
+      this.refreshPreviewLayout();
+      return;
+    }
+
+    const options = {
+      maxWidth: clamp(Math.round(Number(this.properties.maxWidth ?? 1200)), 128, 4096),
+      svgScale: clamp(Number(this.properties.svgScale ?? 1), 0.1, 8),
+      turnpolicy: String(this.properties.turnpolicy ?? "minority") as PotraceTurnPolicy,
+      turdsize: clamp(Math.round(Number(this.properties.turdsize ?? 2)), 0, 100),
+      optcurve: Boolean(this.properties.optcurve ?? true),
+      alphamax: clamp(Number(this.properties.alphamax ?? 1), 0, 4),
+      opttolerance: clamp(Number(this.properties.opttolerance ?? 0.2), 0, 2),
+      curveOnly: Boolean(this.properties.curveOnly ?? false),
+      bgColor: normalizeHexColor(String(this.properties.bgColor ?? "#FFFFFF")),
+      traceColor: normalizeHexColor(String(this.properties.traceColor ?? "#000000")),
+    };
+
+    const signature = getGraphImageSignature(input);
+    const optionsSignature = JSON.stringify(options);
+    const runSignature = `${signature}|${optionsSignature}`;
+
+    if (runSignature !== this.pendingRunSignature) {
+      this.pendingRunSignature = runSignature;
+      this.status = "waiting debounce...";
+      this.setDirtyCanvas(true, true);
+      if (this.debounceTimerId !== null) {
+        window.clearTimeout(this.debounceTimerId);
+      }
+      const queuedRunSignature = runSignature;
+      this.debounceTimerId = window.setTimeout(() => {
+        if (queuedRunSignature !== this.pendingRunSignature) {
+          return;
+        }
+        this.debouncedRunSignature = queuedRunSignature;
+        this.setDirtyCanvas(true, true);
+      }, 600);
+    }
+
+    if (this.debouncedRunSignature !== runSignature) {
+      this.setOutputData(0, this.preview ?? input);
+      this.setOutputData(1, this.svg);
+      this.refreshPreviewLayout();
+      return;
+    }
+
+    if (signature !== this.lastSignature || optionsSignature !== this.lastOptionsSignature) {
+      this.lastSignature = signature;
+      this.lastOptionsSignature = optionsSignature;
+      const renderToken = ++this.renderToken;
+      const start = performance.now();
+      this.isRendering = true;
+      this.status = "processing potrace...";
+      this.setDirtyCanvas(true, true);
+
+      const maxWidth = options.maxWidth;
+      const scale = Math.min(1, maxWidth / Math.max(1, input.width));
+      const sampledWidth = Math.max(1, Math.round(input.width * scale));
+      const sampledHeight = Math.max(1, Math.round(input.height * scale));
+      const sampledCanvas = document.createElement("canvas");
+      sampledCanvas.width = sampledWidth;
+      sampledCanvas.height = sampledHeight;
+      const sampledContext = sampledCanvas.getContext("2d", { willReadFrequently: true });
+      if (!sampledContext) {
+        this.preview = input;
+        this.svg = null;
+        this.status = "2d context unavailable";
+        this.isRendering = false;
+        this.executionMs = null;
+        this.setOutputData(0, this.preview);
+        this.setOutputData(1, null);
+        return;
+      }
+      sampledContext.drawImage(input, 0, 0, sampledWidth, sampledHeight);
+
+      try {
+        potraceRuntime.setParameter({
+          turnpolicy: options.turnpolicy,
+          turdsize: options.turdsize,
+          optcurve: options.optcurve,
+          alphamax: options.alphamax,
+          opttolerance: options.opttolerance,
+        });
+        potraceRuntime.loadImageFromUrl(sampledCanvas.toDataURL("image/png"));
+      } catch (error) {
+        logNodeError("GraphicPotraceToolNode/init", error);
+        this.preview = input;
+        this.svg = null;
+        this.status = error instanceof Error ? error.message : "potrace init error";
+        this.pathCount = 0;
+        this.outputWidth = sampledWidth;
+        this.outputHeight = sampledHeight;
+        this.executionMs = null;
+        this.isRendering = false;
+        this.setOutputData(0, this.preview);
+        this.setOutputData(1, this.svg);
+        this.refreshPreviewLayout();
+        return;
+      }
+
+      const finishFailure = (reason: string) => {
+        if (renderToken !== this.renderToken) {
+          return;
+        }
+        this.preview = input;
+        this.svg = null;
+        this.pathCount = 0;
+        this.outputWidth = sampledWidth;
+        this.outputHeight = sampledHeight;
+        this.status = reason;
+        this.executionMs = null;
+        this.isRendering = false;
+        this.setOutputData(0, this.preview);
+        this.setOutputData(1, this.svg);
+        this.setDirtyCanvas(true, true);
+      };
+
+      try {
+        potraceRuntime.process(() => {
+          if (renderToken !== this.renderToken) {
+            return;
+          }
+
+          try {
+            const rawSvg = potraceRuntime.getSVG(options.svgScale, options.curveOnly ? "curve" : undefined);
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(rawSvg, "image/svg+xml");
+            const root = doc.documentElement;
+            if (root && root.tagName.toLowerCase() === "svg") {
+              const widthAttr = root.getAttribute("width") ?? "0";
+              const heightAttr = root.getAttribute("height") ?? "0";
+              const widthValue = Number.parseFloat(widthAttr);
+              const heightValue = Number.parseFloat(heightAttr);
+              const rect = doc.createElementNS("http://www.w3.org/2000/svg", "rect");
+              rect.setAttribute("x", "0");
+              rect.setAttribute("y", "0");
+              rect.setAttribute("width", Number.isFinite(widthValue) ? String(widthValue) : "100%");
+              rect.setAttribute("height", Number.isFinite(heightValue) ? String(heightValue) : "100%");
+              rect.setAttribute("fill", options.bgColor);
+              root.insertBefore(rect, root.firstChild);
+
+              const paths = Array.from(root.querySelectorAll("path"));
+              for (const path of paths) {
+                const styleRaw = path.getAttribute("style") ?? "";
+                const styleWithoutColor = styleRaw
+                  .replace(/(^|;)\s*fill\s*:[^;]*/gi, "")
+                  .replace(/(^|;)\s*stroke\s*:[^;]*/gi, "")
+                  .replace(/(^|;)\s*stroke-width\s*:[^;]*/gi, "")
+                  .replace(/^;+|;+$/g, "");
+
+                if (options.curveOnly) {
+                  path.setAttribute("fill", "none");
+                  path.setAttribute("stroke", options.traceColor);
+                  path.setAttribute("stroke-width", "1");
+                  const styleNext = [styleWithoutColor, `fill:none`, `stroke:${options.traceColor}`, "stroke-width:1"]
+                    .filter((item) => item.length > 0)
+                    .join(";");
+                  path.setAttribute("style", styleNext);
+                } else {
+                  path.setAttribute("fill", options.traceColor);
+                  path.setAttribute("stroke", "none");
+                  const styleNext = [styleWithoutColor, `fill:${options.traceColor}`, "stroke:none"]
+                    .filter((item) => item.length > 0)
+                    .join(";");
+                  path.setAttribute("style", styleNext);
+                }
+              }
+            }
+            const svg = new XMLSerializer().serializeToString(doc);
+            this.svg = svg;
+            this.pathCount = (svg.match(/<path\b/g) ?? []).length;
+            const width = Number(root.getAttribute("width"));
+            const height = Number(root.getAttribute("height"));
+            this.outputWidth = Number.isFinite(width) ? width : sampledWidth;
+            this.outputHeight = Number.isFinite(height) ? height : sampledHeight;
+
+            const currentToken = renderToken;
+            void rasterizeGraphSvg(svg)
+              .then((preview) => {
+                if (currentToken !== this.renderToken) {
+                  return;
+                }
+                this.preview = preview;
+                this.status = "ready";
+                this.executionMs = performance.now() - start;
+                this.isRendering = false;
+                this.setOutputData(0, this.preview);
+                this.setOutputData(1, this.svg);
+                this.setDirtyCanvas(true, true);
+              })
+              .catch(() => {
+                if (currentToken !== this.renderToken) {
+                  return;
+                }
+                this.preview = input;
+                this.status = "svg render failed";
+                this.executionMs = performance.now() - start;
+                this.isRendering = false;
+                this.setOutputData(0, this.preview);
+                this.setOutputData(1, this.svg);
+                this.setDirtyCanvas(true, true);
+              });
+          } catch (error) {
+            finishFailure(error instanceof Error ? error.message : "potrace process error");
+          }
+        });
+      } catch (error) {
+        finishFailure(error instanceof Error ? error.message : "potrace process error");
+      }
+    }
+
+    this.setOutputData(0, this.preview ?? input);
+    this.setOutputData(1, this.svg);
+    this.refreshPreviewLayout();
+  }
+
+  onRemoved(this: GraphicPotraceToolNode) {
+    if (this.debounceTimerId !== null) {
+      window.clearTimeout(this.debounceTimerId);
+      this.debounceTimerId = null;
+    }
+  }
+
+  onDrawBackground(this: PreviewAwareNode & GraphicPotraceToolNode, context: CanvasRenderingContext2D) {
+    const layout = drawImagePreview(context, this, this.preview, { footerLines: 4 });
+    context.save();
+    context.fillStyle = "rgba(255,255,255,0.65)";
+    context.font = "12px sans-serif";
+    context.fillText(`${this.status}${this.isRendering ? "..." : ""}`, 10, layout.footerTop + 12);
+    context.fillText(`paths ${this.pathCount}`, 10, layout.footerTop + 30);
+    context.fillText(`out ${this.outputWidth || "-"}x${this.outputHeight || "-"}`, 10, layout.footerTop + 48);
+    context.fillText(formatExecutionInfo(this.executionMs), 10, layout.footerTop + 66);
     context.restore();
   }
 }

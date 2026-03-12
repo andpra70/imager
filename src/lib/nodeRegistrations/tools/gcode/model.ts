@@ -1,5 +1,7 @@
 export interface SvgToGcodeOptions {
   sampleStep: number;
+  fastDraft: boolean;
+  maxPointsPerPath: number;
   scale: number;
   offsetX: number;
   offsetY: number;
@@ -26,6 +28,8 @@ export interface SvgToGcodeStats {
 
 export const svgToGcodeDefaults: SvgToGcodeOptions = {
   sampleStep: 1,
+  fastDraft: false,
+  maxPointsPerPath: 600,
   scale: 1,
   offsetX: 0,
   offsetY: 0,

@@ -123,11 +123,36 @@ function ensureClosed(points: Point[]) {
   return points;
 }
 
+function limitPoints(points: Point[], maxPoints: number) {
+  if (!Number.isFinite(maxPoints) || maxPoints < 2 || points.length <= maxPoints) {
+    return points;
+  }
+
+  const first = points[0];
+  const last = points[points.length - 1];
+  const isClosed = distanceSquared(first, last) <= 1e-8;
+  const usableMax = isClosed ? Math.max(3, maxPoints - 1) : maxPoints;
+
+  const reduced: Point[] = [];
+  for (let index = 0; index < usableMax; index += 1) {
+    const sourceIndex = Math.round((index * (points.length - 1)) / Math.max(1, usableMax - 1));
+    const point = points[sourceIndex];
+    const lastReduced = reduced[reduced.length - 1];
+    if (!lastReduced || distanceSquared(lastReduced, point) > 1e-8) {
+      reduced.push({ x: point.x, y: point.y });
+    }
+  }
+
+  if (isClosed) {
+    return ensureClosed(reduced);
+  }
+  return reduced;
+}
+
 async function extractPolylinesFromSvgAsync(
   svg: GraphSvg,
-  sampleStep: number,
-  closePaths: boolean,
-  options: ConvertOptions,
+  sourceOptions: SvgToGcodeOptions,
+  convertOptions: ConvertOptions,
 ): Promise<SvgPolylineExtraction> {
   const parser = new DOMParser();
   const parsed = parser.parseFromString(svg, "image/svg+xml");
@@ -147,11 +172,17 @@ async function extractPolylinesFromSvgAsync(
 
   const polylines: Polyline[] = [];
   let bounds: NonNullable<SvgToGcodeStats["bounds"]> | null = null;
-  const lengthStep = Math.max(MIN_SAMPLE_STEP, sampleStep);
+  const lengthStep = Math.max(
+    MIN_SAMPLE_STEP,
+    sourceOptions.fastDraft ? sourceOptions.sampleStep * 2 : sourceOptions.sampleStep,
+  );
+  const pointCap = sourceOptions.fastDraft
+    ? Math.max(50, Math.round(sourceOptions.maxPointsPerPath))
+    : Math.max(2, Math.round(sourceOptions.maxPointsPerPath));
 
-  emitProgress(options.onProgress, "prepare", 0);
+  emitProgress(convertOptions.onProgress, "prepare", 0);
   for (let elementIndex = 0; elementIndex < elements.length; elementIndex += 1) {
-    throwIfAborted(options.signal);
+    throwIfAborted(convertOptions.signal);
     const element = elements[elementIndex];
     const tag = element.tagName.toLowerCase();
     let points: Point[] = [];
@@ -193,7 +224,7 @@ async function extractPolylinesFromSvgAsync(
         const approxCircumference = 2 * Math.PI * Math.sqrt((rx * rx + ry * ry) / 2);
         const segments = Math.max(
           MIN_CIRCLE_SEGMENTS,
-          Math.min(MAX_CIRCLE_SEGMENTS, Math.ceil(approxCircumference / lengthStep)),
+          Math.min(pointCap, Math.min(MAX_CIRCLE_SEGMENTS, Math.ceil(approxCircumference / lengthStep))),
         );
         points = [];
         for (let index = 0; index <= segments; index += 1) {
@@ -215,12 +246,12 @@ async function extractPolylinesFromSvgAsync(
 
       if (Number.isFinite(totalLength) && totalLength > 0) {
         const sampleCount = Math.min(
-          MAX_PATH_SAMPLES,
+          Math.min(pointCap, MAX_PATH_SAMPLES),
           Math.max(2, Math.ceil(totalLength / lengthStep) + 1),
         );
         points = [];
         for (let index = 0; index < sampleCount; index += 1) {
-          throwIfAborted(options.signal);
+          throwIfAborted(convertOptions.signal);
           const distance = (index / (sampleCount - 1)) * totalLength;
           const point = pathElement.getPointAtLength(distance);
           const last = points[points.length - 1];
@@ -229,19 +260,23 @@ async function extractPolylinesFromSvgAsync(
           }
 
           if (index % 512 === 0) {
-            emitProgress(options.onProgress, "sample", (elementIndex + index / sampleCount) / Math.max(elements.length, 1));
-            await yieldToUi(options.signal);
+            emitProgress(convertOptions.onProgress, "sample", (elementIndex + index / sampleCount) / Math.max(elements.length, 1));
+            await yieldToUi(convertOptions.signal);
           }
         }
 
         const d = pathElement.getAttribute("d") ?? "";
-        if (closePaths && /[zZ]/.test(d)) {
+        if (sourceOptions.closePaths && /[zZ]/.test(d)) {
           points = ensureClosed(points);
         }
       }
     }
 
     if (points.length >= 2) {
+      points = limitPoints(points, pointCap);
+      if (points.length < 2) {
+        continue;
+      }
       if (!bounds) {
         bounds = {
           minX: points[0].x,
@@ -253,20 +288,20 @@ async function extractPolylinesFromSvgAsync(
       for (const point of points) {
         updateBounds(bounds, point);
       }
-      if (closePaths && tag !== "polyline") {
+      if (sourceOptions.closePaths && tag !== "polyline") {
         points = ensureClosed(points);
       }
       polylines.push({ points });
     }
 
     if (elementIndex % 10 === 0) {
-      emitProgress(options.onProgress, "prepare", elementIndex / Math.max(elements.length, 1));
-      await yieldToUi(options.signal);
+      emitProgress(convertOptions.onProgress, "prepare", elementIndex / Math.max(elements.length, 1));
+      await yieldToUi(convertOptions.signal);
     }
   }
 
-  emitProgress(options.onProgress, "prepare", 1);
-  emitProgress(options.onProgress, "sample", 1);
+  emitProgress(convertOptions.onProgress, "prepare", 1);
+  emitProgress(convertOptions.onProgress, "sample", 1);
 
   return {
     polylines,
@@ -295,6 +330,14 @@ async function buildGcodeAsync(
     lines.push(...buildGcodeHeader(options, decimals));
   }
 
+  const totalPointTargets = polylines.reduce((sum, polyline) => {
+    if (polyline.points.length < 2) {
+      return sum;
+    }
+    return sum + (polyline.points.length - 1);
+  }, 0);
+
+  let processedPoints = 0;
   let pointCount = 0;
   for (let pathIndex = 0; pathIndex < polylines.length; pathIndex += 1) {
     throwIfAborted(convertOptions.signal);
@@ -316,12 +359,26 @@ async function buildGcodeAsync(
       const y = point.y * options.scale + options.offsetY;
       lines.push(`G1 X${formatNumber(x, decimals)} Y${formatNumber(y, decimals)} F${formatNumber(options.drawFeedRate, 0)}`);
       pointCount += 1;
+      processedPoints += 1;
+
+      if (processedPoints % 256 === 0) {
+        emitProgress(
+          convertOptions.onProgress,
+          "gcode",
+          totalPointTargets > 0 ? processedPoints / totalPointTargets : 1,
+        );
+        await yieldToUi(convertOptions.signal);
+      }
     }
 
     lines.push(`G0 Z${formatNumber(options.safeZ, decimals)} F${formatNumber(options.travelFeedRate, 0)}`);
 
-    if (pathIndex % 20 === 0) {
-      emitProgress(convertOptions.onProgress, "gcode", pathIndex / Math.max(polylines.length, 1));
+    if (pathIndex % 8 === 0) {
+      emitProgress(
+        convertOptions.onProgress,
+        "gcode",
+        totalPointTargets > 0 ? processedPoints / totalPointTargets : (pathIndex + 1) / Math.max(polylines.length, 1),
+      );
       await yieldToUi(convertOptions.signal);
     }
   }
@@ -341,7 +398,7 @@ export async function convertSvgToGcodeAsync(
   options: SvgToGcodeOptions,
   convertOptions: ConvertOptions = {},
 ): Promise<{ gcode: GraphGcode; stats: SvgToGcodeStats }> {
-  const extraction = await extractPolylinesFromSvgAsync(svg, options.sampleStep, options.closePaths, convertOptions);
+  const extraction = await extractPolylinesFromSvgAsync(svg, options, convertOptions);
 
   if (extraction.polylines.length === 0) {
     const decimals = sanitizeDecimalPlaces(options.decimals);

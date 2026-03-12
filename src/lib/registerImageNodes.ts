@@ -147,6 +147,7 @@ export function registerImageNodes() {
     RgbCombineToolNode: colorsToolCtors.RgbCombineToolNode,
     CmykCombineToolNode: colorsToolCtors.CmykCombineToolNode,
     QuantizeToolNode: colorsToolCtors.QuantizeToolNode,
+    QuantizeLevelsToolNode: colorsToolCtors.QuantizeLevelsToolNode,
     BlendToolNode: colorsToolCtors.BlendToolNode,
     LayersToolNode: colorsToolCtors.LayersToolNode,
     BrightnessContrastToolNode: colorsToolCtors.BrightnessContrastToolNode,
@@ -198,6 +199,7 @@ export function registerImageNodes() {
     GraphicScumblingToolNode: graphicToolCtors.GraphicScumblingToolNode,
     GraphicCrosshatichingToolNode: graphicToolCtors.GraphicCrosshatichingToolNode,
     GraphicScribblingToolNode: graphicToolCtors.GraphicScribblingToolNode,
+    GraphicPotraceToolNode: graphicToolCtors.GraphicPotraceToolNode,
   });
 
   registerLinesartToolNodes(registerNodeType, linesartToolCtors);

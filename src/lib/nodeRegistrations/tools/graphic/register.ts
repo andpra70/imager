@@ -8,6 +8,7 @@ interface GraphicToolNodeCtors {
   GraphicScumblingToolNode: NodeCtor;
   GraphicCrosshatichingToolNode: NodeCtor;
   GraphicScribblingToolNode: NodeCtor;
+  GraphicPotraceToolNode: NodeCtor;
 }
 
 export function registerGraphicToolNodes(registerNodeType: RegisterNodeTypeFn, ctors: GraphicToolNodeCtors) {
@@ -18,4 +19,5 @@ export function registerGraphicToolNodes(registerNodeType: RegisterNodeTypeFn, c
   registerNodeType("tools/graphic/scumbling", ctors.GraphicScumblingToolNode);
   registerNodeType("tools/graphic/crosshatiching", ctors.GraphicCrosshatichingToolNode);
   registerNodeType("tools/graphic/scribbling", ctors.GraphicScribblingToolNode);
+  registerNodeType("tools/graphic/potrace", ctors.GraphicPotraceToolNode);
 }
