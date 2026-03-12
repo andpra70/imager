@@ -16,13 +16,6 @@ interface SvgPolylineExtraction {
   bounds: SvgToGcodeStats["bounds"];
 }
 
-interface ExtractionElementMeta {
-  element: SVGGeometryElement;
-  totalLength: number;
-  sampleCount: number;
-  matrix: DOMMatrix | null;
-}
-
 interface ConvertProgress {
   stage: "prepare" | "sample" | "gcode";
   progress: number;
@@ -32,6 +25,11 @@ interface ConvertOptions {
   signal?: AbortSignal;
   onProgress?: (progress: ConvertProgress) => void;
 }
+
+const MIN_SAMPLE_STEP = 0.1;
+const MAX_PATH_SAMPLES = 1400;
+const MIN_CIRCLE_SEGMENTS = 16;
+const MAX_CIRCLE_SEGMENTS = 360;
 
 function sanitizeDecimalPlaces(value: number) {
   const rounded = Math.round(value);
@@ -62,29 +60,6 @@ function updateBounds(bounds: NonNullable<SvgToGcodeStats["bounds"]>, point: Poi
   bounds.maxY = Math.max(bounds.maxY, point.y);
 }
 
-function shouldCloseShape(element: SVGGeometryElement) {
-  const tag = element.tagName.toLowerCase();
-  if (tag === "polygon" || tag === "circle" || tag === "ellipse" || tag === "rect") {
-    return true;
-  }
-  if (tag === "path") {
-    const d = (element as SVGPathElement).getAttribute("d") ?? "";
-    return /[zZ]/.test(d);
-  }
-  return false;
-}
-
-function applyMatrix(point: DOMPoint, matrix: DOMMatrix | null) {
-  if (!matrix) {
-    return { x: point.x, y: point.y };
-  }
-  const transformed = point.matrixTransform(matrix);
-  return {
-    x: transformed.x,
-    y: transformed.y,
-  };
-}
-
 function throwIfAborted(signal?: AbortSignal) {
   if (signal?.aborted) {
     throw new Error("cancelled");
@@ -113,13 +88,39 @@ function emitProgress(
   });
 }
 
-function buildGcodeHeader(options: SvgToGcodeOptions, decimals: number) {
-  return [
-    "; Plotterfun SVG to GCode",
-    "G21 ; millimeters",
-    "G90 ; absolute mode",
-    `G0 Z${formatNumber(options.safeZ, decimals)} F${formatNumber(options.travelFeedRate, 0)}`,
-  ];
+function parseFiniteAttribute(element: Element, name: string, fallback = 0) {
+  const raw = element.getAttribute(name);
+  const value = Number(raw);
+  return Number.isFinite(value) ? value : fallback;
+}
+
+function parsePointList(rawPoints: string) {
+  const numbers = rawPoints
+    .trim()
+    .split(/[,\s]+/)
+    .map((value) => Number(value))
+    .filter((value) => Number.isFinite(value));
+
+  const points: Point[] = [];
+  for (let index = 0; index + 1 < numbers.length; index += 2) {
+    points.push({
+      x: numbers[index],
+      y: numbers[index + 1],
+    });
+  }
+  return points;
+}
+
+function ensureClosed(points: Point[]) {
+  if (points.length < 2) {
+    return points;
+  }
+  const first = points[0];
+  const last = points[points.length - 1];
+  if (distanceSquared(first, last) > 1e-8) {
+    return [...points, { x: first.x, y: first.y }];
+  }
+  return points;
 }
 
 async function extractPolylinesFromSvgAsync(
@@ -140,99 +141,107 @@ async function extractPolylinesFromSvgAsync(
     throw new Error("Input must be an SVG document.");
   }
 
-  const sandbox = document.createElement("div");
-  sandbox.style.position = "fixed";
-  sandbox.style.left = "-100000px";
-  sandbox.style.top = "-100000px";
-  sandbox.style.width = "0";
-  sandbox.style.height = "0";
-  sandbox.style.overflow = "hidden";
-  sandbox.style.opacity = "0";
+  const elements = Array.from(
+    svgRoot.querySelectorAll("path,line,polyline,polygon,rect,circle,ellipse"),
+  );
 
-  const importedSvg = document.importNode(svgRoot, true) as unknown as SVGSVGElement;
-  if (!importedSvg.getAttribute("xmlns")) {
-    importedSvg.setAttribute("xmlns", "http://www.w3.org/2000/svg");
-  }
+  const polylines: Polyline[] = [];
+  let bounds: NonNullable<SvgToGcodeStats["bounds"]> | null = null;
+  const lengthStep = Math.max(MIN_SAMPLE_STEP, sampleStep);
 
-  sandbox.appendChild(importedSvg);
-  document.body.appendChild(sandbox);
+  emitProgress(options.onProgress, "prepare", 0);
+  for (let elementIndex = 0; elementIndex < elements.length; elementIndex += 1) {
+    throwIfAborted(options.signal);
+    const element = elements[elementIndex];
+    const tag = element.tagName.toLowerCase();
+    let points: Point[] = [];
 
-  try {
-    const geometryElements = Array.from(
-      importedSvg.querySelectorAll("path,line,polyline,polygon,rect,circle,ellipse"),
-    ) as SVGGeometryElement[];
+    if (tag === "line") {
+      points = [
+        { x: parseFiniteAttribute(element, "x1"), y: parseFiniteAttribute(element, "y1") },
+        { x: parseFiniteAttribute(element, "x2"), y: parseFiniteAttribute(element, "y2") },
+      ];
+    } else if (tag === "polyline") {
+      points = parsePointList(element.getAttribute("points") ?? "");
+    } else if (tag === "polygon") {
+      points = ensureClosed(parsePointList(element.getAttribute("points") ?? ""));
+    } else if (tag === "rect") {
+      const x = parseFiniteAttribute(element, "x", 0);
+      const y = parseFiniteAttribute(element, "y", 0);
+      const width = Math.max(0, parseFiniteAttribute(element, "width", 0));
+      const height = Math.max(0, parseFiniteAttribute(element, "height", 0));
+      if (width > 0 && height > 0) {
+        points = [
+          { x, y },
+          { x: x + width, y },
+          { x: x + width, y: y + height },
+          { x, y: y + height },
+          { x, y },
+        ];
+      }
+    } else if (tag === "circle" || tag === "ellipse") {
+      const cx = parseFiniteAttribute(element, "cx", 0);
+      const cy = parseFiniteAttribute(element, "cy", 0);
+      const rx = tag === "circle"
+        ? Math.max(0, parseFiniteAttribute(element, "r", 0))
+        : Math.max(0, parseFiniteAttribute(element, "rx", 0));
+      const ry = tag === "circle"
+        ? Math.max(0, parseFiniteAttribute(element, "r", 0))
+        : Math.max(0, parseFiniteAttribute(element, "ry", 0));
 
-    const elementMetas: ExtractionElementMeta[] = [];
-    const lengthStep = Math.max(0.1, sampleStep);
-    let totalSamples = 0;
-
-    emitProgress(options.onProgress, "prepare", 0);
-    for (let index = 0; index < geometryElements.length; index += 1) {
-      throwIfAborted(options.signal);
-      const element = geometryElements[index];
+      if (rx > 0 && ry > 0) {
+        const approxCircumference = 2 * Math.PI * Math.sqrt((rx * rx + ry * ry) / 2);
+        const segments = Math.max(
+          MIN_CIRCLE_SEGMENTS,
+          Math.min(MAX_CIRCLE_SEGMENTS, Math.ceil(approxCircumference / lengthStep)),
+        );
+        points = [];
+        for (let index = 0; index <= segments; index += 1) {
+          const theta = (index / segments) * Math.PI * 2;
+          points.push({
+            x: cx + rx * Math.cos(theta),
+            y: cy + ry * Math.sin(theta),
+          });
+        }
+      }
+    } else if (tag === "path") {
+      const pathElement = element as SVGPathElement;
       let totalLength = 0;
       try {
-        totalLength = element.getTotalLength();
+        totalLength = pathElement.getTotalLength();
       } catch {
-        continue;
+        totalLength = 0;
       }
-      if (!Number.isFinite(totalLength) || totalLength <= 0) {
-        continue;
-      }
-      const sampleCount = Math.max(2, Math.ceil(totalLength / lengthStep) + 1);
-      elementMetas.push({
-        element,
-        totalLength,
-        sampleCount,
-        matrix: (element as unknown as SVGGraphicsElement).getCTM(),
-      });
-      totalSamples += sampleCount;
 
-      if (index % 12 === 0) {
-        emitProgress(options.onProgress, "prepare", geometryElements.length > 0 ? index / geometryElements.length : 1);
-        await yieldToUi(options.signal);
+      if (Number.isFinite(totalLength) && totalLength > 0) {
+        const sampleCount = Math.min(
+          MAX_PATH_SAMPLES,
+          Math.max(2, Math.ceil(totalLength / lengthStep) + 1),
+        );
+        points = [];
+        for (let index = 0; index < sampleCount; index += 1) {
+          throwIfAborted(options.signal);
+          const distance = (index / (sampleCount - 1)) * totalLength;
+          const point = pathElement.getPointAtLength(distance);
+          const last = points[points.length - 1];
+          if (!last || distanceSquared(last, point) > 1e-8) {
+            points.push({ x: point.x, y: point.y });
+          }
+
+          if (index % 512 === 0) {
+            emitProgress(options.onProgress, "sample", (elementIndex + index / sampleCount) / Math.max(elements.length, 1));
+            await yieldToUi(options.signal);
+          }
+        }
+
+        const d = pathElement.getAttribute("d") ?? "";
+        if (closePaths && /[zZ]/.test(d)) {
+          points = ensureClosed(points);
+        }
       }
     }
-    emitProgress(options.onProgress, "prepare", 1);
 
-    const dedupeEpsilonSq = 1e-8;
-    const polylines: Polyline[] = [];
-    let bounds: NonNullable<SvgToGcodeStats["bounds"]> | null = null;
-    let processedSamples = 0;
-
-    for (let elementIndex = 0; elementIndex < elementMetas.length; elementIndex += 1) {
-      const meta = elementMetas[elementIndex];
-      const points: Point[] = [];
-
-      for (let sampleIndex = 0; sampleIndex < meta.sampleCount; sampleIndex += 1) {
-        throwIfAborted(options.signal);
-        const distance = (sampleIndex / (meta.sampleCount - 1)) * meta.totalLength;
-        const raw = meta.element.getPointAtLength(distance);
-        const point = applyMatrix(new DOMPoint(raw.x, raw.y), meta.matrix);
-        const lastPoint = points[points.length - 1];
-        if (!lastPoint || distanceSquared(lastPoint, point) > dedupeEpsilonSq) {
-          points.push(point);
-        }
-
-        processedSamples += 1;
-        if (processedSamples % 320 === 0) {
-          emitProgress(options.onProgress, "sample", totalSamples > 0 ? processedSamples / totalSamples : 1);
-          await yieldToUi(options.signal);
-        }
-      }
-
-      if (closePaths && shouldCloseShape(meta.element) && points.length > 2) {
-        const first = points[0];
-        const last = points[points.length - 1];
-        if (distanceSquared(first, last) > dedupeEpsilonSq) {
-          points.push({ x: first.x, y: first.y });
-        }
-      }
-
-      if (points.length < 2) {
-        continue;
-      }
-
+    if (points.length >= 2) {
       if (!bounds) {
         bounds = {
           minX: points[0].x,
@@ -244,15 +253,34 @@ async function extractPolylinesFromSvgAsync(
       for (const point of points) {
         updateBounds(bounds, point);
       }
-
+      if (closePaths && tag !== "polyline") {
+        points = ensureClosed(points);
+      }
       polylines.push({ points });
     }
 
-    emitProgress(options.onProgress, "sample", 1);
-    return { polylines, bounds };
-  } finally {
-    sandbox.remove();
+    if (elementIndex % 10 === 0) {
+      emitProgress(options.onProgress, "prepare", elementIndex / Math.max(elements.length, 1));
+      await yieldToUi(options.signal);
+    }
   }
+
+  emitProgress(options.onProgress, "prepare", 1);
+  emitProgress(options.onProgress, "sample", 1);
+
+  return {
+    polylines,
+    bounds,
+  };
+}
+
+function buildGcodeHeader(options: SvgToGcodeOptions, decimals: number) {
+  return [
+    "; Plotterfun SVG to GCode",
+    "G21 ; millimeters",
+    "G90 ; absolute mode",
+    `G0 Z${formatNumber(options.safeZ, decimals)} F${formatNumber(options.travelFeedRate, 0)}`,
+  ];
 }
 
 async function buildGcodeAsync(
@@ -288,16 +316,12 @@ async function buildGcodeAsync(
       const y = point.y * options.scale + options.offsetY;
       lines.push(`G1 X${formatNumber(x, decimals)} Y${formatNumber(y, decimals)} F${formatNumber(options.drawFeedRate, 0)}`);
       pointCount += 1;
-
-      if (pointIndex % 512 === 0) {
-        await yieldToUi(convertOptions.signal);
-      }
     }
 
     lines.push(`G0 Z${formatNumber(options.safeZ, decimals)} F${formatNumber(options.travelFeedRate, 0)}`);
 
-    if (pathIndex % 6 === 0) {
-      emitProgress(convertOptions.onProgress, "gcode", polylines.length > 0 ? pathIndex / polylines.length : 1);
+    if (pathIndex % 20 === 0) {
+      emitProgress(convertOptions.onProgress, "gcode", pathIndex / Math.max(polylines.length, 1));
       await yieldToUi(convertOptions.signal);
     }
   }
