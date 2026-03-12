@@ -1,9 +1,8 @@
 import type { GraphGcode } from "../../../../models/graphGcode";
-import type { GraphSvg } from "../../../../models/graphSvg";
 import type { NodeCtor, PreviewAwareNode } from "../../shared";
 import { clamp, createToolTitle, formatExecutionInfo, notifyGraphStateChange } from "../shared";
 import { type SvgToGcodeOptions, svgToGcodeDefaults } from "./model";
-import { convertSvgToGcode } from "./svgToGcodeRuntime";
+import { convertSvgToGcodeAsync } from "./svgToGcodeRuntime";
 
 interface GcodeConverterPayload {
   family: "gcode";
@@ -62,8 +61,15 @@ export class SvgToGcodeToolNode {
   payload: GcodeConverterPayload | null = null;
   status = "idle";
   executionMs: number | null = null;
-  lastSvg = "";
-  lastOptionsSignature = "";
+  lastCompletedSignature = "";
+  lastQueuedSignature = "";
+  isRendering = false;
+  progress = 0;
+  progressLabel = "idle";
+  debounceTimerId: number | null = null;
+  abortController: AbortController | null = null;
+  pendingSvg = "";
+  pendingOptions: SvgToGcodeOptions | null = null;
 
   constructor() {
     const node = this as unknown as PreviewAwareNode & SvgToGcodeToolNode;
@@ -151,46 +157,129 @@ export class SvgToGcodeToolNode {
     const svgValue = this.getInputData(0);
     const svg = typeof svgValue === "string" ? svgValue : "";
     const options = normalizeConverterOptions(this.properties);
-    const optionsSignature = JSON.stringify(options);
+    const signature = `${svg}\n---\n${JSON.stringify(options)}`;
 
     if (!svg) {
       this.gcode = "";
       this.payload = null;
       this.status = "waiting svg";
       this.executionMs = null;
-      this.lastSvg = "";
-      this.lastOptionsSignature = "";
+      this.lastCompletedSignature = "";
+      this.lastQueuedSignature = "";
+      this.isRendering = false;
+      this.progress = 0;
+      this.progressLabel = "idle";
+      this.pendingSvg = "";
+      this.pendingOptions = null;
+      this.abortController?.abort();
+      this.abortController = null;
+      if (this.debounceTimerId !== null) {
+        window.clearTimeout(this.debounceTimerId);
+        this.debounceTimerId = null;
+      }
       this.setOutputData(0, null);
       this.setDirtyCanvas(true, true);
       return;
     }
 
-    if (svg === this.lastSvg && optionsSignature === this.lastOptionsSignature) {
+    if (signature === this.lastCompletedSignature) {
       this.setOutputData(0, this.gcode);
       return;
     }
 
-    const startedAt = performance.now();
-    try {
-      const converted = convertSvgToGcode(svg, options);
-      this.gcode = converted.gcode;
-      this.payload = {
-        family: "gcode",
-        schemaVersion: 1,
-        options,
-        stats: converted.stats,
-      };
-      this.status = converted.stats.pathCount > 0 ? "ready" : "empty";
-      this.executionMs = performance.now() - startedAt;
-      this.lastSvg = svg;
-      this.lastOptionsSignature = optionsSignature;
-    } catch (error) {
+    if (signature !== this.lastQueuedSignature) {
+      this.lastQueuedSignature = signature;
+      this.pendingSvg = svg;
+      this.pendingOptions = options;
       this.gcode = "";
       this.payload = null;
-      this.status = error instanceof Error ? error.message : "svg to gcode error";
+      this.progress = 0;
+      this.progressLabel = "waiting 5s stable input";
+      this.status = "pending";
       this.executionMs = null;
-      this.lastSvg = "";
-      this.lastOptionsSignature = "";
+      this.lastCompletedSignature = "";
+
+      this.abortController?.abort();
+      this.abortController = null;
+      this.isRendering = false;
+
+      if (this.debounceTimerId !== null) {
+        window.clearTimeout(this.debounceTimerId);
+      }
+
+      const queuedSignature = signature;
+      this.debounceTimerId = window.setTimeout(() => {
+        if (
+          queuedSignature !== this.lastQueuedSignature
+          || !this.pendingSvg
+          || !this.pendingOptions
+        ) {
+          return;
+        }
+
+        this.abortController?.abort();
+        const controller = new AbortController();
+        this.abortController = controller;
+        this.isRendering = true;
+        this.progress = 0;
+        this.progressLabel = "prepare";
+        this.status = "processing";
+        const startedAt = performance.now();
+
+        void convertSvgToGcodeAsync(this.pendingSvg, this.pendingOptions, {
+          signal: controller.signal,
+          onProgress: ({ stage, progress }) => {
+            if (controller.signal.aborted) {
+              return;
+            }
+            this.progress = progress;
+            this.progressLabel = stage;
+            this.status = "processing";
+            this.setDirtyCanvas(true, true);
+          },
+        })
+          .then((converted) => {
+            if (controller.signal.aborted || queuedSignature !== this.lastQueuedSignature) {
+              return;
+            }
+            this.gcode = converted.gcode;
+            this.payload = {
+              family: "gcode",
+              schemaVersion: 1,
+              options: this.pendingOptions as SvgToGcodeOptions,
+              stats: converted.stats,
+            };
+            this.status = converted.stats.pathCount > 0 ? "ready" : "empty";
+            this.executionMs = performance.now() - startedAt;
+            this.progress = 1;
+            this.progressLabel = "done";
+            this.lastCompletedSignature = queuedSignature;
+            this.setOutputData(0, this.gcode || null);
+            this.setDirtyCanvas(true, true);
+          })
+          .catch((error) => {
+            if (controller.signal.aborted) {
+              return;
+            }
+            this.gcode = "";
+            this.payload = null;
+            this.status = error instanceof Error ? error.message : "svg to gcode error";
+            this.executionMs = null;
+            this.progress = 0;
+            this.progressLabel = "error";
+            this.lastCompletedSignature = "";
+            this.setOutputData(0, null);
+            this.setDirtyCanvas(true, true);
+          })
+          .finally(() => {
+            if (this.abortController === controller) {
+              this.abortController = null;
+            }
+            if (queuedSignature === this.lastQueuedSignature) {
+              this.isRendering = false;
+            }
+          });
+      }, 5000);
     }
 
     this.setOutputData(0, this.gcode || null);
@@ -209,6 +298,7 @@ export class SvgToGcodeToolNode {
       this.payload && this.payload.stats.bounds
         ? `bounds: ${this.payload.stats.bounds.minX.toFixed(2)},${this.payload.stats.bounds.minY.toFixed(2)} -> ${this.payload.stats.bounds.maxX.toFixed(2)},${this.payload.stats.bounds.maxY.toFixed(2)}`
         : "bounds: --",
+      `progress: ${(this.progress * 100).toFixed(1)}% (${this.progressLabel})`,
       formatExecutionInfo(this.executionMs),
     ];
 
@@ -224,6 +314,15 @@ export class SvgToGcodeToolNode {
       context.fillText(line, padding + 8, headerHeight + 18 + index * 18);
     }
     context.restore();
+  }
+
+  onRemoved(this: SvgToGcodeToolNode) {
+    if (this.debounceTimerId !== null) {
+      window.clearTimeout(this.debounceTimerId);
+      this.debounceTimerId = null;
+    }
+    this.abortController?.abort();
+    this.abortController = null;
   }
 }
 
@@ -482,6 +581,8 @@ export class GcodeCncToolNode {
       speedMultiplier: 1,
       penDownThreshold: 0.1,
       showTravelMoves: true,
+      invertX: false,
+      invertY: false,
       drawWidth: 1.4,
       travelWidth: 0.8,
     };
@@ -520,6 +621,16 @@ export class GcodeCncToolNode {
 
     node.addWidget("toggle", "Show travel", true, (value) => {
       node.properties.showTravelMoves = Boolean(value);
+      notifyGraphStateChange(node);
+    });
+
+    node.addWidget("toggle", "Invert X", false, (value) => {
+      node.properties.invertX = Boolean(value);
+      notifyGraphStateChange(node);
+    });
+
+    node.addWidget("toggle", "Invert Y", false, (value) => {
+      node.properties.invertY = Boolean(value);
       notifyGraphStateChange(node);
     });
 
@@ -599,15 +710,16 @@ export class GcodeCncToolNode {
     }
 
     if (signature !== this.lastInputSignature) {
+      const wasPlaying = this.isPlaying;
       const startedAt = performance.now();
       try {
         this.program = parseGcodeProgram(gcode);
         this.gcode = gcode;
-        this.status = this.program.segments.length > 0 ? "ready" : "empty";
+        this.status = this.program.segments.length > 0 ? (wasPlaying ? "playing" : "ready") : "empty";
         this.progressSec = 0;
         this.currentSegmentIndex = 0;
         this.currentSegmentT = 0;
-        this.isPlaying = false;
+        this.isPlaying = wasPlaying && this.program.segments.length > 0;
         this.lastTickAtMs = performance.now();
         this.executionMs = performance.now() - startedAt;
       } catch (error) {
@@ -655,13 +767,17 @@ export class GcodeCncToolNode {
       const offsetY = plotTop + (plotHeight - rangeY * scale) * 0.5 + bounds.maxY * scale;
       const penDownThreshold = Number(this.properties.penDownThreshold ?? 0.1);
       const showTravelMoves = Boolean(this.properties.showTravelMoves ?? true);
+      const invertX = Boolean(this.properties.invertX ?? false);
+      const invertY = Boolean(this.properties.invertY ?? false);
       const drawWidth = clamp(Number(this.properties.drawWidth ?? 1.4), 0.3, 8);
       const travelWidth = clamp(Number(this.properties.travelWidth ?? 0.8), 0.2, 6);
 
       const project = (point: CncPoint) => {
+        const transformedX = invertX ? bounds.maxX - (point.x - bounds.minX) : point.x;
+        const transformedY = invertY ? bounds.maxY - (point.y - bounds.minY) : point.y;
         return {
-          x: offsetX + point.x * scale,
-          y: offsetY - point.y * scale,
+          x: offsetX + transformedX * scale,
+          y: offsetY - transformedY * scale,
         };
       };
 

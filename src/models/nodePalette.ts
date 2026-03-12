@@ -8,6 +8,7 @@ export interface NodePaletteItem {
 
 export const nodePalette: NodePaletteItem[] = [
   { type: "input/image", category: "io", glyph: "IN", shortLabel: "Image", tooltip: "INPUT: carica o trascina un'immagine." },
+  { type: "input/svg", category: "io", glyph: "SVI", shortLabel: "SVG In", tooltip: "SVG IN: carica un file SVG o trascina un .svg sul nodo." },
   { type: "input/webcam", category: "io", glyph: "CAM", shortLabel: "Webcam", tooltip: "WEBCAM: mostra il live video e cattura con Grab." },
   { type: "tools/colors/invert", category: "colors", glyph: "INV", shortLabel: "Invert", tooltip: "INVERT: inverte i colori dell'immagine." },
   { type: "tools/colors/grayscale", category: "colors", glyph: "GRY", shortLabel: "Gray", tooltip: "GRAYSCALE: converte l'immagine in scala di grigi." },

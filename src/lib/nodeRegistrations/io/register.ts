@@ -2,6 +2,7 @@ import type { NodeCtor, RegisterNodeTypeFn } from "../shared";
 
 interface InputNodeCtors {
   InputImageNode: NodeCtor;
+  InputSvgNode: NodeCtor;
   WebcamImageNode: NodeCtor;
 }
 
@@ -15,6 +16,7 @@ interface OutputNodeCtors {
 
 export function registerInputNodes(registerNodeType: RegisterNodeTypeFn, ctors: InputNodeCtors) {
   registerNodeType("input/image", ctors.InputImageNode);
+  registerNodeType("input/svg", ctors.InputSvgNode);
   registerNodeType("input/webcam", ctors.WebcamImageNode);
 }
 

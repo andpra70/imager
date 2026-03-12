@@ -21,6 +21,7 @@ interface IoNodeRuntimeDeps {
 
 export interface IoNodeCtors {
   InputImageNode: NodeCtor;
+  InputSvgNode: NodeCtor;
   WebcamImageNode: NodeCtor;
   OutputImageNode: NodeCtor;
   OutputPaletteNode: NodeCtor;
@@ -127,6 +128,19 @@ function getSerializedImageFromConfig(data: Record<string, unknown>) {
       : null;
 
   return typeof properties?.serializedImage === "string" ? properties.serializedImage : null;
+}
+
+function getSerializedSvgFromConfig(data: Record<string, unknown>) {
+  if (typeof data.serializedSvg === "string") {
+    return data.serializedSvg;
+  }
+
+  const properties =
+    data.properties && typeof data.properties === "object"
+      ? (data.properties as Record<string, unknown>)
+      : null;
+
+  return typeof properties?.serializedSvg === "string" ? properties.serializedSvg : null;
 }
 
 export function createIoNodeCtors(deps: IoNodeRuntimeDeps): IoNodeCtors {
@@ -381,6 +395,142 @@ export function createIoNodeCtors(deps: IoNodeRuntimeDeps): IoNodeCtors {
         this.animationFrameId = null;
       }
       this.stream?.getTracks().forEach((track) => track.stop());
+    }
+  }
+
+  class InputSvgNode {
+    svg: GraphSvg | null = null;
+    preview: GraphImage | null = null;
+    fileInput!: HTMLInputElement;
+    size: [number, number] = [300, 320];
+    serializedSvg: string | null = null;
+    infoText = "no svg";
+    svgBytes = 0;
+    renderToken = 0;
+
+    constructor() {
+      const node = this as unknown as PreviewAwareNode & InputSvgNode;
+      node.title = "SVG IN";
+      node.properties = {};
+      node.addOutput("svg", "svg");
+      node.addWidget("button", "Load SVG", null, () => {
+        node.fileInput.click();
+      });
+
+      node.fileInput = document.createElement("input");
+      node.fileInput.type = "file";
+      node.fileInput.accept = ".svg,image/svg+xml";
+      node.fileInput.style.display = "none";
+      node.fileInput.addEventListener("change", () => {
+        const file = node.fileInput.files?.[0];
+        if (!file) {
+          return;
+        }
+        node.loadSvgFile(file);
+      });
+
+      node.refreshPreviewLayout = () => {
+        deps.refreshNode(node, node.preview, 1);
+      };
+
+      document.body.appendChild(node.fileInput);
+      node.refreshPreviewLayout();
+    }
+
+    loadSvgText(this: PreviewAwareNode & InputSvgNode, svgText: string) {
+      const normalized = svgText.trim();
+      if (!normalized.toLowerCase().includes("<svg")) {
+        this.infoText = "invalid svg";
+        this.svg = null;
+        this.preview = null;
+        this.svgBytes = 0;
+        this.refreshPreviewLayout();
+        return;
+      }
+
+      this.svg = normalized;
+      this.serializedSvg = normalized;
+      this.svgBytes = new Blob([normalized], { type: "image/svg+xml" }).size;
+      this.infoText = `svg ${this.svgBytes} bytes`;
+      const renderToken = ++this.renderToken;
+      void rasterizeGraphSvg(normalized)
+        .then((preview) => {
+          if (renderToken !== this.renderToken) {
+            return;
+          }
+          this.preview = preview;
+          this.refreshPreviewLayout();
+          deps.notifyGraphStateChange(this);
+        })
+        .catch(() => {
+          if (renderToken !== this.renderToken) {
+            return;
+          }
+          this.preview = null;
+          this.refreshPreviewLayout();
+          deps.notifyGraphStateChange(this);
+        });
+    }
+
+    loadSvgFile(this: PreviewAwareNode & InputSvgNode, file: File) {
+      const isSvg = file.type.includes("svg") || file.name.toLowerCase().endsWith(".svg");
+      if (!isSvg) {
+        this.infoText = "invalid file";
+        this.refreshPreviewLayout();
+        return;
+      }
+
+      const reader = new FileReader();
+      reader.onload = () => {
+        const svgText = typeof reader.result === "string" ? reader.result : "";
+        this.loadSvgText(svgText);
+      };
+      reader.onerror = () => {
+        this.infoText = "read error";
+        this.refreshPreviewLayout();
+      };
+      reader.readAsText(file);
+    }
+
+    onDropFile(this: PreviewAwareNode & InputSvgNode, file: File) {
+      this.loadSvgFile(file);
+    }
+
+    onSerialize(this: InputSvgNode, data: Record<string, unknown>) {
+      data.serializedSvg = this.svg ?? this.serializedSvg;
+    }
+
+    onConfigure(this: PreviewAwareNode & InputSvgNode, data: Record<string, unknown>) {
+      const serializedSvg = getSerializedSvgFromConfig(data);
+      this.serializedSvg = serializedSvg;
+
+      if (!serializedSvg) {
+        this.svg = null;
+        this.preview = null;
+        this.svgBytes = 0;
+        this.infoText = "no svg";
+        this.refreshPreviewLayout();
+        return;
+      }
+
+      this.loadSvgText(serializedSvg);
+    }
+
+    onExecute(this: LiteNode & InputSvgNode) {
+      this.setOutputData(0, this.svg);
+    }
+
+    onDrawBackground(this: PreviewAwareNode & InputSvgNode, context: CanvasRenderingContext2D) {
+      const layout = drawImagePreview(context, this, this.preview, { footerLines: 1 });
+      context.save();
+      context.fillStyle = "rgba(255,255,255,0.65)";
+      context.font = "12px sans-serif";
+      context.fillText(this.infoText, 10, layout.footerTop + 12);
+      context.restore();
+    }
+
+    onRemoved(this: InputSvgNode) {
+      this.fileInput.remove();
     }
   }
 
@@ -739,6 +889,7 @@ export function createIoNodeCtors(deps: IoNodeRuntimeDeps): IoNodeCtors {
 
   return {
     InputImageNode,
+    InputSvgNode,
     WebcamImageNode,
     OutputImageNode,
     OutputPaletteNode,

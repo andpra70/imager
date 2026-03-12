@@ -119,6 +119,7 @@ export function registerImageNodes() {
 
   registerInputNodes(registerNodeType, {
     InputImageNode: ioNodeCtors.InputImageNode,
+    InputSvgNode: ioNodeCtors.InputSvgNode,
     WebcamImageNode: ioNodeCtors.WebcamImageNode,
   });
 
