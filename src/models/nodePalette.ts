@@ -1,6 +1,6 @@
 export interface NodePaletteItem {
   type: string;
-  category: "io" | "basic" | "focus" | "colors" | "art" | "graphic" | "plotter" | "ai" | "svg";
+  category: "io" | "basic" | "focus" | "colors" | "art" | "graphic" | "plotter" | "linesart" | "gcode" | "ai" | "svg";
   glyph: string;
   shortLabel: string;
   tooltip: string;
@@ -79,6 +79,19 @@ export const nodePalette: NodePaletteItem[] = [
   { type: "tools/plotter/subline", category: "plotter", glyph: "PSU", shortLabel: "Subline", tooltip: "PLOTTER/SUBLINE: subline multilineari con sublines/amplitude/sampling da tools/plotter/legacy/subline.js." },
   { type: "tools/plotter/waves", category: "plotter", glyph: "PWV", shortLabel: "Waves", tooltip: "PLOTTER/WAVES: onde orientate per angle/step-size da tools/plotter/legacy/waves.js." },
   { type: "tools/plotter/woven", category: "plotter", glyph: "PWO", shortLabel: "Woven", tooltip: "PLOTTER/WOVEN: effetto tessuto con cosine/random/power da tools/plotter/legacy/woven.js." },
+  { type: "tools/linesart/hatching", category: "linesart", glyph: "LHA", shortLabel: "Hatching", tooltip: "LINESART/HATCHING: tratteggio parallelo con angolo, spaziatura e spessore guidati dalla luminanza (output image + svg)." },
+  { type: "tools/linesart/cross-hatching", category: "linesart", glyph: "LCH", shortLabel: "CrossHat", tooltip: "LINESART/CROSS-HATCHING: doppio tratteggio ortogonale con parametri di densita/spessore e invert tones (output image + svg)." },
+  { type: "tools/linesart/spiral", category: "linesart", glyph: "LSP", shortLabel: "Spiral", tooltip: "LINESART/SPIRAL: singola spirale radiale con modulazione spessore sulla luminanza (output image + svg)." },
+  { type: "tools/linesart/wavy", category: "linesart", glyph: "LWV", shortLabel: "Wavy", tooltip: "LINESART/WAVY: linee ondulate con intensita/frequenza dipendenti dal tono dell'immagine (output image + svg)." },
+  { type: "tools/linesart/concentric", category: "linesart", glyph: "LCN", shortLabel: "Concent", tooltip: "LINESART/CONCENTRIC: cerchi concentrici con spessore variabile in base alla luminanza (output image + svg)." },
+  { type: "tools/linesart/halftone", category: "linesart", glyph: "LHF", shortLabel: "Halftone", tooltip: "LINESART/HALFTONE: retino a punti con raggio controllato dal tono (output image + svg)." },
+  { type: "tools/linesart/stippling", category: "linesart", glyph: "LST", shortLabel: "Stipple", tooltip: "LINESART/STIPPLING: puntinismo casuale pesato sulle aree scure dell'immagine (output image + svg)." },
+  { type: "tools/linesart/grid", category: "linesart", glyph: "LGR", shortLabel: "Grid", tooltip: "LINESART/GRID: hatching ortogonale 0/90 gradi con pattern dash opzionale (output image + svg)." },
+  { type: "tools/linesart/scribble", category: "linesart", glyph: "LSC", shortLabel: "Scribble", tooltip: "LINESART/SCRIBBLE: percorso scarabocchiato nearest-neighbor da campionamento densita (output image + svg)." },
+  { type: "tools/linesart/sketch", category: "linesart", glyph: "LSK", shortLabel: "Sketch", tooltip: "LINESART/SKETCH: tratti brevi stile matita con intensita e rumore regolabili (output image + svg)." },
+  { type: "tools/gcode/svg-to-gcode", category: "gcode", glyph: "S2G", shortLabel: "Svg2G", tooltip: "GCODE/SVG TO GCODE: converte qualsiasi forma SVG (path, line, polyline, polygon, rect, circle, ellipse) in GCode." },
+  { type: "tools/gcode/viewer", category: "gcode", glyph: "GCV", shortLabel: "Viewer", tooltip: "GCODE/VIEWER: visualizza il GCode in ingresso, esporta file .gcode e fornisce uscita TXT." },
+  { type: "tools/gcode/cnc", category: "gcode", glyph: "CNC", shortLabel: "CNC", tooltip: "GCODE/CNC: simula il tracciamento del GCode in preview con play/reset, avanzamento, stato penna, posizione e tempo stimato." },
   { type: "tools/svg/rough", category: "svg", glyph: "RFX", shortLabel: "Rough", tooltip: "ROUGH: applica stile rough a un SVG in ingresso e produce un nuovo SVG." },
   { type: "tools/svg/svg-simplify", category: "svg", glyph: "SMP", shortLabel: "Simplify", tooltip: "SVG SIMPLIFY: semplifica path e minifica SVG riducendo il peso mantenendo i colori." },
   { type: "tools/ai/bg-remove", category: "ai", glyph: "BGR", shortLabel: "BG Remove", tooltip: "BG REMOVE: rimuove lo sfondo con segmentazione persona AI (stile MediaPipe/selfie segmentation)." },

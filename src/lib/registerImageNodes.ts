@@ -10,6 +10,8 @@ import { createToolAiNodeCtors, registerAiToolNodes } from "./nodeRegistrations/
 import { createToolSvgNodeCtors, registerSvgToolNodes } from "./nodeRegistrations/tools/svg";
 import { createToolPlotterNodeCtors, registerPlotterToolNodes } from "./nodeRegistrations/tools/plotter";
 import { createToolGraphicNodeCtors, registerGraphicToolNodes } from "./nodeRegistrations/tools/graphic";
+import { createToolLinesartNodeCtors, registerLinesartToolNodes } from "./nodeRegistrations/tools/linesart";
+import { createToolGcodeNodeCtors, registerGcodeToolNodes } from "./nodeRegistrations/tools/gcode";
 import type { LiteNode, PreviewAwareNode } from "./nodeRegistrations/shared";
 
 let registered = false;
@@ -112,6 +114,8 @@ export function registerImageNodes() {
   const svgToolCtors = createToolSvgNodeCtors();
   const plotterToolCtors = createToolPlotterNodeCtors();
   const graphicToolCtors = createToolGraphicNodeCtors();
+  const linesartToolCtors = createToolLinesartNodeCtors();
+  const gcodeToolCtors = createToolGcodeNodeCtors();
 
   registerInputNodes(registerNodeType, {
     InputImageNode: ioNodeCtors.InputImageNode,
@@ -193,6 +197,14 @@ export function registerImageNodes() {
     GraphicScumblingToolNode: graphicToolCtors.GraphicScumblingToolNode,
     GraphicCrosshatichingToolNode: graphicToolCtors.GraphicCrosshatichingToolNode,
     GraphicScribblingToolNode: graphicToolCtors.GraphicScribblingToolNode,
+  });
+
+  registerLinesartToolNodes(registerNodeType, linesartToolCtors);
+
+  registerGcodeToolNodes(registerNodeType, {
+    SvgToGcodeToolNode: gcodeToolCtors.SvgToGcodeToolNode,
+    GcodeViewerToolNode: gcodeToolCtors.GcodeViewerToolNode,
+    GcodeCncToolNode: gcodeToolCtors.GcodeCncToolNode,
   });
 
   registerOutputNodes(registerNodeType, {

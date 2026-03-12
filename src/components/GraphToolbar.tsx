@@ -40,6 +40,8 @@ const TOOLBAR_TABS: Array<{ id: ToolbarTab; label: string }> = [
   { id: "art", label: "Art" },
   { id: "graphic", label: "Graphic" },
   { id: "plotter", label: "Plotter" },
+  { id: "linesart", label: "LinesArt" },
+  { id: "gcode", label: "GCode" },
   { id: "ai", label: "AI" },
   { id: "svg", label: "SVG" },
 ];

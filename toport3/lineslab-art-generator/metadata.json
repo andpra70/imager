@@ -1,0 +1,5 @@
+{
+  "name": "LinesLab Art Generator",
+  "description": "Generate monochrome line art using algorithms inspired by the LinesLab research paper.",
+  "requestFramePermissions": []
+}

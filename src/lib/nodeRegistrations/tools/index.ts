@@ -6,4 +6,6 @@ export * from "./ai";
 export * from "./svg";
 export * from "./plotter";
 export * from "./graphic";
+export * from "./linesart";
+export * from "./gcode";
 export * from "./shared";
