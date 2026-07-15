@@ -12,6 +12,7 @@ import { createToolPlotterNodeCtors, registerPlotterToolNodes } from "./nodeRegi
 import { createToolGraphicNodeCtors, registerGraphicToolNodes } from "./nodeRegistrations/tools/graphic";
 import { createToolLinesartNodeCtors, registerLinesartToolNodes } from "./nodeRegistrations/tools/linesart";
 import { createToolGcodeNodeCtors, registerGcodeToolNodes } from "./nodeRegistrations/tools/gcode";
+import { createToolArtistsNodeCtors, registerArtistsToolNodes } from "./nodeRegistrations/tools/artists";
 import type { LiteNode, PreviewAwareNode } from "./nodeRegistrations/shared";
 
 let registered = false;
@@ -116,6 +117,7 @@ export function registerImageNodes() {
   const graphicToolCtors = createToolGraphicNodeCtors();
   const linesartToolCtors = createToolLinesartNodeCtors();
   const gcodeToolCtors = createToolGcodeNodeCtors();
+  const artistsToolCtors = createToolArtistsNodeCtors();
 
   registerInputNodes(registerNodeType, {
     InputImageNode: ioNodeCtors.InputImageNode,
@@ -208,6 +210,13 @@ export function registerImageNodes() {
     SvgToGcodeToolNode: gcodeToolCtors.SvgToGcodeToolNode,
     GcodeViewerToolNode: gcodeToolCtors.GcodeViewerToolNode,
     GcodeCncToolNode: gcodeToolCtors.GcodeCncToolNode,
+  });
+
+  registerArtistsToolNodes(registerNodeType, {
+    LineGeneratorToolNode: artistsToolCtors.LineGeneratorToolNode,
+    PatrickToolNode: artistsToolCtors.PatrickToolNode,
+    StoppelToolNode: artistsToolCtors.StoppelToolNode,
+    U111166ToolNode: artistsToolCtors.U111166ToolNode,
   });
 
   registerOutputNodes(registerNodeType, {

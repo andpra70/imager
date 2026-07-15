@@ -1,6 +1,6 @@
 export interface NodePaletteItem {
   type: string;
-  category: "io" | "basic" | "focus" | "colors" | "art" | "graphic" | "plotter" | "linesart" | "gcode" | "ai" | "svg";
+  category: "io" | "basic" | "focus" | "colors" | "art" | "artists" | "graphic" | "plotter" | "linesart" | "gcode" | "ai" | "svg";
   glyph: string;
   shortLabel: string;
   tooltip: string;
@@ -60,6 +60,10 @@ export const nodePalette: NodePaletteItem[] = [
   { type: "tools/art/carboncino", category: "art", glyph: "CRB", shortLabel: "Carbon", tooltip: "CARBONCINO: disegno a tratti e scumble in 3 passate con controlli upscale/densita/pressione." },
   { type: "tools/art/crosshatch-bn", category: "art", glyph: "XHB", shortLabel: "XH BN", tooltip: "CROSSHATCH BN: line art b/n multi-angolo (0-90) con output raster + SVG." },
   { type: "tools/art/matita", category: "art", glyph: "MAT", shortLabel: "Matita", tooltip: "MATITA: single-line painter ottimizzato con passate, semplificazione RDP e output raster + SVG." },
+  { type: "tools/artists/patrick", category: "artists", glyph: "PNG", shortLabel: "Patrick", tooltip: "PATRICK NAGEL: posterizzazione flat ad alto contrasto con controlli minimi su livelli, saturazione, posterize, edges e sfondo; output raster opaco pronto per export JPG." },
+  { type: "tools/artists/stoppel", category: "artists", glyph: "STP", shortLabel: "Stoppel", tooltip: "STOPPEL: raccolta di stili ispirati ai lavori di Sergej Stoppel, con selector mode per circles, triangles, scribble, tiny-lines e doodle-line; output raster + SVG." },
+  { type: "tools/artists/u111166", category: "artists", glyph: "OPC", shortLabel: "u111166", tooltip: "U111166 CURVES: nodo ispirato ai due sketch OpenProcessing 486307 e 650836, con mode selector per Messy Curves e Sketch 650836, output raster + SVG." },
+  { type: "tools/artists/linegenerator", category: "artists", glyph: "LPG", shortLabel: "LineGen", tooltip: "LINE PORTRAIT GENERATOR: tool ispirato al progetto di David Jilg, con ottimizzazione per celle e sole linee rette; output raster + SVG." },
   { type: "tools/plotter/boxes", category: "plotter", glyph: "PBX", shortLabel: "Boxes", tooltip: "PLOTTER/BOXES: box-grid derivata da tools/plotter/legacy/boxes.js con parametri legacy completi." },
   { type: "tools/plotter/delaunay", category: "plotter", glyph: "PDE", shortLabel: "Delaunay", tooltip: "PLOTTER/DELAUNAY: triangolazione con stipple iterativo, spread e gamma da tools/plotter/legacy/delaunay.js." },
   { type: "tools/plotter/dots", category: "plotter", glyph: "PDT", shortLabel: "Dots", tooltip: "PLOTTER/DOTS: punteggiatura lineare con direction random/seed da tools/plotter/legacy/dots.js." },

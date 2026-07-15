@@ -38,6 +38,7 @@ const TOOLBAR_TABS: Array<{ id: ToolbarTab; label: string }> = [
   { id: "focus", label: "Focus" },
   { id: "colors", label: "Colors" },
   { id: "art", label: "Art" },
+  { id: "artists", label: "Artisti" },
   { id: "graphic", label: "Graphic" },
   { id: "plotter", label: "Plotter" },
   { id: "linesart", label: "LinesArt" },
