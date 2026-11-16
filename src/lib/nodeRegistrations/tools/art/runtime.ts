@@ -21,6 +21,8 @@ import {
   CarboncinoToolNode,
   CrosshatchBnToolNode,
   MatitaToolNode,
+  JapaneseBrushToolNode,
+  ShodoToolNode,
 } from "./nodes";
 
 export interface ToolArtNodeCtors {
@@ -45,6 +47,8 @@ export interface ToolArtNodeCtors {
   CarboncinoToolNode: NodeCtor;
   CrosshatchBnToolNode: NodeCtor;
   MatitaToolNode: NodeCtor;
+  JapaneseBrushToolNode: NodeCtor;
+  ShodoToolNode: NodeCtor;
 }
 
 export function createToolArtNodeCtors(): ToolArtNodeCtors {
@@ -70,5 +74,7 @@ export function createToolArtNodeCtors(): ToolArtNodeCtors {
     CarboncinoToolNode: CarboncinoToolNode as NodeCtor,
     CrosshatchBnToolNode: CrosshatchBnToolNode as NodeCtor,
     MatitaToolNode: MatitaToolNode as NodeCtor,
+    JapaneseBrushToolNode: JapaneseBrushToolNode as NodeCtor,
+    ShodoToolNode: ShodoToolNode as NodeCtor,
   };
 }

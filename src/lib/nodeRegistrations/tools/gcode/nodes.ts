@@ -2,7 +2,7 @@ import type { GraphGcode } from "../../../../models/graphGcode";
 import type { NodeCtor, PreviewAwareNode } from "../../shared";
 import { clamp, createToolTitle, formatExecutionInfo, notifyGraphStateChange } from "../shared";
 import { type SvgToGcodeOptions, svgToGcodeDefaults } from "./model";
-import { convertSvgToGcodeAsync } from "./svgToGcodeRuntime";
+import { startSvgToGcodeWorker, type GcodeWorkerJob } from "./svgToGcodeWorkerClient";
 
 interface GcodeConverterPayload {
   family: "gcode";
@@ -57,6 +57,15 @@ function downloadGcode(gcode: GraphGcode, filename: string) {
   URL.revokeObjectURL(url);
 }
 
+function hashSvg(svg: string) {
+  let hash = 2166136261;
+  for (let index = 0; index < svg.length; index += 1) {
+    hash ^= svg.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `${svg.length}:${(hash >>> 0).toString(16)}`;
+}
+
 export class SvgToGcodeToolNode {
   size: [number, number] = [360, 430];
   gcode: GraphGcode = "";
@@ -69,9 +78,11 @@ export class SvgToGcodeToolNode {
   progress = 0;
   progressLabel = "idle";
   debounceTimerId: number | null = null;
-  abortController: AbortController | null = null;
+  workerJob: GcodeWorkerJob | null = null;
   pendingSvg = "";
   pendingOptions: SvgToGcodeOptions | null = null;
+  observedSvg = "";
+  observedSvgSignature = "";
 
   constructor() {
     const node = this as unknown as PreviewAwareNode & SvgToGcodeToolNode;
@@ -159,17 +170,39 @@ export class SvgToGcodeToolNode {
       }
     });
 
+    node.addWidget("button", "Stop conversion", null, () => {
+      node.cancelConversion("cancelled");
+    });
+
     node.refreshPreviewLayout = () => {
       node.setDirtyCanvas(true, true);
     };
     node.refreshPreviewLayout();
   }
 
+  private cancelConversion(status = "cancelled") {
+    this.workerJob?.cancel();
+    this.workerJob = null;
+    this.isRendering = false;
+    if (this.debounceTimerId !== null) {
+      window.clearTimeout(this.debounceTimerId);
+      this.debounceTimerId = null;
+    }
+    if (this.status === "processing" || this.status === "pending") {
+      this.status = status;
+      this.progressLabel = status;
+    }
+  }
+
   onExecute(this: PreviewAwareNode & SvgToGcodeToolNode) {
     const svgValue = this.getInputData(0);
     const svg = typeof svgValue === "string" ? svgValue : "";
     const options = normalizeConverterOptions(this.properties);
-    const signature = `${svg}\n---\n${JSON.stringify(options)}`;
+    if (svg !== this.observedSvg) {
+      this.observedSvg = svg;
+      this.observedSvgSignature = hashSvg(svg);
+    }
+    const signature = `${this.observedSvgSignature}:${JSON.stringify(options)}`;
 
     if (!svg) {
       this.gcode = "";
@@ -183,8 +216,9 @@ export class SvgToGcodeToolNode {
       this.progressLabel = "idle";
       this.pendingSvg = "";
       this.pendingOptions = null;
-      this.abortController?.abort();
-      this.abortController = null;
+      this.observedSvg = "";
+      this.observedSvgSignature = "";
+      this.cancelConversion("idle");
       if (this.debounceTimerId !== null) {
         window.clearTimeout(this.debounceTimerId);
         this.debounceTimerId = null;
@@ -211,8 +245,8 @@ export class SvgToGcodeToolNode {
       this.executionMs = null;
       this.lastCompletedSignature = "";
 
-      this.abortController?.abort();
-      this.abortController = null;
+      this.workerJob?.cancel();
+      this.workerJob = null;
       this.isRendering = false;
 
       if (this.debounceTimerId !== null) {
@@ -229,29 +263,26 @@ export class SvgToGcodeToolNode {
           return;
         }
 
-        this.abortController?.abort();
-        const controller = new AbortController();
-        this.abortController = controller;
+        this.workerJob?.cancel();
         this.isRendering = true;
         this.progress = 0;
         this.progressLabel = "prepare";
         this.status = "processing";
         const startedAt = performance.now();
 
-        void convertSvgToGcodeAsync(this.pendingSvg, this.pendingOptions, {
-          signal: controller.signal,
-          onProgress: ({ stage, progress }) => {
-            if (controller.signal.aborted) {
+        const job = startSvgToGcodeWorker(this.pendingSvg, this.pendingOptions, (stage, progress) => {
+            if (this.workerJob !== job) {
               return;
             }
             this.progress = progress;
             this.progressLabel = stage;
             this.status = "processing";
             this.setDirtyCanvas(true, true);
-          },
-        })
+          });
+        this.workerJob = job;
+        void job.promise
           .then((converted) => {
-            if (controller.signal.aborted || queuedSignature !== this.lastQueuedSignature) {
+            if (this.workerJob !== job || queuedSignature !== this.lastQueuedSignature) {
               return;
             }
             this.gcode = converted.gcode;
@@ -270,7 +301,7 @@ export class SvgToGcodeToolNode {
             this.setDirtyCanvas(true, true);
           })
           .catch((error) => {
-            if (controller.signal.aborted) {
+            if (error instanceof DOMException && error.name === "AbortError") {
               return;
             }
             this.gcode = "";
@@ -284,8 +315,8 @@ export class SvgToGcodeToolNode {
             this.setDirtyCanvas(true, true);
           })
           .finally(() => {
-            if (this.abortController === controller) {
-              this.abortController = null;
+            if (this.workerJob === job) {
+              this.workerJob = null;
             }
             if (queuedSignature === this.lastQueuedSignature) {
               this.isRendering = false;
@@ -333,8 +364,7 @@ export class SvgToGcodeToolNode {
       window.clearTimeout(this.debounceTimerId);
       this.debounceTimerId = null;
     }
-    this.abortController?.abort();
-    this.abortController = null;
+    this.cancelConversion("removed");
   }
 }
 

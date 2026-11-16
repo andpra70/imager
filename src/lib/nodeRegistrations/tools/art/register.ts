@@ -22,6 +22,8 @@ interface ArtToolNodeCtors {
   CarboncinoToolNode: NodeCtor;
   CrosshatchBnToolNode: NodeCtor;
   MatitaToolNode: NodeCtor;
+  JapaneseBrushToolNode: NodeCtor;
+  ShodoToolNode: NodeCtor;
 }
 
 export function registerArtToolNodes(registerNodeType: RegisterNodeTypeFn, ctors: ArtToolNodeCtors) {
@@ -46,4 +48,6 @@ export function registerArtToolNodes(registerNodeType: RegisterNodeTypeFn, ctors
   registerNodeType("tools/art/carboncino", ctors.CarboncinoToolNode);
   registerNodeType("tools/art/crosshatch-bn", ctors.CrosshatchBnToolNode);
   registerNodeType("tools/art/matita", ctors.MatitaToolNode);
+  registerNodeType("tools/art/japanese-brush", ctors.JapaneseBrushToolNode);
+  registerNodeType("tools/art/shodo", ctors.ShodoToolNode);
 }

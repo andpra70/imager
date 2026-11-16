@@ -177,6 +177,8 @@ export function registerImageNodes() {
     CarboncinoToolNode: artToolCtors.CarboncinoToolNode,
     CrosshatchBnToolNode: artToolCtors.CrosshatchBnToolNode,
     MatitaToolNode: artToolCtors.MatitaToolNode,
+    JapaneseBrushToolNode: artToolCtors.JapaneseBrushToolNode,
+    ShodoToolNode: artToolCtors.ShodoToolNode,
   });
 
   registerAiToolNodes(registerNodeType, {

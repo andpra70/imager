@@ -48,6 +48,8 @@ import {
   oilPaintGraphImage,
 } from "../shared";
 import { OptimizedToolNode } from "../shared";
+export { JapaneseBrushToolNode } from "./japaneseBrush";
+export { ShodoToolNode } from "./shodo";
 
 export class OilToolNode extends OptimizedToolNode {
   size: [number, number] = [280, 360];
