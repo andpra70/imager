@@ -104,7 +104,7 @@ function saveDurations(nodeType: string, durations: number[]) {
   try { localStorage.setItem(`${STORAGE_PREFIX}${nodeType}`, JSON.stringify(durations.slice(-HISTORY_LIMIT))); } catch { /* storage is optional */ }
 }
 
-function average(values: number[]) { return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0; }
+function lastDuration(values: number[]) { return values.length ? values[values.length - 1] : 0; }
 function asyncBusy(node: RuntimeNode) { return Boolean(node.isRendering || node.isProcessing || node.processing || node.loading || node.isRunning || node.job); }
 function nativeProgress(node: RuntimeNode) {
   if (typeof node.progress === "number") return Math.max(0, Math.min(1, node.progress));
@@ -118,12 +118,10 @@ function nativeProgress(node: RuntimeNode) {
 function drawProgress(node: RuntimeNode, context: CanvasRenderingContext2D, state: ExecutionStats) {
   const width = Math.max(80, node.size?.[0] ?? 160), barX = 8, barWidth = width - 16, barHeight = 5, y = 24;
   const elapsed = state.running ? performance.now() - state.startedAt : state.elapsedMs;
-  const estimate = average(state.durations);
+  const estimate = lastDuration(state.durations);
   const reportedProgress = nativeProgress(node);
   const derivedProgress = state.running ? reportedProgress ?? (estimate > 0 ? Math.min(.95, elapsed / estimate) : state.progress) : state.progress;
-  const remaining = state.running
-    ? reportedProgress && reportedProgress > 0 ? Math.max(0, elapsed / reportedProgress - elapsed) : estimate > 0 ? Math.max(0, estimate - elapsed) : 0
-    : 0;
+  const remaining = state.running && estimate > 0 ? Math.max(0, estimate - elapsed) : 0;
   context.save();
   context.fillStyle = "rgba(0,0,0,.35)"; context.fillRect(barX, y, barWidth, barHeight);
   context.fillStyle = state.cached ? "#69b578" : state.running ? "#e7ad47" : "#62a8e5";
@@ -146,7 +144,7 @@ function waitForAsyncCompletion(node: RuntimeNode, nodeType: string, state: Exec
   if (!state.running) return;
   if (!asyncBusy(node)) { finish(node, nodeType, state); return; }
   state.elapsedMs = performance.now() - state.startedAt;
-  const estimate = average(state.durations), reportedProgress = nativeProgress(node);
+  const estimate = lastDuration(state.durations), reportedProgress = nativeProgress(node);
   state.progress = reportedProgress ?? (estimate > 0 ? Math.min(.95, state.elapsedMs / estimate) : Math.min(.9, state.progress + .02));
   node.setDirtyCanvas?.(true, true);
   window.setTimeout(() => waitForAsyncCompletion(node, nodeType, state), 50);

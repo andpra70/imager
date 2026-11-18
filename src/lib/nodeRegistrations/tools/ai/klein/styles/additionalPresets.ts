@@ -1,4 +1,7 @@
 import type { KleinStylePreset } from "../model";
+import { COMIC_MASTER_PRESETS, PHOTOGRAPHY_MASTER_PRESETS } from "./famousArtistsPresets";
+import { FASHION_PHOTOGRAPHY_PRESETS } from "./fashionPhotographyPresets";
+import { FAMOUS_PAINTER_PRESETS } from "./famousPaintersPresets";
 
 const faithful = "Mantieni con la massima fedelta soggetto, identita, posa, proporzioni, composizione, prospettiva e ambiente dell'immagine originale. ";
 const preset = (id: string, label: string, prompt: string): KleinStylePreset => ({ id, label, prompt: `${faithful}${prompt}` });
@@ -62,6 +65,7 @@ export const PAINTING_AND_MOVEMENT_PRESETS: readonly KleinStylePreset[] = [
   preset("minimalism", "Minimalismo", "Riduci a opera minimalista mantenendo gli elementi identificativi, pochi colori, forme essenziali e ampio spazio negativo."),
   preset("neo-expressionism", "Neo-espressionismo", "Trasforma in pittura neo-espressionista, segni ruvidi, colore aggressivo, figure primordiali e superficie stratificata."),
   preset("street-art", "Street art", "Trasforma in murale street art, stencil, spray, dripping, texture di muro e palette urbana ad alto contrasto."),
+  ...FAMOUS_PAINTER_PRESETS,
 ];
 
 export const WORLD_TRADITION_PRESETS: readonly KleinStylePreset[] = [
@@ -112,6 +116,7 @@ export const DIGITAL_ILLUSTRATION_PRESETS: readonly KleinStylePreset[] = [
   preset("synthwave", "Synthwave", "Trasforma in grafica synthwave, tramonto al neon, gradienti viola-arancio, griglia retrofuturista e bagliore analogico."),
   preset("glitch", "Glitch art", "Reinterpreta in glitch art, separazione RGB, datamoshing, errori digitali e scanline preservando la leggibilita del soggetto."),
   preset("generative-lines", "Generative line art", "Reinterpreta come arte generativa a linee, campi di flusso, curve sottili, densita guidata dai toni e precisione algoritmica."),
+  ...COMIC_MASTER_PRESETS,
 ];
 
 export const PHOTO_CINEMA_PRESETS: readonly KleinStylePreset[] = [
@@ -127,6 +132,8 @@ export const PHOTO_CINEMA_PRESETS: readonly KleinStylePreset[] = [
   preset("duotone", "Duotone", "Trasforma in stampa fotografica duotone, due inchiostri complementari, mezzitoni netti e contrasto editoriale."),
   preset("lomography", "Lomografia", "Trasforma in lomografia, saturazione imprevedibile, vignettatura forte, contrasto, dominanti cromatiche e spontaneita analogica."),
   preset("tilt-shift", "Miniatura tilt-shift", "Trasforma in fotografia tilt-shift con effetto miniatura, piano di fuoco selettivo, colori puliti e luce naturale."),
+  ...PHOTOGRAPHY_MASTER_PRESETS,
+  ...FASHION_PHOTOGRAPHY_PRESETS,
 ];
 
 export const MATERIAL_AND_CRAFT_PRESETS: readonly KleinStylePreset[] = [

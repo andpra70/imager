@@ -3,6 +3,7 @@ import { drawImagePreview, resizeNodeForPreview } from "../../../../imageUtils";
 import type { PreviewAwareNode } from "../../../shared";
 import { KLEIN_DEFAULTS, KLEIN_STYLE_PRESETS, type KleinImg2ImgOptions, type KleinTxt2ImgOptions } from "./model";
 import { kleinImg2Img, kleinTxt2Img } from "./runtime";
+import { findKleinStylePath, KLEIN_STYLE_CATALOG, type KleinStyleGenre, type KleinStyleSubgenre } from "./styles/catalog";
 
 type KleinNode = PreviewAwareNode & {
   preview: GraphImage | null; status: string; pendingRun: boolean; isRunning: boolean;
@@ -89,25 +90,64 @@ export class KleinTxt2ImgToolNode {
 export class KleinImg2ImgToolNode {
   size: [number, number] = [340, 490]; properties!: Record<string, unknown>; preview: GraphImage | null = null;
   status = "pronto"; pendingRun = false; isRunning = false; controller: AbortController | null = null; executionMs: number | null = null;
+  private syncedStyleId = "";
   constructor() {
     const node = this as unknown as KleinNode & KleinImg2ImgToolNode;
     node.title = "TOOLS / AI / KLEIN IMG2IMG"; const initial = KLEIN_STYLE_PRESETS[1];
     node.properties = { ...KLEIN_DEFAULTS, styleId: initial.id, prompt: initial.prompt };
     node.addInput("image", "image"); node.addOutput("image", "image");
-    node.addWidget("combo", "Stile", initial.label, (value) => {
-      const preset = KLEIN_STYLE_PRESETS.find((item) => item.label === String(value)); if (!preset) return;
-      node.properties.styleId = preset.id; if (preset.id !== "custom") { node.properties.prompt = preset.prompt; const promptWidget = widget(node, "Prompt"); if (promptWidget) promptWidget.value = preset.prompt; } notify(node);
-    }, { values: KLEIN_STYLE_PRESETS.map((item) => item.label) });
+    const initialPath = findKleinStylePath(initial.id)!;
+    node.addWidget("combo", "Genere", initialPath.genre.label, (value) => node.selectGenre(String(value)), { values: KLEIN_STYLE_CATALOG.map((item) => item.label) });
+    node.addWidget("combo", "Sottogenere", initialPath.subgenre.label, (value) => node.selectSubgenre(String(value)), { values: initialPath.genre.subgenres.map((item) => item.label) });
+    node.addWidget("combo", "Stile", initial.label, (value) => node.selectStyle(String(value)), { values: initialPath.subgenre.styles.map((item) => item.label) });
     node.addWidget("text", "Prompt", initial.prompt, (value) => { node.properties.prompt = String(value); node.properties.styleId = "custom"; notify(node); });
     node.addWidget("number", "Prescale max", KLEIN_DEFAULTS.maxSize, (value) => { node.properties.maxSize = Number(value); notify(node); }, { min: 128, max: 1024, step: 64, precision: 0 });
     addCommonWidgets(node);
     node.addWidget("button", "Trasforma immagine", null, () => { if (!node.isRunning) node.pendingRun = true; node.setDirtyCanvas(true, true); });
     node.addWidget("button", "Annulla", null, () => node.controller?.abort());
-    node.refreshPreviewLayout = () => { resizeNodeForPreview(node, node.preview, { footerLines: 3 }); node.setDirtyCanvas(true, true); }; node.refreshPreviewLayout();
+    node.refreshPreviewLayout = () => { resizeNodeForPreview(node, node.preview, { footerLines: 3 }); node.setDirtyCanvas(true, true); }; node.syncStyleCatalog(true); node.refreshPreviewLayout();
   }
   syncWidgets() { /* API comune dei nodi Klein; i preset sono statici. */ }
+  private setCombo(name: string, value: string, values: string[]) {
+    const item = widget(this as unknown as PreviewAwareNode, name); if (!item) return;
+    item.value = value; item.options = { ...(item.options ?? {}), values };
+  }
+  private applyPath(genre: KleinStyleGenre, subgenre: KleinStyleSubgenre, styleId?: string) {
+    const style = subgenre.styles.find((item) => item.id === styleId) ?? subgenre.styles[0]; if (!style) return;
+    this.properties.styleGenreId = genre.id; this.properties.styleSubgenreId = subgenre.id; this.properties.styleId = style.id;
+    this.setCombo("Genere", genre.label, KLEIN_STYLE_CATALOG.map((item) => item.label));
+    this.setCombo("Sottogenere", subgenre.label, genre.subgenres.map((item) => item.label));
+    this.setCombo("Stile", style.label, subgenre.styles.map((item) => item.label));
+    if (style.id !== "custom") { this.properties.prompt = style.prompt; const promptWidget = widget(this as unknown as PreviewAwareNode, "Prompt"); if (promptWidget) promptWidget.value = style.prompt; }
+    this.syncedStyleId = style.id; notify(this as unknown as PreviewAwareNode);
+  }
+  selectGenre(label: string) {
+    const genre = KLEIN_STYLE_CATALOG.find((item) => item.label === label); if (genre?.subgenres[0]) this.applyPath(genre, genre.subgenres[0]);
+  }
+  selectSubgenre(label: string) {
+    const genre = KLEIN_STYLE_CATALOG.find((item) => item.id === this.properties.styleGenreId); const subgenre = genre?.subgenres.find((item) => item.label === label);
+    if (genre && subgenre) this.applyPath(genre, subgenre);
+  }
+  selectStyle(label: string) {
+    const genre = KLEIN_STYLE_CATALOG.find((item) => item.id === this.properties.styleGenreId);
+    const subgenre = genre?.subgenres.find((item) => item.id === this.properties.styleSubgenreId); const style = subgenre?.styles.find((item) => item.label === label);
+    if (genre && subgenre && style) this.applyPath(genre, subgenre, style.id);
+  }
+  syncStyleCatalog(force = false) {
+    const styleId = String(this.properties.styleId ?? "line-art"); if (!force && styleId === this.syncedStyleId) return;
+    const path = findKleinStylePath(styleId) ?? findKleinStylePath("custom"); if (path) this.applyPath(path.genre, path.subgenre, path.style.id);
+  }
+  onConfigure(this: KleinNode & KleinImg2ImgToolNode) {
+    this.syncedStyleId = ""; this.syncStyleCatalog(true);
+    const values: Record<string, unknown> = {
+      Prompt: this.properties.prompt, "Prescale max": this.properties.maxSize, "Klein URL": this.properties.baseUrl,
+      Steps: this.properties.steps, Guidance: this.properties.guidanceScale, Seed: this.properties.seed,
+    };
+    Object.entries(values).forEach(([name, value]) => { const target = widget(this, name); if (target && value !== undefined) target.value = value; });
+    this.refreshPreviewLayout();
+  }
   onExecute(this: KleinNode & KleinImg2ImgToolNode) {
-    this.setOutputData(0, this.preview); if (!this.pendingRun || this.isRunning) return; this.pendingRun = false;
+    this.syncStyleCatalog(); this.setOutputData(0, this.preview); if (!this.pendingRun || this.isRunning) return; this.pendingRun = false;
     const input = this.getInputData(0), prompt = String(this.properties.prompt ?? "").trim();
     if (!isImage(input)) { this.status = "collega un'immagine valida"; return; } if (!prompt) { this.status = "seleziona uno stile o inserisci un prompt"; return; }
     const options: KleinImg2ImgOptions = { baseUrl: String(this.properties.baseUrl), prompt, maxSize: clampInt(this.properties.maxSize, 128, 1024), steps: clampInt(this.properties.steps, 1, 4), guidanceScale: clamp(this.properties.guidanceScale, 0, 20), seed: clampInt(this.properties.seed, -1, 2147483647) };
