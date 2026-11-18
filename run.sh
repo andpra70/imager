@@ -22,6 +22,7 @@ docker pull "${IMAGE_REF}"
 docker run -d \
   --name "${CONTAINER_NAME}" \
   --restart unless-stopped \
+  --add-host host.docker.internal:host-gateway \
   -p "${HOST_PORT}:${CONTAINER_PORT}" \
   "${IMAGE_REF}"
 

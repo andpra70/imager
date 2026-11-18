@@ -1,12 +1,22 @@
+import { openCvOperationSpecs } from "../lib/nodeRegistrations/tools/opencv/model";
+
 export interface NodePaletteItem {
   type: string;
-  category: "io" | "basic" | "focus" | "colors" | "art" | "artists" | "graphic" | "plotter" | "linesart" | "gcode" | "ai" | "svg";
+  category: "io" | "basic" | "focus" | "colors" | "art" | "artists" | "graphic" | "plotter" | "linesart" | "manual" | "opencv" | "gcode" | "ai" | "svg";
   glyph: string;
   shortLabel: string;
   tooltip: string;
 }
 
 export const nodePalette: NodePaletteItem[] = [
+  ...openCvOperationSpecs.map((spec) => ({
+    type: `tools/opencv/${spec.id}`,
+    category: "opencv" as const,
+    glyph: spec.glyph,
+    shortLabel: spec.label,
+    tooltip: `OPENCV/${spec.id.toUpperCase()}: ${spec.description}`,
+  })),
+  { type: "tools/manual/prepare", category: "manual", glyph: "MAN", shortLabel: "Prepare", tooltip: "MANUAL/PREPARE: prepara una copia artistica da fotografia con reticolo adattivo, landmark, inviluppo, contorni, toni e resa grafite/carboncino/china/fumetto; output image + SVG a layer + modello." },
   { type: "input/image", category: "io", glyph: "IN", shortLabel: "Image", tooltip: "INPUT: carica o trascina un'immagine." },
   { type: "input/svg", category: "io", glyph: "SVI", shortLabel: "SVG In", tooltip: "SVG IN: carica un file SVG o trascina un .svg sul nodo." },
   { type: "input/webcam", category: "io", glyph: "CAM", shortLabel: "Webcam", tooltip: "WEBCAM: mostra il live video e cattura con Grab." },
@@ -23,6 +33,7 @@ export const nodePalette: NodePaletteItem[] = [
   { type: "tools/basic/scale", category: "basic", glyph: "SCL", shortLabel: "Scale", tooltip: "SCALE: ridimensiona l'immagine in percentuale." },
   { type: "tools/basic/rotate", category: "basic", glyph: "ROT", shortLabel: "Rotate", tooltip: "ROTATE: ruota l'immagine dell'angolo impostato." },
   { type: "tools/colors/brightness-contrast", category: "colors", glyph: "B/C", shortLabel: "Bri/Con", tooltip: "BRIGHTNESS/CONTRAST: regola luminosita e contrasto." },
+  { type: "tools/colors/AWB", category: "colors", glyph: "AWB", shortLabel: "AWB", tooltip: "AUTO WHITE BALANCE: bilanciamento automatico del bianco con Gray World, White Patch, Shades of Gray e Gray Edge." },
   { type: "tools/colors/rgb-split", category: "colors", glyph: "RGB", shortLabel: "RGB Split", tooltip: "RGB SPLIT: separa l'immagine in 3 uscite (R,G,B)." },
   { type: "tools/colors/cmyk-split", category: "colors", glyph: "CMYK", shortLabel: "CMYK Split", tooltip: "CMYK SPLIT: separa l'immagine in 4 uscite (C,M,Y,K)." },
   { type: "tools/colors/rgb-combine", category: "colors", glyph: "RGB+", shortLabel: "RGB Join", tooltip: "RGB COMBINE: ricompone immagine colore da 3 canali R,G,B." },
@@ -109,6 +120,9 @@ export const nodePalette: NodePaletteItem[] = [
   { type: "tools/ai/ml5-extract", category: "ai", glyph: "ML5", shortLabel: "ML5", tooltip: "ML5 EXTRACT: estrae bodypose/handpose/facemesh/imageclassifier (se disponibile) da un'immagine." },
   { type: "tools/ai/chatgpt-image", category: "ai", glyph: "GPT", shortLabel: "ChatGPT Image", tooltip: "CHATGPT IMAGE: trasforma esplicitamente l'immagine in ingresso secondo lo stile descritto nel prompt, usando cache persistente in ingresso e uscita." },
   { type: "tools/ai/fooocus", category: "ai", glyph: "FOO", shortLabel: "Fooocus", tooltip: "FOOOCUS LOCAL: trasforma l'immagine tramite Fooocus-API locale con prompt, controllo ImagePrompt e cache persistente." },
+  { type: "tools/ai/nanobanana", category: "ai", glyph: "NBN", shortLabel: "Nano Banana", tooltip: "NANO BANANA: modifica l'immagine in ingresso tramite Gemini Image usando prompt, modello, rapporto d'aspetto e risoluzione configurabili." },
+  { type: "tools/ai/klein/txt2img", category: "ai", glyph: "KTX", shortLabel: "Klein Txt2Img", tooltip: "KLEIN TXT2IMG: genera un'immagine dal prompt tramite il servizio Klein locale; conserva nel grafo una cronologia riutilizzabile dei prompt." },
+  { type: "tools/ai/klein/img2img", category: "ai", glyph: "KIM", shortLabel: "Klein Img2Img", tooltip: "KLEIN IMG2IMG: trasforma l'immagine con il servizio Klein locale scegliendo fra tecniche artistiche, line art, stampe antiche e altri stili." },
   { type: "output/image", category: "io", glyph: "OUT", shortLabel: "Output", tooltip: "OUTPUT: mostra il risultato finale e permette il download." },
   { type: "output/palette", category: "colors", glyph: "PAL", shortLabel: "Palette", tooltip: "PALETTE: visualizza e salva i colori in ingresso." },
   { type: "output/svg", category: "io", glyph: "S/O", shortLabel: "SVG Out", tooltip: "SVG OUTPUT: mostra un SVG in input e permette il download." },

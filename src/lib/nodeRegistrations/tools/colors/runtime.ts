@@ -16,6 +16,7 @@ import {
   LayersToolNode,
   BrightnessContrastToolNode,
 } from "./nodes";
+import { AwbToolNode } from "./awb";
 
 export interface ToolColorsNodeCtors {
   InvertToolNode: NodeCtor;
@@ -33,6 +34,7 @@ export interface ToolColorsNodeCtors {
   BlendToolNode: NodeCtor;
   LayersToolNode: NodeCtor;
   BrightnessContrastToolNode: NodeCtor;
+  AwbToolNode: NodeCtor;
 }
 
 export function createToolColorsNodeCtors(): ToolColorsNodeCtors {
@@ -52,5 +54,6 @@ export function createToolColorsNodeCtors(): ToolColorsNodeCtors {
     BlendToolNode: BlendToolNode as NodeCtor,
     LayersToolNode: LayersToolNode as NodeCtor,
     BrightnessContrastToolNode: BrightnessContrastToolNode as NodeCtor,
+    AwbToolNode: AwbToolNode as NodeCtor,
   };
 }

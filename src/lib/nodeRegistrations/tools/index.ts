@@ -10,3 +10,5 @@ export * from "./linesart";
 export * from "./gcode";
 export * from "./artists";
 export * from "./shared";
+export * from "./manual";
+export * from "./opencv";

@@ -13,7 +13,10 @@ import { createToolGraphicNodeCtors, registerGraphicToolNodes } from "./nodeRegi
 import { createToolLinesartNodeCtors, registerLinesartToolNodes } from "./nodeRegistrations/tools/linesart";
 import { createToolGcodeNodeCtors, registerGcodeToolNodes } from "./nodeRegistrations/tools/gcode";
 import { createToolArtistsNodeCtors, registerArtistsToolNodes } from "./nodeRegistrations/tools/artists";
+import { createToolManualNodeCtors, registerManualToolNodes } from "./nodeRegistrations/tools/manual";
+import { createOpenCvNodeCtors, registerOpenCvToolNodes } from "./nodeRegistrations/tools/opencv";
 import type { LiteNode, PreviewAwareNode } from "./nodeRegistrations/shared";
+import { createBaseNodeRegister } from "./nodeRegistrations/shared";
 
 let registered = false;
 
@@ -99,7 +102,7 @@ export function registerImageNodes() {
     return;
   }
 
-  const registerNodeType = LiteGraph.registerNodeType.bind(LiteGraph);
+  const registerNodeType = createBaseNodeRegister(LiteGraph.registerNodeType.bind(LiteGraph));
   const ioNodeCtors = createIoNodeCtors({
     refreshNode,
     notifyGraphStateChange,
@@ -118,6 +121,8 @@ export function registerImageNodes() {
   const linesartToolCtors = createToolLinesartNodeCtors();
   const gcodeToolCtors = createToolGcodeNodeCtors();
   const artistsToolCtors = createToolArtistsNodeCtors();
+  const manualToolCtors = createToolManualNodeCtors();
+  const openCvToolCtors = createOpenCvNodeCtors();
 
   registerInputNodes(registerNodeType, {
     InputImageNode: ioNodeCtors.InputImageNode,
@@ -153,6 +158,7 @@ export function registerImageNodes() {
     BlendToolNode: colorsToolCtors.BlendToolNode,
     LayersToolNode: colorsToolCtors.LayersToolNode,
     BrightnessContrastToolNode: colorsToolCtors.BrightnessContrastToolNode,
+    AwbToolNode: colorsToolCtors.AwbToolNode,
   });
 
   registerArtToolNodes(registerNodeType, {
@@ -188,6 +194,9 @@ export function registerImageNodes() {
     Ml5ExtractToolNode: aiToolCtors.Ml5ExtractToolNode,
     ChatGptImageToolNode: aiToolCtors.ChatGptImageToolNode,
     FooocusToolNode: aiToolCtors.FooocusToolNode,
+    NanoBananaToolNode: aiToolCtors.NanoBananaToolNode,
+    KleinTxt2ImgToolNode: aiToolCtors.KleinTxt2ImgToolNode,
+    KleinImg2ImgToolNode: aiToolCtors.KleinImg2ImgToolNode,
   });
 
   registerSvgToolNodes(registerNodeType, {
@@ -222,6 +231,9 @@ export function registerImageNodes() {
     StoppelToolNode: artistsToolCtors.StoppelToolNode,
     U111166ToolNode: artistsToolCtors.U111166ToolNode,
   });
+
+  registerManualToolNodes(registerNodeType, manualToolCtors);
+  registerOpenCvToolNodes(registerNodeType, openCvToolCtors);
 
   registerOutputNodes(registerNodeType, {
     OutputImageNode: ioNodeCtors.OutputImageNode,

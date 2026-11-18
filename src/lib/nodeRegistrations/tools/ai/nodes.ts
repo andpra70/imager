@@ -6,6 +6,8 @@ import type { GraphMl5Data, Ml5Task } from "../../../../models/graphMl5";
 import type { GraphPoseBox, GraphPoseData } from "../../../../models/graphPose";
 export { ChatGptImageToolNode } from "./chatgptImage";
 export { FooocusToolNode } from "./fooocus";
+export { NanoBananaToolNode } from "./nanoBanana";
+export { KleinTxt2ImgToolNode, KleinImg2ImgToolNode } from "./klein";
 import { drawImagePreview, drawSourceToCanvas, resizeNodeForPreview } from "../../../imageUtils";
 import type { LiteNode, PreviewAwareNode } from "../../shared";
 

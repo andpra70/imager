@@ -756,7 +756,6 @@ function shouldReuseCachedToolResult(
 ) {
   return (
     executionMs !== null &&
-    executionMs > 100 &&
     lastSignature === currentSignature &&
     lastOptionsSignature === currentOptionsSignature
   );

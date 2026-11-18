@@ -16,6 +16,7 @@ interface ColorToolNodeCtors {
   BlendToolNode: NodeCtor;
   LayersToolNode: NodeCtor;
   BrightnessContrastToolNode: NodeCtor;
+  AwbToolNode: NodeCtor;
 }
 
 export function registerColorToolNodes(registerNodeType: RegisterNodeTypeFn, ctors: ColorToolNodeCtors) {
@@ -36,4 +37,5 @@ export function registerColorToolNodes(registerNodeType: RegisterNodeTypeFn, cto
   registerNodeType("tools/colors/blend", ctors.BlendToolNode);
   registerNodeType("tools/colors/layers", ctors.LayersToolNode);
   registerNodeType("tools/colors/brightness-contrast", ctors.BrightnessContrastToolNode);
+  registerNodeType("tools/colors/AWB", ctors.AwbToolNode);
 }
