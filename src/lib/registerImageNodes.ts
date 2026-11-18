@@ -186,6 +186,8 @@ export function registerImageNodes() {
     FaceLandmarkerToolNode: aiToolCtors.FaceLandmarkerToolNode,
     BgRemoveToolNode: aiToolCtors.BgRemoveToolNode,
     Ml5ExtractToolNode: aiToolCtors.Ml5ExtractToolNode,
+    ChatGptImageToolNode: aiToolCtors.ChatGptImageToolNode,
+    FooocusToolNode: aiToolCtors.FooocusToolNode,
   });
 
   registerSvgToolNodes(registerNodeType, {

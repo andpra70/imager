@@ -4,6 +4,8 @@ import type { GraphFaceBlendshapeCategory, GraphFaceLandmarksData } from "../../
 import type { GraphImage } from "../../../../models/graphImage";
 import type { GraphMl5Data, Ml5Task } from "../../../../models/graphMl5";
 import type { GraphPoseBox, GraphPoseData } from "../../../../models/graphPose";
+export { ChatGptImageToolNode } from "./chatgptImage";
+export { FooocusToolNode } from "./fooocus";
 import { drawImagePreview, drawSourceToCanvas, resizeNodeForPreview } from "../../../imageUtils";
 import type { LiteNode, PreviewAwareNode } from "../../shared";
 

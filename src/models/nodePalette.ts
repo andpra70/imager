@@ -107,6 +107,8 @@ export const nodePalette: NodePaletteItem[] = [
   { type: "tools/ai/pose-detect", category: "ai", glyph: "POS", shortLabel: "Pose", tooltip: "POSE DETECT: rilevamento posa persona con box testa/torso/arti/collo/piedi (stile MoveNet tfjs)." },
   { type: "tools/ai/face-landmarker", category: "ai", glyph: "FLC", shortLabel: "Face LM", tooltip: "FACE LANDMARKER: rileva mesh, occhi, labbra, iridi e blendshapes del volto (MediaPipe)." },
   { type: "tools/ai/ml5-extract", category: "ai", glyph: "ML5", shortLabel: "ML5", tooltip: "ML5 EXTRACT: estrae bodypose/handpose/facemesh/imageclassifier (se disponibile) da un'immagine." },
+  { type: "tools/ai/chatgpt-image", category: "ai", glyph: "GPT", shortLabel: "ChatGPT Image", tooltip: "CHATGPT IMAGE: trasforma esplicitamente l'immagine in ingresso secondo lo stile descritto nel prompt, usando cache persistente in ingresso e uscita." },
+  { type: "tools/ai/fooocus", category: "ai", glyph: "FOO", shortLabel: "Fooocus", tooltip: "FOOOCUS LOCAL: trasforma l'immagine tramite Fooocus-API locale con prompt, controllo ImagePrompt e cache persistente." },
   { type: "output/image", category: "io", glyph: "OUT", shortLabel: "Output", tooltip: "OUTPUT: mostra il risultato finale e permette il download." },
   { type: "output/palette", category: "colors", glyph: "PAL", shortLabel: "Palette", tooltip: "PALETTE: visualizza e salva i colori in ingresso." },
   { type: "output/svg", category: "io", glyph: "S/O", shortLabel: "SVG Out", tooltip: "SVG OUTPUT: mostra un SVG in input e permette il download." },

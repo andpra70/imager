@@ -5,6 +5,8 @@ interface AiToolNodeCtors {
   FaceLandmarkerToolNode: NodeCtor;
   BgRemoveToolNode: NodeCtor;
   Ml5ExtractToolNode: NodeCtor;
+  ChatGptImageToolNode: NodeCtor;
+  FooocusToolNode: NodeCtor;
 }
 
 export function registerAiToolNodes(registerNodeType: RegisterNodeTypeFn, ctors: AiToolNodeCtors) {
@@ -12,4 +14,6 @@ export function registerAiToolNodes(registerNodeType: RegisterNodeTypeFn, ctors:
   registerNodeType("tools/ai/face-landmarker", ctors.FaceLandmarkerToolNode);
   registerNodeType("tools/ai/bg-remove", ctors.BgRemoveToolNode);
   registerNodeType("tools/ai/ml5-extract", ctors.Ml5ExtractToolNode);
+  registerNodeType("tools/ai/chatgpt-image", ctors.ChatGptImageToolNode);
+  registerNodeType("tools/ai/fooocus", ctors.FooocusToolNode);
 }
