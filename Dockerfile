@@ -3,7 +3,7 @@ FROM node:20-alpine AS build
 WORKDIR /app
 
 COPY package.json package-lock.json ./
-RUN npm ci
+RUN ONNXRUNTIME_NODE_INSTALL_CUDA=skip npm ci
 
 COPY index.html tsconfig.json tsconfig.app.json vite.config.ts ./
 COPY src ./src

@@ -25,7 +25,7 @@ function widget(node: PreviewAwareNode, name: string) {
 
 function addCommonWidgets(node: PreviewAwareNode) {
   node.addWidget("text", "Klein URL", KLEIN_DEFAULTS.baseUrl, (value) => { node.properties.baseUrl = String(value); notify(node); });
-  node.addWidget("slider", "Steps", KLEIN_DEFAULTS.steps, (value) => { node.properties.steps = Number(value); notify(node); }, { min: 1, max: 4, step: 1, precision: 0 });
+  node.addWidget("slider", "Steps", KLEIN_DEFAULTS.steps, (value) => { node.properties.steps = Number(value); notify(node); }, { min: 1, max: 12, step: 1, precision: 0 });
   node.addWidget("slider", "Guidance", KLEIN_DEFAULTS.guidanceScale, (value) => { node.properties.guidanceScale = Number(value); notify(node); }, { min: 0, max: 20, step: 0.1, precision: 1 });
   node.addWidget("number", "Seed", KLEIN_DEFAULTS.seed, (value) => { node.properties.seed = Number(value); notify(node); }, { min: -1, max: 2147483647, step: 1, precision: 0 });
 }
@@ -89,7 +89,7 @@ export class KleinTxt2ImgToolNode {
   onExecute(this: KleinNode & KleinTxt2ImgToolNode) {
     this.syncWidgets(); this.setOutputData(0, this.preview); if (!this.pendingRun || this.isRunning) return; this.pendingRun = false;
     const prompt = String(this.properties.prompt ?? "").trim(); if (!prompt) { this.status = "inserisci un prompt"; return; } this.savePrompt();
-    const options: KleinTxt2ImgOptions = { baseUrl: String(this.properties.baseUrl), prompt, width: Math.round(clampInt(this.properties.width, 64, 1024) / 16) * 16, height: Math.round(clampInt(this.properties.height, 64, 1024) / 16) * 16, steps: clampInt(this.properties.steps, 1, 4), guidanceScale: clamp(this.properties.guidanceScale, 0, 20), seed: clampInt(this.properties.seed, -1, 2147483647) };
+    const options: KleinTxt2ImgOptions = { baseUrl: String(this.properties.baseUrl), prompt, width: Math.round(clampInt(this.properties.width, 64, 1024) / 16) * 16, height: Math.round(clampInt(this.properties.height, 64, 1024) / 16) * 16, steps: clampInt(this.properties.steps, 1, 12), guidanceScale: clamp(this.properties.guidanceScale, 0, 20), seed: clampInt(this.properties.seed, -1, 2147483647) };
     const started = performance.now(); this.isRunning = true; this.status = "generazione in corso..."; this.controller = new AbortController(); this.refreshPreviewLayout();
     void kleinTxt2Img({ options, signal: this.controller.signal }).then((result) => finish(this, started, result.image)).catch((error) => fail(this, error)).finally(() => { this.isRunning = false; this.controller = null; this.refreshPreviewLayout(); });
   }
@@ -177,7 +177,7 @@ export class KleinImg2ImgToolNode {
     if (!isImage(inputSlots[0])) { this.status = "collega almeno image 1 (base)"; return; }
     if (hasGap) { this.status = "collega le immagini in ordine, senza slot vuoti"; return; }
     if (!prompt) { this.status = Boolean(this.properties.useStylePreset ?? true) ? "seleziona uno stile o inserisci un prompt" : "inserisci il prompt testuale"; return; }
-    const options: KleinImg2ImgOptions = { baseUrl: String(this.properties.baseUrl), prompt, maxSize: clampInt(this.properties.maxSize, 128, 1024), steps: clampInt(this.properties.steps, 1, 4), guidanceScale: clamp(this.properties.guidanceScale, 0, 20), seed: clampInt(this.properties.seed, -1, 2147483647) };
+    const options: KleinImg2ImgOptions = { baseUrl: String(this.properties.baseUrl), prompt, maxSize: clampInt(this.properties.maxSize, 128, 1024), steps: clampInt(this.properties.steps, 1, 12), guidanceScale: clamp(this.properties.guidanceScale, 0, 20), seed: clampInt(this.properties.seed, -1, 2147483647) };
     const started = performance.now(); this.isRunning = true; this.status = images.length > 1 ? `trasformazione con ${images.length} immagini...` : "trasformazione in corso..."; this.controller = new AbortController(); this.refreshPreviewLayout();
     void kleinImg2Img({ images, options, signal: this.controller.signal }).then((result) => {
       if (useStylePreset && styleId !== "custom") cacheKleinStylePreview(styleId, result.image);
