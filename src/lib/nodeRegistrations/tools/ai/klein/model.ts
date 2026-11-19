@@ -37,7 +37,7 @@ export interface KleinTxt2ImgRequest {
 }
 
 export interface KleinImg2ImgRequest {
-  image: GraphImage;
+  images: readonly GraphImage[];
   options: KleinImg2ImgOptions;
   signal?: AbortSignal;
 }

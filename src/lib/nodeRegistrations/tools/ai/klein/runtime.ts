@@ -52,19 +52,44 @@ export async function kleinTxt2Img(request: KleinTxt2ImgRequest) {
 }
 
 export async function kleinImg2Img(request: KleinImg2ImgRequest) {
+  if (request.images.length < 1 || request.images.length > 4) {
+    throw new Error("Klein richiede da 1 a 4 immagini.");
+  }
   const maxSize = Math.min(1024, Math.max(128, request.options.maxSize));
-  const scale = Math.min(1, maxSize / request.image.width, maxSize / request.image.height);
-  const resized = document.createElement("canvas");
-  resized.width = Math.max(1, Math.round(request.image.width * scale));
-  resized.height = Math.max(1, Math.round(request.image.height * scale));
-  resized.getContext("2d")?.drawImage(request.image, 0, 0, resized.width, resized.height);
+  const primary = request.images[0];
+  const scale = Math.min(1, maxSize / primary.width, maxSize / primary.height);
+  const width = Math.max(128, Math.round(Math.max(1, primary.width * scale) / 16) * 16);
+  const height = Math.max(128, Math.round(Math.max(1, primary.height * scale) / 16) * 16);
+
+  const normalizeImage = (image: HTMLCanvasElement) => {
+    const normalized = document.createElement("canvas");
+    normalized.width = width;
+    normalized.height = height;
+    const context = normalized.getContext("2d");
+    if (!context) throw new Error("Impossibile preparare le immagini per Klein.");
+    context.fillStyle = "#FFFFFF";
+    context.fillRect(0, 0, width, height);
+    const imageScale = Math.min(width / image.width, height / image.height);
+    const drawWidth = Math.max(1, Math.round(image.width * imageScale));
+    const drawHeight = Math.max(1, Math.round(image.height * imageScale));
+    context.drawImage(image, Math.round((width - drawWidth) / 2), Math.round((height - drawHeight) / 2), drawWidth, drawHeight);
+    return normalized;
+  };
 
   const body = new FormData();
-  body.append("image", await canvasToBlob(resized), "input.png");
+  if (request.images.length === 1) {
+    body.append("image", await canvasToBlob(normalizeImage(primary)), "input-1.png");
+  } else {
+    const blobs = await Promise.all(request.images.map((image) => canvasToBlob(normalizeImage(image))));
+    blobs.forEach((blob, index) => body.append("images", blob, `input-${index + 1}.png`));
+    body.append("width", String(width));
+    body.append("height", String(height));
+  }
   body.append("prompt", request.options.prompt);
   body.append("steps", String(request.options.steps));
   body.append("guidance_scale", String(request.options.guidanceScale));
   body.append("seed", String(request.options.seed));
-  const response = await fetch(endpoint(request.options.baseUrl, "img2img"), { method: "POST", body, signal: request.signal });
+  const route = request.images.length === 1 ? "img2img" : "multi-img2img";
+  const response = await fetch(endpoint(request.options.baseUrl, route), { method: "POST", body, signal: request.signal });
   return readImageResponse(response);
 }

@@ -9,6 +9,7 @@ import {
   NanoBananaToolNode,
   KleinTxt2ImgToolNode,
   KleinImg2ImgToolNode,
+  ClassificaToolNode,
 } from "./nodes";
 
 export interface ToolAiNodeCtors {
@@ -21,6 +22,7 @@ export interface ToolAiNodeCtors {
   NanoBananaToolNode: NodeCtor;
   KleinTxt2ImgToolNode: NodeCtor;
   KleinImg2ImgToolNode: NodeCtor;
+  ClassificaToolNode: NodeCtor;
 }
 
 export function createToolAiNodeCtors(): ToolAiNodeCtors {
@@ -34,6 +36,7 @@ export function createToolAiNodeCtors(): ToolAiNodeCtors {
     NanoBananaToolNode: NanoBananaToolNode as NodeCtor,
     KleinTxt2ImgToolNode: KleinTxt2ImgToolNode as NodeCtor,
     KleinImg2ImgToolNode: KleinImg2ImgToolNode as NodeCtor,
+    ClassificaToolNode: ClassificaToolNode as NodeCtor,
   };
 }
 export * from "./chatgptImage/runtime";

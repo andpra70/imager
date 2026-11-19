@@ -118,6 +118,7 @@ export const nodePalette: NodePaletteItem[] = [
   { type: "tools/ai/pose-detect", category: "ai", glyph: "POS", shortLabel: "Pose", tooltip: "POSE DETECT: rilevamento posa persona con box testa/torso/arti/collo/piedi (stile MoveNet tfjs)." },
   { type: "tools/ai/face-landmarker", category: "ai", glyph: "FLC", shortLabel: "Face LM", tooltip: "FACE LANDMARKER: rileva mesh, occhi, labbra, iridi e blendshapes del volto (MediaPipe)." },
   { type: "tools/ai/ml5-extract", category: "ai", glyph: "ML5", shortLabel: "ML5", tooltip: "ML5 EXTRACT: estrae bodypose/handpose/facemesh/imageclassifier (se disponibile) da un'immagine." },
+  { type: "tools/ai/classifica", category: "ai", glyph: "CLS", shortLabel: "Classifica", tooltip: "CLASSIFICA: classifica l'immagine con MobileNetV4 direttamente nel browser usando WebGPU o CPU/WASM." },
   { type: "tools/ai/chatgpt-image", category: "ai", glyph: "GPT", shortLabel: "ChatGPT Image", tooltip: "CHATGPT IMAGE: trasforma esplicitamente l'immagine in ingresso secondo lo stile descritto nel prompt, usando cache persistente in ingresso e uscita." },
   { type: "tools/ai/fooocus", category: "ai", glyph: "FOO", shortLabel: "Fooocus", tooltip: "FOOOCUS LOCAL: trasforma l'immagine tramite Fooocus-API locale con prompt, controllo ImagePrompt e cache persistente." },
   { type: "tools/ai/nanobanana", category: "ai", glyph: "NBN", shortLabel: "Nano Banana", tooltip: "NANO BANANA: modifica l'immagine in ingresso tramite Gemini Image usando prompt, modello, rapporto d'aspetto e risoluzione configurabili." },

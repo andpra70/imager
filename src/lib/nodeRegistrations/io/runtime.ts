@@ -826,7 +826,16 @@ export function createIoNodeCtors(deps: IoNodeRuntimeDeps): IoNodeCtors {
   class OutputJsonNode {
     data: unknown = null;
     previewLines: string[] = [];
-    size: [number, number] = [320, 240];
+    size: [number, number] = [380, 340];
+    scrollLine = 0;
+    scrollColumn = 0;
+    contentRect = { x: 10, y: 62, width: 360, height: 268 };
+    maxScrollLine = 0;
+    maxScrollColumn = 0;
+    verticalScrollbar = { x: 0, y: 0, width: 0, height: 0, thumbY: 0, thumbHeight: 0 };
+    horizontalScrollbar = { x: 0, y: 0, width: 0, height: 0, thumbX: 0, thumbWidth: 0 };
+    scrollDrag: { axis: "vertical" | "horizontal"; pointerOffset: number } | null = null;
+    private lastRenderedJson = "";
 
     constructor() {
       const node = this as unknown as PreviewAwareNode & OutputJsonNode;
@@ -849,18 +858,20 @@ export function createIoNodeCtors(deps: IoNodeRuntimeDeps): IoNodeCtors {
       this.data = value ?? null;
       if (!this.data) {
         this.previewLines = ["no json data", "connect a JSON output"];
+        this.scrollLine = 0;
+        this.scrollColumn = 0;
         this.refreshPreviewLayout();
         return;
       }
 
       try {
         const raw = JSON.stringify(this.data, null, 2) ?? "";
-        const lines = raw.split("\n").slice(0, 14).map((line) => {
-          if (line.length <= 54) {
-            return line;
-          }
-          return `${line.slice(0, 51)}...`;
-        });
+        if (raw !== this.lastRenderedJson) {
+          this.lastRenderedJson = raw;
+          this.scrollLine = 0;
+          this.scrollColumn = 0;
+        }
+        const lines = raw.split("\n");
         this.previewLines = lines.length ? lines : ["{}"];
       } catch {
         this.previewLines = ["cannot render json", "value is not serializable"];
@@ -868,20 +879,108 @@ export function createIoNodeCtors(deps: IoNodeRuntimeDeps): IoNodeCtors {
       this.refreshPreviewLayout();
     }
 
+    private localPointer(pos?: [number, number]) {
+      if (!Array.isArray(pos)) return null;
+      const self = this as unknown as { pos?: [number, number] };
+      const nodePos = self.pos ?? [0, 0];
+      return { x: pos[0] - nodePos[0], y: pos[1] - nodePos[1] };
+    }
+
+    onMouseDown(this: PreviewAwareNode & OutputJsonNode, _event: PointerEvent, pos?: [number, number]) {
+      const point = this.localPointer(pos);
+      if (!point) return false;
+      const vertical = this.verticalScrollbar;
+      if (point.x >= vertical.x && point.x <= vertical.x + vertical.width && point.y >= vertical.y && point.y <= vertical.y + vertical.height) {
+        this.scrollDrag = { axis: "vertical", pointerOffset: point.y - vertical.thumbY };
+      } else {
+        const horizontal = this.horizontalScrollbar;
+        if (point.x < horizontal.x || point.x > horizontal.x + horizontal.width || point.y < horizontal.y || point.y > horizontal.y + horizontal.height) return false;
+        this.scrollDrag = { axis: "horizontal", pointerOffset: point.x - horizontal.thumbX };
+      }
+      (this as unknown as { captureInput?: (enabled: boolean) => void }).captureInput?.(true);
+      return true;
+    }
+
+    onMouseMove(this: PreviewAwareNode & OutputJsonNode, _event: PointerEvent, pos?: [number, number]) {
+      if (!this.scrollDrag) return false;
+      const point = this.localPointer(pos);
+      if (!point) return false;
+      if (this.scrollDrag.axis === "vertical") {
+        const bar = this.verticalScrollbar;
+        const range = Math.max(1, bar.height - bar.thumbHeight);
+        const ratio = Math.max(0, Math.min(1, (point.y - this.scrollDrag.pointerOffset - bar.y) / range));
+        this.scrollLine = Math.round(ratio * this.maxScrollLine);
+      } else {
+        const bar = this.horizontalScrollbar;
+        const range = Math.max(1, bar.width - bar.thumbWidth);
+        const ratio = Math.max(0, Math.min(1, (point.x - this.scrollDrag.pointerOffset - bar.x) / range));
+        this.scrollColumn = Math.round(ratio * this.maxScrollColumn);
+      }
+      this.setDirtyCanvas(true, true);
+      return true;
+    }
+
+    onMouseUp(this: PreviewAwareNode & OutputJsonNode) {
+      if (!this.scrollDrag) return false;
+      this.scrollDrag = null;
+      (this as unknown as { captureInput?: (enabled: boolean) => void }).captureInput?.(false);
+      return true;
+    }
+
     onDrawBackground(this: PreviewAwareNode & OutputJsonNode, context: CanvasRenderingContext2D) {
       const padding = 10;
       const headerHeight = 34 + (this.widgets?.length ?? 0) * 28;
       const lines = this.previewLines.length ? this.previewLines : ["no json data", "connect a JSON output"];
-      this.size = [320, headerHeight + padding * 2 + lines.length * 18 + 8];
+      const lineHeight = 16;
+      const scrollbarSize = 8;
+      const contentWidth = this.size[0] - padding * 2;
+      const contentHeight = Math.max(120, this.size[1] - headerHeight - padding);
+      this.contentRect = { x: padding, y: headerHeight, width: contentWidth, height: contentHeight };
+      const visibleLines = Math.max(1, Math.floor((contentHeight - scrollbarSize - 8) / lineHeight));
+      const visibleColumns = Math.max(1, Math.floor((contentWidth - scrollbarSize - 16) / 7.2));
+      const longestLine = lines.reduce((longest, line) => Math.max(longest, line.length), 0);
+      this.maxScrollLine = Math.max(0, lines.length - visibleLines);
+      this.maxScrollColumn = Math.max(0, longestLine - visibleColumns);
+      this.scrollLine = Math.min(this.scrollLine, this.maxScrollLine);
+      this.scrollColumn = Math.min(this.scrollColumn, this.maxScrollColumn);
 
       context.save();
       context.fillStyle = "#121212";
-      context.fillRect(padding, headerHeight, this.size[0] - padding * 2, this.size[1] - headerHeight - padding);
+      context.fillRect(padding, headerHeight, contentWidth, contentHeight);
+      context.beginPath();
+      context.rect(padding + 6, headerHeight + 4, contentWidth - scrollbarSize - 10, contentHeight - scrollbarSize - 6);
+      context.clip();
       context.fillStyle = "rgba(255,255,255,0.75)";
-      context.font = "12px sans-serif";
-      lines.forEach((line, index) => {
-        context.fillText(line, padding + 8, headerHeight + 18 + index * 18);
-      });
+      context.font = "11px monospace";
+      const endLine = Math.min(lines.length, this.scrollLine + visibleLines);
+      for (let lineIndex = this.scrollLine; lineIndex < endLine; lineIndex += 1) {
+        context.fillText(
+          lines[lineIndex].slice(this.scrollColumn),
+          padding + 8,
+          headerHeight + 16 + (lineIndex - this.scrollLine) * lineHeight,
+        );
+      }
+      context.restore();
+
+      context.save();
+      const verticalTrackX = padding + contentWidth - scrollbarSize;
+      const verticalTrackHeight = contentHeight - scrollbarSize;
+      context.fillStyle = "rgba(255,255,255,.12)";
+      context.fillRect(verticalTrackX, headerHeight, scrollbarSize, verticalTrackHeight);
+      const verticalThumbHeight = Math.max(18, verticalTrackHeight * Math.min(1, visibleLines / Math.max(1, lines.length)));
+      const verticalThumbY = headerHeight + (verticalTrackHeight - verticalThumbHeight) * (this.maxScrollLine ? this.scrollLine / this.maxScrollLine : 0);
+      this.verticalScrollbar = { x: verticalTrackX, y: headerHeight, width: scrollbarSize, height: verticalTrackHeight, thumbY: verticalThumbY, thumbHeight: verticalThumbHeight };
+      context.fillStyle = "rgba(255,255,255,.5)";
+      context.fillRect(verticalTrackX + 1, verticalThumbY, scrollbarSize - 2, verticalThumbHeight);
+      const horizontalTrackWidth = contentWidth - scrollbarSize;
+      const horizontalTrackY = headerHeight + contentHeight - scrollbarSize;
+      context.fillStyle = "rgba(255,255,255,.12)";
+      context.fillRect(padding, horizontalTrackY, horizontalTrackWidth, scrollbarSize);
+      const horizontalThumbWidth = Math.max(24, horizontalTrackWidth * Math.min(1, visibleColumns / Math.max(1, longestLine)));
+      const horizontalThumbX = padding + (horizontalTrackWidth - horizontalThumbWidth) * (this.maxScrollColumn ? this.scrollColumn / this.maxScrollColumn : 0);
+      this.horizontalScrollbar = { x: padding, y: horizontalTrackY, width: horizontalTrackWidth, height: scrollbarSize, thumbX: horizontalThumbX, thumbWidth: horizontalThumbWidth };
+      context.fillStyle = "rgba(255,255,255,.5)";
+      context.fillRect(horizontalThumbX, horizontalTrackY + 1, horizontalThumbWidth, scrollbarSize - 2);
       context.restore();
     }
   }

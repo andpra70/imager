@@ -10,6 +10,7 @@ interface AiToolNodeCtors {
   NanoBananaToolNode: NodeCtor;
   KleinTxt2ImgToolNode: NodeCtor;
   KleinImg2ImgToolNode: NodeCtor;
+  ClassificaToolNode: NodeCtor;
 }
 
 export function registerAiToolNodes(registerNodeType: RegisterNodeTypeFn, ctors: AiToolNodeCtors) {
@@ -22,4 +23,5 @@ export function registerAiToolNodes(registerNodeType: RegisterNodeTypeFn, ctors:
   registerNodeType("tools/ai/nanobanana", ctors.NanoBananaToolNode);
   registerNodeType("tools/ai/klein/txt2img", ctors.KleinTxt2ImgToolNode);
   registerNodeType("tools/ai/klein/img2img", ctors.KleinImg2ImgToolNode);
+  registerNodeType("tools/ai/classifica", ctors.ClassificaToolNode);
 }

@@ -406,6 +406,7 @@ function GraphEditor() {
     runtimeCanvas.onDrawForeground = (context) => drawActiveKleinStylePreviewOverlay(context);
     const uninstallStyleMenuPreview = installKleinStyleMenuPreview();
 
+
     // LiteGraph drop handlers can throw if graph is temporarily null (e.g. teardown races).
     // Guard them locally to avoid crashing the editor on external drops.
     const originalProcessDrop = runtimeCanvas.processDrop?.bind(runtimeCanvas);

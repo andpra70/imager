@@ -197,6 +197,7 @@ export function registerImageNodes() {
     NanoBananaToolNode: aiToolCtors.NanoBananaToolNode,
     KleinTxt2ImgToolNode: aiToolCtors.KleinTxt2ImgToolNode,
     KleinImg2ImgToolNode: aiToolCtors.KleinImg2ImgToolNode,
+    ClassificaToolNode: aiToolCtors.ClassificaToolNode,
   });
 
   registerSvgToolNodes(registerNodeType, {
