@@ -3,7 +3,7 @@ import { COMIC_MASTER_PRESETS, PHOTOGRAPHY_MASTER_PRESETS } from "./famousArtist
 import { FASHION_PHOTOGRAPHY_PRESETS } from "./fashionPhotographyPresets";
 import { FAMOUS_PAINTER_PRESETS } from "./famousPaintersPresets";
 
-const faithful = "Mantieni con la massima fedelta soggetto, identita, posa, proporzioni, composizione, prospettiva e ambiente dell'immagine originale. ";
+const faithful = "";
 const preset = (id: string, label: string, prompt: string): KleinStylePreset => ({ id, label, prompt: `${faithful}${prompt}` });
 
 export const DRAWING_AND_PRINT_PRESETS: readonly KleinStylePreset[] = [

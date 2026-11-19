@@ -4,6 +4,8 @@ import { LGraph, LGraphCanvas, LiteGraph } from "litegraph.js";
 import "litegraph.js/css/litegraph.css";
 import GraphToolbar from "./GraphToolbar";
 import { registerImageNodes } from "../lib/registerImageNodes";
+import { drawActiveKleinStylePreviewOverlay } from "../lib/nodeRegistrations/tools/ai/klein/stylePreview/overlay";
+import { installKleinStyleMenuPreview } from "../lib/nodeRegistrations/tools/ai/klein/stylePreview/menuHover";
 import {
   getPreviewWidth,
   getPreviewWidthBounds,
@@ -34,6 +36,7 @@ interface GraphRuntime extends InstanceType<typeof LGraph> {
 
 interface GraphCanvasRuntime extends InstanceType<typeof LGraphCanvas> {
   onNodeMoved?: () => void;
+  onDrawForeground?: (context: CanvasRenderingContext2D) => void;
   ds: {
     scale: number;
     offset: [number, number];
@@ -400,6 +403,8 @@ function GraphEditor() {
     runtimeGraph.onNodeRemoved = undefined;
     runtimeGraph.onConnectionChange = undefined;
     runtimeCanvas.onNodeMoved = undefined;
+    runtimeCanvas.onDrawForeground = (context) => drawActiveKleinStylePreviewOverlay(context);
+    const uninstallStyleMenuPreview = installKleinStyleMenuPreview();
 
     // LiteGraph drop handlers can throw if graph is temporarily null (e.g. teardown races).
     // Guard them locally to avoid crashing the editor on external drops.
@@ -483,8 +488,10 @@ function GraphEditor() {
         autoSaveIntervalRef.current = null;
       }
       window.removeEventListener("resize", resizeCanvas);
+      uninstallStyleMenuPreview();
       graph.stop();
       graph.clear();
+      runtimeCanvas.onDrawForeground = undefined;
       graphCanvas.setGraph(null);
       graphRef.current = null;
       graphCanvasRef.current = null;

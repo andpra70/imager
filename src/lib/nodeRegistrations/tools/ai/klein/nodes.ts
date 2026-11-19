@@ -1,15 +1,18 @@
 import type { GraphImage } from "../../../../../models/graphImage";
 import { drawImagePreview, resizeNodeForPreview } from "../../../../imageUtils";
 import type { PreviewAwareNode } from "../../../shared";
-import { KLEIN_DEFAULTS, KLEIN_STYLE_PRESETS, type KleinImg2ImgOptions, type KleinTxt2ImgOptions } from "./model";
+import { KLEIN_DEFAULTS, KLEIN_STYLE_PRESETS, resolveKleinImg2ImgPrompt, type KleinImg2ImgOptions, type KleinTxt2ImgOptions } from "./model";
 import { kleinImg2Img, kleinTxt2Img } from "./runtime";
+import { cacheKleinStylePreview, getKleinStylePreview } from "./stylePreview/cache";
+import { showKleinStylePreviewOverlay } from "./stylePreview/overlay";
 import { findKleinStylePath, KLEIN_STYLE_CATALOG, type KleinStyleGenre, type KleinStyleSubgenre } from "./styles/catalog";
 
 type KleinNode = PreviewAwareNode & {
   preview: GraphImage | null; status: string; pendingRun: boolean; isRunning: boolean;
   controller: AbortController | null; executionMs: number | null; syncWidgets: () => void;
 };
-type WidgetLike = { name?: string; value?: unknown; options?: Record<string, unknown> };
+type WidgetLike = { name?: string; value?: unknown; options?: Record<string, unknown>; last_y?: number; computeSize?: (width: number) => [number, number] };
+type GraphCanvasLike = { graph_mouse?: [number, number] };
 const historyLabel = (prompt: string, index: number) => `${index + 1}. ${prompt.replace(/\s+/g, " ").slice(0, 48)}`;
 const clampInt = (value: unknown, min: number, max: number) => Math.round(Math.min(max, Math.max(min, Number(value))));
 const clamp = (value: unknown, min: number, max: number) => Math.min(max, Math.max(min, Number(value)));
@@ -67,7 +70,13 @@ export class KleinTxt2ImgToolNode {
     node.refreshPreviewLayout(); node.syncWidgets();
   }
 
-  getHistory() { return Array.isArray(this.properties.promptHistory) ? this.properties.promptHistory.filter((item): item is string => typeof item === "string") : []; }
+  getHistory() {
+    return Array.isArray(this.properties.promptHistory)
+      ? this.properties.promptHistory
+        .filter((item): item is string => typeof item === "string")
+        .sort((left, right) => left.localeCompare(right, "it", { sensitivity: "base", numeric: true }))
+      : [];
+  }
   savePrompt() {
     const prompt = String(this.properties.prompt ?? "").trim(); if (!prompt) return;
     this.properties.promptHistory = [prompt, ...this.getHistory().filter((item) => item !== prompt)].slice(0, 30);
@@ -88,19 +97,21 @@ export class KleinTxt2ImgToolNode {
 }
 
 export class KleinImg2ImgToolNode {
-  size: [number, number] = [340, 490]; properties!: Record<string, unknown>; preview: GraphImage | null = null;
+  size: [number, number] = [340, 540]; properties!: Record<string, unknown>; preview: GraphImage | null = null;
   status = "pronto"; pendingRun = false; isRunning = false; controller: AbortController | null = null; executionMs: number | null = null;
   private syncedStyleId = "";
   constructor() {
     const node = this as unknown as KleinNode & KleinImg2ImgToolNode;
     node.title = "TOOLS / AI / KLEIN IMG2IMG"; const initial = KLEIN_STYLE_PRESETS[1];
-    node.properties = { ...KLEIN_DEFAULTS, styleId: initial.id, prompt: initial.prompt };
+    node.properties = { ...KLEIN_DEFAULTS, styleId: initial.id, prompt: initial.prompt, useStylePreset: true, textPrompt: "" };
     node.addInput("image", "image"); node.addOutput("image", "image");
     const initialPath = findKleinStylePath(initial.id)!;
     node.addWidget("combo", "Genere", initialPath.genre.label, (value) => node.selectGenre(String(value)), { values: KLEIN_STYLE_CATALOG.map((item) => item.label) });
     node.addWidget("combo", "Sottogenere", initialPath.subgenre.label, (value) => node.selectSubgenre(String(value)), { values: initialPath.genre.subgenres.map((item) => item.label) });
     node.addWidget("combo", "Stile", initial.label, (value) => node.selectStyle(String(value)), { values: initialPath.subgenre.styles.map((item) => item.label) });
     node.addWidget("text", "Prompt", initial.prompt, (value) => { node.properties.prompt = String(value); node.properties.styleId = "custom"; notify(node); });
+    node.addWidget("toggle", "Usa preset", true, (value) => { node.properties.useStylePreset = Boolean(value); notify(node); });
+    node.addWidget("text", "Prompt testuale", "", (value) => { node.properties.textPrompt = String(value); notify(node); });
     node.addWidget("number", "Prescale max", KLEIN_DEFAULTS.maxSize, (value) => { node.properties.maxSize = Number(value); notify(node); }, { min: 128, max: 1024, step: 64, precision: 0 });
     addCommonWidgets(node);
     node.addWidget("button", "Trasforma immagine", null, () => { if (!node.isRunning) node.pendingRun = true; node.setDirtyCanvas(true, true); });
@@ -141,6 +152,7 @@ export class KleinImg2ImgToolNode {
     this.syncedStyleId = ""; this.syncStyleCatalog(true);
     const values: Record<string, unknown> = {
       Prompt: this.properties.prompt, "Prescale max": this.properties.maxSize, "Klein URL": this.properties.baseUrl,
+      "Usa preset": this.properties.useStylePreset ?? true, "Prompt testuale": this.properties.textPrompt ?? "",
       Steps: this.properties.steps, Guidance: this.properties.guidanceScale, Seed: this.properties.seed,
     };
     Object.entries(values).forEach(([name, value]) => { const target = widget(this, name); if (target && value !== undefined) target.value = value; });
@@ -148,11 +160,32 @@ export class KleinImg2ImgToolNode {
   }
   onExecute(this: KleinNode & KleinImg2ImgToolNode) {
     this.syncStyleCatalog(); this.setOutputData(0, this.preview); if (!this.pendingRun || this.isRunning) return; this.pendingRun = false;
-    const input = this.getInputData(0), prompt = String(this.properties.prompt ?? "").trim();
-    if (!isImage(input)) { this.status = "collega un'immagine valida"; return; } if (!prompt) { this.status = "seleziona uno stile o inserisci un prompt"; return; }
+    const input = this.getInputData(0), useStylePreset = Boolean(this.properties.useStylePreset ?? true), styleId = String(this.properties.styleId ?? "custom"), prompt = resolveKleinImg2ImgPrompt({
+      useStylePreset,
+      stylePrompt: String(this.properties.prompt ?? ""),
+      textPrompt: String(this.properties.textPrompt ?? ""),
+    });
+    if (!isImage(input)) { this.status = "collega un'immagine valida"; return; }
+    if (!prompt) { this.status = Boolean(this.properties.useStylePreset ?? true) ? "seleziona uno stile o inserisci un prompt" : "inserisci il prompt testuale"; return; }
     const options: KleinImg2ImgOptions = { baseUrl: String(this.properties.baseUrl), prompt, maxSize: clampInt(this.properties.maxSize, 128, 1024), steps: clampInt(this.properties.steps, 1, 4), guidanceScale: clamp(this.properties.guidanceScale, 0, 20), seed: clampInt(this.properties.seed, -1, 2147483647) };
     const started = performance.now(); this.isRunning = true; this.status = "trasformazione in corso..."; this.controller = new AbortController(); this.refreshPreviewLayout();
-    void kleinImg2Img({ image: input, options, signal: this.controller.signal }).then((result) => finish(this, started, result.image)).catch((error) => fail(this, error)).finally(() => { this.isRunning = false; this.controller = null; this.refreshPreviewLayout(); });
+    void kleinImg2Img({ image: input, options, signal: this.controller.signal }).then((result) => {
+      if (useStylePreset && styleId !== "custom") cacheKleinStylePreview(styleId, result.image);
+      finish(this, started, result.image);
+    }).catch((error) => fail(this, error)).finally(() => { this.isRunning = false; this.controller = null; this.refreshPreviewLayout(); });
   }
   onDrawBackground(this: KleinNode, context: CanvasRenderingContext2D) { draw(this, context); }
+  onDrawForeground(this: KleinNode & KleinImg2ImgToolNode, _context: CanvasRenderingContext2D, graphCanvas?: GraphCanvasLike) {
+    const styleId = String(this.properties.styleId ?? "custom");
+    const preview = getKleinStylePreview(styleId);
+    const graphMouse = graphCanvas?.graph_mouse;
+    const nodePosition = (this as unknown as { pos?: [number, number] }).pos;
+    const styleWidget = widget(this, "Stile");
+    if (!preview || !graphMouse || !nodePosition || styleWidget?.last_y === undefined) return;
+    const pointer = { x: graphMouse[0] - nodePosition[0], y: graphMouse[1] - nodePosition[1] };
+    const widgetHeight = styleWidget.computeSize?.(this.size[0])[1] ?? 20;
+    const isOverStyle = pointer.x >= 6 && pointer.x <= this.size[0] - 12
+      && pointer.y >= styleWidget.last_y && pointer.y <= styleWidget.last_y + widgetHeight;
+    if (isOverStyle) showKleinStylePreviewOverlay(preview, { x: graphMouse[0], y: graphMouse[1] });
+  }
 }

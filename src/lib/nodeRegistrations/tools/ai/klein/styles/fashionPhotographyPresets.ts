@@ -1,6 +1,6 @@
 import type { KleinStylePreset } from "../model";
 
-const faithful = "Mantieni con la massima fedelta soggetto adulto, identita, posa, proporzioni, composizione, prospettiva e ambiente dell'immagine originale. ";
+const faithful = "";
 const preset = (id: string, label: string, prompt: string): KleinStylePreset => ({ id, label, prompt: `${faithful}${prompt}` });
 
 export const VOGUE_HIGH_FASHION_PRESETS: readonly KleinStylePreset[] = [

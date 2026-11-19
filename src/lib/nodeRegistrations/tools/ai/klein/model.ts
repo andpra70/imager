@@ -19,6 +19,18 @@ export interface KleinImg2ImgOptions extends KleinCommonOptions {
   maxSize: number;
 }
 
+export interface KleinImg2ImgPromptSettings {
+  useStylePreset: boolean;
+  stylePrompt: string;
+  textPrompt: string;
+}
+
+export function resolveKleinImg2ImgPrompt(settings: KleinImg2ImgPromptSettings) {
+  const stylePrompt = settings.stylePrompt.trim();
+  const textPrompt = settings.textPrompt.trim();
+  return [settings.useStylePreset ? stylePrompt : "", textPrompt].filter(Boolean).join(" ");
+}
+
 export interface KleinTxt2ImgRequest {
   options: KleinTxt2ImgOptions;
   signal?: AbortSignal;
@@ -50,7 +62,7 @@ export const KLEIN_DEFAULTS = {
   seed: 42,
 } as const;
 
-const faithful = "Mantieni con la massima fedelta soggetto, identita, posa, proporzioni, composizione, prospettiva e ambiente dell'immagine originale. ";
+const faithful = "";
 
 export const KLEIN_STYLE_PRESETS: readonly KleinStylePreset[] = [
   { id: "custom", label: "Personalizzato", prompt: "" },

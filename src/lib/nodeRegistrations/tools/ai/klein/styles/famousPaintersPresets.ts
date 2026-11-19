@@ -1,6 +1,6 @@
 import type { KleinStylePreset } from "../model";
 
-const faithful = "Mantieni fedelmente soggetto, identita, posa, proporzioni, composizione e ambiente originali. ";
+const faithful = "";
 type PainterData = readonly [id: string, label: string, traits: string];
 const make = (rows: readonly PainterData[]): readonly KleinStylePreset[] => rows.map(([id, label, traits]) => ({ id: `painter-${id}`, label, prompt: `${faithful}Trasforma in una pittura caratterizzata da ${traits}.` }));
 

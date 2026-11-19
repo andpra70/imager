@@ -30,6 +30,9 @@ export interface KleinStylePath {
 }
 
 const ids = (values: readonly KleinStylePreset[]) => new Set(values.map((item) => item.id));
+const compareLabels = <T extends { label: string }>(left: T, right: T) =>
+  left.label.localeCompare(right.label, "it", { sensitivity: "base", numeric: true });
+const alphabetically = <T extends { label: string }>(values: readonly T[]) => [...values].sort(compareLabels);
 const drawingIds = ids(DRAWING_AND_PRINT_PRESETS);
 const paintingIds = ids(PAINTING_AND_MOVEMENT_PRESETS);
 const worldIds = ids(WORLD_TRADITION_PRESETS);
@@ -125,12 +128,12 @@ export const KLEIN_STYLE_CATALOG: readonly KleinStyleGenre[] = Object.entries(ge
   const definitions = groupSets[genreId] ?? [];
   const assigned = new Set(definitions.flatMap((item) => [...item.ids]));
   const subgenres = definitions
-    .map((definition) => ({ id: definition.id, label: definition.label, styles: genreStyles.filter((style) => definition.ids.has(style.id)) }))
+    .map((definition) => ({ id: definition.id, label: definition.label, styles: alphabetically(genreStyles.filter((style) => definition.ids.has(style.id))) }))
     .filter((item) => item.styles.length > 0);
   const others = genreStyles.filter((style) => !assigned.has(style.id));
-  if (others.length) subgenres.push({ id: "other", label: "Altri stili", styles: others });
-  return { id: genreId, label, subgenres };
-}).filter((genre) => genre.subgenres.length > 0);
+  if (others.length) subgenres.push({ id: "other", label: "Altri stili", styles: alphabetically(others) });
+  return { id: genreId, label, subgenres: alphabetically(subgenres) };
+}).filter((genre) => genre.subgenres.length > 0).sort(compareLabels);
 
 export function findKleinStylePath(styleId: string): KleinStylePath | null {
   for (const genre of KLEIN_STYLE_CATALOG) for (const subgenre of genre.subgenres) {
