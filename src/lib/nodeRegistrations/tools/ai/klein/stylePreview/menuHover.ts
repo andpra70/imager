@@ -1,5 +1,5 @@
 import { KLEIN_STYLE_PRESETS } from "../model";
-import { getKleinStylePreview } from "./cache";
+import { getKleinStylePreview, initializeKleinStylePreviewCache } from "./cache";
 
 const PREVIEW_SIZE = 128;
 const POINTER_OFFSET = 20;
@@ -10,6 +10,7 @@ function menuEntry(target: EventTarget | null) {
 }
 
 export function installKleinStyleMenuPreview() {
+  void initializeKleinStylePreviewCache();
   const overlay = document.createElement("canvas");
   overlay.width = PREVIEW_SIZE;
   overlay.height = PREVIEW_SIZE;
