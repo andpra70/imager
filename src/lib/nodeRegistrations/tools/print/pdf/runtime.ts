@@ -59,7 +59,60 @@ function grayscaleSvg(svg: GraphSvg): GraphSvg {
 function parseSvg(svg: GraphSvg) {
   const parsed = new DOMParser().parseFromString(svg, "image/svg+xml");
   if (parsed.querySelector("parsererror") || parsed.documentElement.tagName.toLowerCase() !== "svg") throw new Error("SVG non valido.");
-  const root = parsed.documentElement as unknown as SVGSVGElement; root.setAttribute("preserveAspectRatio", "xMidYMid meet"); return root;
+  return parsed.documentElement as unknown as SVGSVGElement;
+}
+
+interface SvgViewBox { minX: number; minY: number; width: number; height: number }
+
+function readSvgViewBox(root: SVGSVGElement, fallbackWidth: number, fallbackHeight: number): SvgViewBox {
+  const values = (root.getAttribute("viewBox") ?? "").trim().split(/[\s,]+/).map(Number);
+  if (values.length === 4 && values.every(Number.isFinite) && values[2] > 0 && values[3] > 0) {
+    return { minX: values[0], minY: values[1], width: values[2], height: values[3] };
+  }
+  return { minX: 0, minY: 0, width: fallbackWidth, height: fallbackHeight };
+}
+
+function createFittedSvgForPdf(
+  svg: GraphSvg,
+  sourceWidth: number,
+  sourceHeight: number,
+  pageWidth: number,
+  pageHeight: number,
+  drawX: number,
+  drawY: number,
+  drawWidth: number,
+  drawHeight: number,
+) {
+  const sourceRoot = parseSvg(svg);
+  const viewBox = readSvgViewBox(sourceRoot, sourceWidth, sourceHeight);
+
+  // Riproduce esattamente xMidYMid meet del browser nel viewport della preview.
+  const viewBoxScale = Math.min(sourceWidth / viewBox.width, sourceHeight / viewBox.height);
+  const viewportOffsetX = (sourceWidth - viewBox.width * viewBoxScale) / 2;
+  const viewportOffsetY = (sourceHeight - viewBox.height * viewBoxScale) / 2;
+  const pageScale = Math.min(drawWidth / sourceWidth, drawHeight / sourceHeight);
+  const scale = viewBoxScale * pageScale;
+  const translateX = drawX + viewportOffsetX * pageScale - viewBox.minX * scale;
+  const translateY = drawY + viewportOffsetY * pageScale - viewBox.minY * scale;
+
+  const document = sourceRoot.ownerDocument;
+  const pageRoot = document.createElementNS("http://www.w3.org/2000/svg", "svg") as SVGSVGElement;
+  pageRoot.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+  pageRoot.setAttribute("width", String(pageWidth));
+  pageRoot.setAttribute("height", String(pageHeight));
+  pageRoot.setAttribute("viewBox", `0 0 ${pageWidth} ${pageHeight}`);
+
+  const content = document.createElementNS("http://www.w3.org/2000/svg", "g");
+  content.setAttribute("transform", `translate(${translateX} ${translateY}) scale(${scale})`);
+  // Conserva le proprietà grafiche ereditabili eventualmente definite sulla radice.
+  for (const attribute of Array.from(sourceRoot.attributes)) {
+    if (!["xmlns", "width", "height", "viewBox", "preserveAspectRatio", "x", "y", "overflow", "transform"].includes(attribute.name)) {
+      content.setAttribute(attribute.name, attribute.value);
+    }
+  }
+  while (sourceRoot.firstChild) content.appendChild(sourceRoot.firstChild);
+  pageRoot.appendChild(content);
+  return pageRoot;
 }
 
 function createPagePreview(source: GraphImage, pageWidth: number, pageHeight: number, margin: number, x: number, y: number, width: number, height: number) {
@@ -93,7 +146,13 @@ async function generatePdf(source: GraphImage, svg: GraphSvg | null, options: Pd
   const drawX = (pageWidth - drawWidth) / 2, drawY = (pageHeight - drawHeight) / 2;
   if (svg) {
     await import("svg2pdf.js");
-    await pdfDocument.svg(parseSvg(svg), { x: drawX, y: drawY, width: drawWidth, height: drawHeight, loadImages: true });
+    const vectorRoot = createFittedSvgForPdf(svg, source.width, source.height, pageWidth, pageHeight, drawX, drawY, drawWidth, drawHeight);
+    pdfDocument.saveGraphicsState();
+    pdfDocument.rect(margin, margin, availableWidth, availableHeight);
+    pdfDocument.clip();
+    pdfDocument.discardPath();
+    await pdfDocument.svg(vectorRoot, { x: 0, y: 0, width: pageWidth, height: pageHeight, loadImages: true });
+    pdfDocument.restoreGraphicsState();
   } else {
     pdfDocument.saveGraphicsState(); pdfDocument.rect(margin, margin, availableWidth, availableHeight); pdfDocument.clip(); pdfDocument.discardPath();
     pdfDocument.addImage(opaqueJpegData(printableSource, options.jpegQuality), "JPEG", drawX, drawY, drawWidth, drawHeight, undefined, "FAST"); pdfDocument.restoreGraphicsState();

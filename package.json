@@ -12,6 +12,7 @@
     "@huggingface/transformers": "^3.8.1",
     "@techstark/opencv-js": "^5.0.0-release.1",
     "@tensorflow/tfjs": "^4.11.0",
+    "@ultralytics/yolo": "^0.0.60",
     "@upscalerjs/esrgan-slim": "^1.0.0",
     "jspdf": "^3.0.4",
     "litegraph.js": "^0.7.17",

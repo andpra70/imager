@@ -7,3 +7,4 @@ export * from "./nanoBanana";
 export * from "./klein";
 export * from "./classifica";
 export * from "./upscaler";
+export * from "./yolo";

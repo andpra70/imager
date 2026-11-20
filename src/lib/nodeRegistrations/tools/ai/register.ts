@@ -12,6 +12,7 @@ interface AiToolNodeCtors {
   KleinImg2ImgToolNode: NodeCtor;
   ClassificaToolNode: NodeCtor;
   UpscalerToolNode: NodeCtor;
+  YoloToolNode: NodeCtor;
 }
 
 export function registerAiToolNodes(registerNodeType: RegisterNodeTypeFn, ctors: AiToolNodeCtors) {
@@ -26,4 +27,5 @@ export function registerAiToolNodes(registerNodeType: RegisterNodeTypeFn, ctors:
   registerNodeType("tools/ai/klein/img2img", ctors.KleinImg2ImgToolNode);
   registerNodeType("tools/ai/classifica", ctors.ClassificaToolNode);
   registerNodeType("tools/ai/upscaler", ctors.UpscalerToolNode);
+  registerNodeType("tools/ai/yolo", ctors.YoloToolNode);
 }

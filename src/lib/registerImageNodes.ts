@@ -201,6 +201,7 @@ export function registerImageNodes() {
     KleinImg2ImgToolNode: aiToolCtors.KleinImg2ImgToolNode,
     ClassificaToolNode: aiToolCtors.ClassificaToolNode,
     UpscalerToolNode: aiToolCtors.UpscalerToolNode,
+    YoloToolNode: aiToolCtors.YoloToolNode,
   });
 
   registerSvgToolNodes(registerNodeType, {
