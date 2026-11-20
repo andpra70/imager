@@ -12,3 +12,4 @@ export * from "./artists";
 export * from "./shared";
 export * from "./manual";
 export * from "./opencv";
+export * from "./print";

@@ -47,6 +47,7 @@ const TOOLBAR_TABS: Array<{ id: ToolbarTab; label: string }> = [
   { id: "gcode", label: "GCode" },
   { id: "ai", label: "AI" },
   { id: "svg", label: "SVG" },
+  { id: "print", label: "Print" },
 ];
 
 function GraphToolbar({

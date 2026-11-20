@@ -1,4 +1,5 @@
 import type { NodeCtor, RegisterNodeTypeFn } from "./types";
+import { appendNodeInspectorLog, captureNodeInspectorState, withNodeInspector } from "./nodeInspector";
 
 interface ExecutionStats {
   signature: string;
@@ -15,7 +16,7 @@ interface ExecutionStats {
 }
 
 interface RuntimeNode {
-  inputs?: unknown[];
+  inputs?: Array<{ name?: string; type?: unknown }>;
   properties?: Record<string, unknown>;
   getInputData(slot: number): unknown;
   setOutputData(slot: number, value: unknown): void;
@@ -165,6 +166,7 @@ function finish(node: RuntimeNode, nodeType: string, state: ExecutionStats) {
 
 function waitForAsyncCompletion(node: RuntimeNode, nodeType: string, state: ExecutionStats) {
   if (!state.running) return;
+  captureNodeInspectorState(node);
   if (asyncBusy(node)) state.observedWork = true;
   if (!asyncBusy(node)) { finish(node, nodeType, state); return; }
   state.elapsedMs = performance.now() - state.startedAt;
@@ -185,6 +187,7 @@ export function withBaseNodeCapabilities(nodeType: string, ctor: NodeCtor): Node
   const originalRemoved = prototype.onRemoved;
 
   prototype.onExecute = function(this: DecoratedNode) {
+    captureNodeInspectorState(this);
     const state = this[CAPABILITY] ??= { signature: "", outputs: new Map(), startedAt: 0, elapsedMs: 0, progress: 0, running: false, cached: false, hasResult: false, durations: readDurations(nodeType), initialExecutionMs: null, observedWork: false };
     if (!this[ORIGINAL_SET_OUTPUT]) {
       const setOutput = this.setOutputData.bind(this);
@@ -211,9 +214,11 @@ export function withBaseNodeCapabilities(nodeType: string, ctor: NodeCtor): Node
     state.signature = signature; state.outputs.clear(); state.startedAt = performance.now(); state.elapsedMs = 0; state.progress = 0; state.running = true; state.cached = false; state.hasResult = false;
     state.initialExecutionMs = Number.isFinite(Number(this.executionMs)) ? Number(this.executionMs) : null;
     state.observedWork = false;
-    const result = originalExecute?.call(this);
+    let result: unknown;
+    try { result = originalExecute?.call(this); }
+    catch (error) { appendNodeInspectorLog(this, error); finish(this, nodeType, state); throw error; }
     state.observedWork = asyncBusy(this);
-    if (result instanceof Promise) { state.observedWork = true; void result.finally(() => finish(this, nodeType, state)); }
+    if (result instanceof Promise) { state.observedWork = true; void result.then(() => finish(this, nodeType, state), error => { appendNodeInspectorLog(this, error); finish(this, nodeType, state); }); }
     else window.setTimeout(() => waitForAsyncCompletion(this, nodeType, state), 0);
     return result;
   };
@@ -228,5 +233,8 @@ export function withBaseNodeCapabilities(nodeType: string, ctor: NodeCtor): Node
 }
 
 export function createBaseNodeRegister(registerNodeType: RegisterNodeTypeFn): RegisterNodeTypeFn {
-  return (nodeType, ctor) => registerNodeType(nodeType, nodeType.startsWith("input/") ? ctor : withBaseNodeCapabilities(nodeType, ctor));
+  return (nodeType, ctor) => {
+    const capableCtor = nodeType.startsWith("input/") ? ctor : withBaseNodeCapabilities(nodeType, ctor);
+    registerNodeType(nodeType, withNodeInspector(nodeType, capableCtor));
+  };
 }

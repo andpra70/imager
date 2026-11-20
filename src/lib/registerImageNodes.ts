@@ -15,6 +15,7 @@ import { createToolGcodeNodeCtors, registerGcodeToolNodes } from "./nodeRegistra
 import { createToolArtistsNodeCtors, registerArtistsToolNodes } from "./nodeRegistrations/tools/artists";
 import { createToolManualNodeCtors, registerManualToolNodes } from "./nodeRegistrations/tools/manual";
 import { createOpenCvNodeCtors, registerOpenCvToolNodes } from "./nodeRegistrations/tools/opencv";
+import { createToolPrintNodeCtors, registerPrintToolNodes } from "./nodeRegistrations/tools/print";
 import type { LiteNode, PreviewAwareNode } from "./nodeRegistrations/shared";
 import { createBaseNodeRegister } from "./nodeRegistrations/shared";
 
@@ -123,6 +124,7 @@ export function registerImageNodes() {
   const artistsToolCtors = createToolArtistsNodeCtors();
   const manualToolCtors = createToolManualNodeCtors();
   const openCvToolCtors = createOpenCvNodeCtors();
+  const printToolCtors = createToolPrintNodeCtors();
 
   registerInputNodes(registerNodeType, {
     InputImageNode: ioNodeCtors.InputImageNode,
@@ -198,6 +200,7 @@ export function registerImageNodes() {
     KleinTxt2ImgToolNode: aiToolCtors.KleinTxt2ImgToolNode,
     KleinImg2ImgToolNode: aiToolCtors.KleinImg2ImgToolNode,
     ClassificaToolNode: aiToolCtors.ClassificaToolNode,
+    UpscalerToolNode: aiToolCtors.UpscalerToolNode,
   });
 
   registerSvgToolNodes(registerNodeType, {
@@ -235,6 +238,7 @@ export function registerImageNodes() {
 
   registerManualToolNodes(registerNodeType, manualToolCtors);
   registerOpenCvToolNodes(registerNodeType, openCvToolCtors);
+  registerPrintToolNodes(registerNodeType, printToolCtors);
 
   registerOutputNodes(registerNodeType, {
     OutputImageNode: ioNodeCtors.OutputImageNode,

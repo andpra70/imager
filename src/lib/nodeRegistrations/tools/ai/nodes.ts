@@ -9,6 +9,7 @@ export { FooocusToolNode } from "./fooocus";
 export { NanoBananaToolNode } from "./nanoBanana";
 export { KleinTxt2ImgToolNode, KleinImg2ImgToolNode } from "./klein";
 export { ClassificaToolNode } from "./classifica";
+export { UpscalerToolNode } from "./upscaler";
 import { drawImagePreview, drawSourceToCanvas, resizeNodeForPreview } from "../../../imageUtils";
 import type { LiteNode, PreviewAwareNode } from "../../shared";
 

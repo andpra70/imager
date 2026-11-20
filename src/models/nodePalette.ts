@@ -2,7 +2,7 @@ import { openCvOperationSpecs } from "../lib/nodeRegistrations/tools/opencv/mode
 
 export interface NodePaletteItem {
   type: string;
-  category: "io" | "basic" | "focus" | "colors" | "art" | "artists" | "graphic" | "plotter" | "linesart" | "manual" | "opencv" | "gcode" | "ai" | "svg";
+  category: "io" | "basic" | "focus" | "colors" | "art" | "artists" | "graphic" | "plotter" | "linesart" | "manual" | "opencv" | "gcode" | "ai" | "svg" | "print";
   glyph: string;
   shortLabel: string;
   tooltip: string;
@@ -17,6 +17,7 @@ export const nodePalette: NodePaletteItem[] = [
     tooltip: `OPENCV/${spec.id.toUpperCase()}: ${spec.description}`,
   })),
   { type: "tools/manual/prepare", category: "manual", glyph: "MAN", shortLabel: "Prepare", tooltip: "MANUAL/PREPARE: prepara una copia artistica da fotografia con reticolo adattivo, landmark, inviluppo, contorni, toni e resa grafite/carboncino/china/fumetto; output image + SVG a layer + modello." },
+  { type: "tools/print/kodak", category: "print", glyph: "KDK", shortLabel: "Kodak", tooltip: "PRINT/KODAK: prepara e stampa l'immagine su Kodak P300R o P210R via Bluetooth SPP/Web Serial, con fit/crop, qualità, colore, timeout e log PPVP." },
   { type: "input/image", category: "io", glyph: "IN", shortLabel: "Image", tooltip: "INPUT: carica o trascina un'immagine." },
   { type: "input/svg", category: "io", glyph: "SVI", shortLabel: "SVG In", tooltip: "SVG IN: carica un file SVG o trascina un .svg sul nodo." },
   { type: "input/webcam", category: "io", glyph: "CAM", shortLabel: "Webcam", tooltip: "WEBCAM: mostra il live video e cattura con Grab." },
@@ -119,6 +120,7 @@ export const nodePalette: NodePaletteItem[] = [
   { type: "tools/ai/face-landmarker", category: "ai", glyph: "FLC", shortLabel: "Face LM", tooltip: "FACE LANDMARKER: rileva mesh, occhi, labbra, iridi e blendshapes del volto (MediaPipe)." },
   { type: "tools/ai/ml5-extract", category: "ai", glyph: "ML5", shortLabel: "ML5", tooltip: "ML5 EXTRACT: estrae bodypose/handpose/facemesh/imageclassifier (se disponibile) da un'immagine." },
   { type: "tools/ai/classifica", category: "ai", glyph: "CLS", shortLabel: "Classifica", tooltip: "CLASSIFICA: classifica l'immagine con MobileNetV4 direttamente nel browser usando WebGPU o CPU/WASM." },
+  { type: "tools/ai/upscaler", category: "ai", glyph: "UP", shortLabel: "Upscaler", tooltip: "UPSCALERJS: aumenta la risoluzione con ESRGAN Slim 2x/3x/4x e controlli di patch, padding e responsivita UI." },
   { type: "tools/ai/chatgpt-image", category: "ai", glyph: "GPT", shortLabel: "ChatGPT Image", tooltip: "CHATGPT IMAGE: trasforma esplicitamente l'immagine in ingresso secondo lo stile descritto nel prompt, usando cache persistente in ingresso e uscita." },
   { type: "tools/ai/fooocus", category: "ai", glyph: "FOO", shortLabel: "Fooocus", tooltip: "FOOOCUS LOCAL: trasforma l'immagine tramite Fooocus-API locale con prompt, controllo ImagePrompt e cache persistente." },
   { type: "tools/ai/nanobanana", category: "ai", glyph: "NBN", shortLabel: "Nano Banana", tooltip: "NANO BANANA: modifica l'immagine in ingresso tramite Gemini Image usando prompt, modello, rapporto d'aspetto e risoluzione configurabili." },
