@@ -16,6 +16,7 @@ import { createToolArtistsNodeCtors, registerArtistsToolNodes } from "./nodeRegi
 import { createToolManualNodeCtors, registerManualToolNodes } from "./nodeRegistrations/tools/manual";
 import { createOpenCvNodeCtors, registerOpenCvToolNodes } from "./nodeRegistrations/tools/opencv";
 import { createToolPrintNodeCtors, registerPrintToolNodes } from "./nodeRegistrations/tools/print";
+import { registerRemoteControlsNode } from "./nodeRegistrations/tools/io/controls";
 import type { LiteNode, PreviewAwareNode } from "./nodeRegistrations/shared";
 import { createBaseNodeRegister } from "./nodeRegistrations/shared";
 
@@ -131,6 +132,7 @@ export function registerImageNodes() {
     InputSvgNode: ioNodeCtors.InputSvgNode,
     WebcamImageNode: ioNodeCtors.WebcamImageNode,
   });
+  registerRemoteControlsNode(registerNodeType);
 
   registerBasicToolNodes(registerNodeType, {
     RotatePanZoomToolNode: basicToolCtors.RotatePanZoomToolNode,

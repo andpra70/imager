@@ -22,6 +22,7 @@ export const nodePalette: NodePaletteItem[] = [
   { type: "input/image", category: "io", glyph: "IN", shortLabel: "Image", tooltip: "INPUT: carica o trascina un'immagine." },
   { type: "input/svg", category: "io", glyph: "SVI", shortLabel: "SVG In", tooltip: "SVG IN: carica un file SVG o trascina un .svg sul nodo." },
   { type: "input/webcam", category: "io", glyph: "CAM", shortLabel: "Webcam", tooltip: "WEBCAM: mostra il live video e cattura con Grab." },
+  { type: "tools/io/controls", category: "io", glyph: "⌘", shortLabel: "Controls", tooltip: "CONTROLS: raccoglie fino a 20 controlli remoti e pilota i widget degli altri nodi senza modificarli." },
   { type: "tools/colors/invert", category: "colors", glyph: "INV", shortLabel: "Invert", tooltip: "INVERT: inverte i colori dell'immagine." },
   { type: "tools/colors/grayscale", category: "colors", glyph: "GRY", shortLabel: "Gray", tooltip: "GRAYSCALE: converte l'immagine in scala di grigi." },
   { type: "tools/colors/threshold", category: "colors", glyph: "THR", shortLabel: "Thresh", tooltip: "THRESHOLD: binarizza l'immagine con una soglia." },
