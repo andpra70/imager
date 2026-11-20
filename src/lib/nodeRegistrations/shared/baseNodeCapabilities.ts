@@ -39,6 +39,8 @@ interface RuntimeNode {
   executionMs?: number | null;
   progress?: number | { overall?: number; progress?: number } | null;
   job?: unknown;
+  preview?: HTMLCanvasElement | null;
+  refreshPreviewLayout?(): void;
 }
 
 const CAPABILITY = Symbol("base-node-capability");
@@ -278,6 +280,13 @@ export function withBaseNodeCapabilities(nodeType: string, ctor: NodeCtor): Node
       void deserializeGraphImage(encoded)
         .then((image) => {
           state.outputs.set(slot, image);
+          // I nodi immagine (Klein compreso) ripubblicano normalmente `preview`
+          // durante onExecute: mantenerlo sincronizzato impedisce che la cache
+          // appena restaurata venga sostituita da null al primo cambio input.
+          if ("preview" in this && !this.preview) {
+            this.preview = image;
+            this.refreshPreviewLayout?.();
+          }
           this.setOutputData(slot, image);
           if (!asyncBusy(this)) {
             state.signature = executionSignature(this);

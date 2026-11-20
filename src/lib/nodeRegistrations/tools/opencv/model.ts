@@ -6,7 +6,9 @@ export type OpenCvOperationId =
   | "erode" | "dilate" | "morph-open" | "morph-close" | "morph-gradient" | "top-hat" | "black-hat"
   | "equalize-hist" | "clahe" | "distance-transform"
   | "resize" | "rotate" | "flip" | "pyr-down" | "pyr-up"
-  | "find-contours" | "hough-lines" | "hough-circles";
+  | "find-contours" | "hough-lines" | "hough-circles"
+  | "denoise" | "gamma" | "white-balance" | "local-contrast" | "kmeans"
+  | "grabcut" | "perspective" | "inpaint" | "skeleton" | "bounding-shapes";
 
 export type OpenCvParamValue = number | boolean | string;
 export type OpenCvParams = Record<string, OpenCvParamValue>;
@@ -43,6 +45,11 @@ export const openCvOperationSpecs: OpenCvOperationSpec[] = [
   {id:"channel",label:"Channel",glyph:"CHN",description:"Estrazione di un singolo canale.",controls:[combo("channel","Channel",0,[0,1,2,3])]},
   {id:"convert-scale",label:"Scale Abs",glyph:"SAB",description:"Regolazione lineare alpha/beta con saturazione.",controls:[slider("alpha","Alpha",1,-3,3,.1),slider("beta","Beta",0,-255,255,1)]},
   {id:"brightness",label:"Brightness",glyph:"BCS",description:"Regola luminosità, contrasto e saturazione preservando i colori con conversione HSV.",controls:[slider("brightness","Luminosità",0,-100,100,1),slider("contrast","Contrasto",0,-100,100,1),slider("saturation","Saturazione",0,-100,200,1)]},
+  {id:"gamma",label:"Gamma",glyph:"GAM",description:"Correzione gamma non lineare dei toni.",controls:[slider("gamma","Gamma",1,.1,4,.05)]},
+  {id:"white-balance",label:"White Balance",glyph:"WB",description:"Bilanciamento automatico del bianco Gray World con intensità regolabile.",controls:[slider("strength","Intensità",100,0,100,1)]},
+  {id:"denoise",label:"Denoise",glyph:"DNS",description:"Riduzione del rumore cromatico preservando i bordi.",controls:[slider("strength","Intensità",10,1,30,1),slider("colorStrength","Colore",10,1,30,1),slider("template","Template",7,3,15,2),slider("search","Search",21,7,35,2)]},
+  {id:"local-contrast",label:"Local Contrast",glyph:"LCT",description:"Contrasto locale CLAHE applicato alla luminanza Lab.",controls:[slider("clipLimit","Clip limit",2,.1,10,.1),slider("tiles","Tiles",8,2,32,1)]},
+  {id:"kmeans",label:"K-Means",glyph:"KMC",description:"Quantizzazione cromatica mediante clustering K-Means.",controls:[slider("clusters","Colori",8,2,32,1),slider("iterations","Iterazioni",10,1,30,1),slider("attempts","Tentativi",3,1,10,1)]},
   {id:"box-blur",label:"Box Blur",glyph:"BBL",description:"Filtro media normalizzato.",controls:[slider("kernel","Kernel",5,1,51,2)]},
   {id:"gaussian-blur",label:"Gaussian",glyph:"GBL",description:"Sfocatura gaussiana.",controls:[slider("kernel","Kernel",5,1,51,2),slider("sigma","Sigma",0,0,20,.1)]},
   {id:"median-blur",label:"Median",glyph:"MBL",description:"Filtro mediano robusto al rumore impulsivo.",controls:[slider("kernel","Kernel",5,1,31,2)]},
@@ -68,6 +75,11 @@ export const openCvOperationSpecs: OpenCvOperationSpec[] = [
   {id:"find-contours",label:"Contours",glyph:"CNT",description:"Estrazione e disegno contorni.",controls:[slider("threshold","Threshold",127,0,255,1),slider("thickness","Thickness",1,1,10,1),combo("retrieval","Retrieval","external",["external","list","ccomp","tree"]),combo("approximation","Approx","simple",["none","simple","tc89-l1","tc89-kcos"])]},
   {id:"hough-lines",label:"Hough Lines",glyph:"HGL",description:"Rilevamento linee probabilistico Hough.",controls:[slider("low","Canny low",50,0,255,1),slider("high","Canny high",150,0,255,1),slider("threshold","Votes",50,1,300,1),slider("minLength","Min length",30,1,500,1),slider("maxGap","Max gap",10,0,100,1),slider("thickness","Thickness",2,1,10,1)]},
   {id:"hough-circles",label:"Hough Circles",glyph:"HGC",description:"Rilevamento cerchi Hough gradient.",controls:[slider("dp","DP",1,.5,4,.1),slider("minDist","Min distance",20,1,300,1),slider("param1","Edge threshold",100,1,300,1),slider("param2","Center threshold",30,1,200,1),slider("minRadius","Min radius",0,0,500,1),slider("maxRadius","Max radius",0,0,1000,1),slider("thickness","Thickness",2,1,10,1)]},
+  {id:"grabcut",label:"GrabCut",glyph:"GRC",description:"Estrae il primo piano assumendo un bordo di sfondo attorno all'immagine.",controls:[slider("inset","Bordo %",5,0,40,1),slider("iterations","Iterazioni",5,1,10,1),{type:"toggle",key:"transparent",label:"Sfondo trasparente",defaultValue:true}]},
+  {id:"perspective",label:"Perspective",glyph:"PER",description:"Raddrizza una prospettiva definita dai quattro angoli in percentuale.",controls:[slider("topLeftX","SX alto X %",0,0,49,1),slider("topLeftY","SX alto Y %",0,0,49,1),slider("topRightX","DX alto X %",100,51,100,1),slider("topRightY","DX alto Y %",0,0,49,1),slider("bottomRightX","DX basso X %",100,51,100,1),slider("bottomRightY","DX basso Y %",100,51,100,1),slider("bottomLeftX","SX basso X %",0,0,49,1),slider("bottomLeftY","SX basso Y %",100,51,100,1)]},
+  {id:"inpaint",label:"Inpaint",glyph:"INP",description:"Ricostruisce zone chiare o scure ricavate automaticamente da una soglia.",controls:[slider("threshold","Soglia maschera",245,0,255,1),combo("maskMode","Maschera","light",["light","dark"]),slider("radius","Raggio",3,1,20,1),combo("method","Metodo","telea",["telea","ns"])]},
+  {id:"skeleton",label:"Skeleton",glyph:"SKL",description:"Riduce le forme binarie al loro scheletro di un pixel.",controls:[slider("threshold","Soglia",127,0,255,1),{type:"toggle",key:"invert",label:"Inverti",defaultValue:false}]},
+  {id:"bounding-shapes",label:"Bounding Shapes",glyph:"BND",description:"Disegna rettangoli, cerchi o ellissi attorno ai contorni filtrati.",controls:[slider("threshold","Soglia",127,0,255,1),slider("minArea","Area minima",100,0,50000,10),slider("thickness","Spessore",2,1,10,1),combo("shape","Forma","rectangle",["rectangle","circle","ellipse"])]},
 ];
 
 export const defaultParams = (spec:OpenCvOperationSpec):OpenCvParams => Object.fromEntries(spec.controls.map(control=>[control.key,control.defaultValue]));

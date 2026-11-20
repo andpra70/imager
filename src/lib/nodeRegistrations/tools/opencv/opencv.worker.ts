@@ -1,6 +1,8 @@
 /// <reference lib="webworker" />
 import cvModule from "@techstark/opencv-js";
 import type { OpenCvJobRequest, OpenCvJobResponse, OpenCvParams } from "./model";
+import { processEnhancementOperation } from "./operations/enhancement";
+import { processVisionOperation } from "./operations/vision";
 
 const scope: DedicatedWorkerGlobalScope = self as unknown as DedicatedWorkerGlobalScope;
 type CvRuntime = Record<string, any>;
@@ -31,6 +33,8 @@ function thresholdMode(cv:CvRuntime,value:string){return ({binary:cv.THRESH_BINA
 function morphShape(cv:CvRuntime,value:string){return ({rect:cv.MORPH_RECT,cross:cv.MORPH_CROSS,ellipse:cv.MORPH_ELLIPSE} as Record<string,number>)[value]??cv.MORPH_ELLIPSE;}
 
 function process(cv:CvRuntime,operation:string,params:OpenCvParams,source:any) {
+  const advancedResult=processEnhancementOperation(cv,operation,params,source)??processVisionOperation(cv,operation,params,source);
+  if(advancedResult)return rgba(cv,advancedResult);
   let dst=new cv.Mat();
   if(operation==="grayscale") cv.cvtColor(source,dst,cv.COLOR_RGBA2GRAY);
   else if(operation==="hsv"){const rgb=new cv.Mat();cv.cvtColor(source,rgb,cv.COLOR_RGBA2RGB);cv.cvtColor(rgb,dst,cv.COLOR_RGB2HSV);rgb.delete();}
