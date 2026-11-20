@@ -18,6 +18,7 @@ export const nodePalette: NodePaletteItem[] = [
   })),
   { type: "tools/manual/prepare", category: "manual", glyph: "MAN", shortLabel: "Prepare", tooltip: "MANUAL/PREPARE: prepara una copia artistica da fotografia con reticolo adattivo, landmark, inviluppo, contorni, toni e resa grafite/carboncino/china/fumetto; output image + SVG a layer + modello." },
   { type: "tools/print/kodak", category: "print", glyph: "KDK", shortLabel: "Kodak", tooltip: "PRINT/KODAK: prepara e stampa l'immagine su Kodak P300R o P210R via Bluetooth SPP/Web Serial, con fit/crop, qualità, colore, timeout e log PPVP." },
+  { type: "tools/print/pdf", category: "print", glyph: "PDF", shortLabel: "PDF", tooltip: "PRINT/PDF: genera un PDF da immagine o SVG scegliendo formato pagina, orientamento, adattamento e margini; consente download e stampa di sistema." },
   { type: "input/image", category: "io", glyph: "IN", shortLabel: "Image", tooltip: "INPUT: carica o trascina un'immagine." },
   { type: "input/svg", category: "io", glyph: "SVI", shortLabel: "SVG In", tooltip: "SVG IN: carica un file SVG o trascina un .svg sul nodo." },
   { type: "input/webcam", category: "io", glyph: "CAM", shortLabel: "Webcam", tooltip: "WEBCAM: mostra il live video e cattura con Grab." },
