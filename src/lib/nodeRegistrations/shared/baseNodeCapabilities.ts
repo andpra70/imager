@@ -1,4 +1,5 @@
 import type { NodeCtor, RegisterNodeTypeFn } from "./types";
+import { deserializeGraphImage, serializeCompressedGraphImage } from "../../imageUtils";
 import { appendNodeInspectorLog, captureNodeInspectorState, withNodeInspector } from "./nodeInspector";
 
 interface ExecutionStats {
@@ -13,6 +14,7 @@ interface ExecutionStats {
   durations: number[];
   initialExecutionMs: number | null;
   observedWork: boolean;
+  serializedImageOutputs: Map<number, string>;
 }
 
 interface RuntimeNode {
@@ -24,6 +26,8 @@ interface RuntimeNode {
   onExecute?(): unknown;
   onDrawForeground?(context: CanvasRenderingContext2D, ...args: unknown[]): void;
   onRemoved?(): void;
+  onSerialize?(data: Record<string, unknown>): void;
+  onConfigure?(data: Record<string, unknown>): void;
   size?: [number, number];
   isRendering?: boolean;
   isProcessing?: boolean;
@@ -44,6 +48,26 @@ let nextObjectId = 1;
 const HISTORY_LIMIT = 8;
 const STORAGE_PREFIX = "plotterfun.node-duration.";
 const MIN_RECORDED_DURATION_MS = 0.01;
+const SERIALIZED_IMAGE_OUTPUTS_KEY = "__plotterfunCachedImageOutputs";
+
+function createExecutionStats(nodeType: string): ExecutionStats {
+  return {
+    signature: "", outputs: new Map(), startedAt: 0, elapsedMs: 0, progress: 0,
+    running: false, cached: false, hasResult: false, durations: readDurations(nodeType),
+    initialExecutionMs: null, observedWork: false, serializedImageOutputs: new Map(),
+  };
+}
+
+function readSerializedImageOutputs(data: Record<string, unknown>) {
+  const raw = data[SERIALIZED_IMAGE_OUTPUTS_KEY];
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return new Map<number, string>();
+  const outputs = new Map<number, string>();
+  for (const [slotText, value] of Object.entries(raw as Record<string, unknown>)) {
+    const slot = Number(slotText);
+    if (Number.isInteger(slot) && slot >= 0 && typeof value === "string" && value.startsWith("data:image/")) outputs.set(slot, value);
+  }
+  return outputs;
+}
 
 function objectId(value: object) {
   let id = objectIds.get(value);
@@ -185,10 +209,12 @@ export function withBaseNodeCapabilities(nodeType: string, ctor: NodeCtor): Node
   const originalExecute = prototype.onExecute;
   const originalDrawForeground = prototype.onDrawForeground;
   const originalRemoved = prototype.onRemoved;
+  const originalSerialize = prototype.onSerialize;
+  const originalConfigure = prototype.onConfigure;
 
   prototype.onExecute = function(this: DecoratedNode) {
     captureNodeInspectorState(this);
-    const state = this[CAPABILITY] ??= { signature: "", outputs: new Map(), startedAt: 0, elapsedMs: 0, progress: 0, running: false, cached: false, hasResult: false, durations: readDurations(nodeType), initialExecutionMs: null, observedWork: false };
+    const state = this[CAPABILITY] ??= createExecutionStats(nodeType);
     if (!this[ORIGINAL_SET_OUTPUT]) {
       const setOutput = this.setOutputData.bind(this);
       this[ORIGINAL_SET_OUTPUT] = setOutput;
@@ -225,6 +251,45 @@ export function withBaseNodeCapabilities(nodeType: string, ctor: NodeCtor): Node
   prototype.onDrawForeground = function(this: DecoratedNode, context: CanvasRenderingContext2D, ...args: unknown[]) {
     originalDrawForeground?.call(this, context, ...args);
     const state = this[CAPABILITY]; if (state) drawProgress(this, context, state);
+  };
+  prototype.onSerialize = function(this: DecoratedNode, data: Record<string, unknown>) {
+    originalSerialize?.call(this, data);
+    const state = this[CAPABILITY] ??= createExecutionStats(nodeType);
+    const serialized: Record<string, string> = {};
+    for (const [slot, value] of state.outputs) {
+      if (typeof HTMLCanvasElement !== "undefined" && value instanceof HTMLCanvasElement && value.width > 0 && value.height > 0) {
+        try {
+          const encoded = serializeCompressedGraphImage(value);
+          state.serializedImageOutputs.set(slot, encoded);
+        } catch (error) {
+          appendNodeInspectorLog(this, error);
+        }
+      }
+    }
+    for (const [slot, encoded] of state.serializedImageOutputs) serialized[String(slot)] = encoded;
+    if (Object.keys(serialized).length) data[SERIALIZED_IMAGE_OUTPUTS_KEY] = serialized;
+  };
+  prototype.onConfigure = function(this: DecoratedNode, data: Record<string, unknown>) {
+    originalConfigure?.call(this, data);
+    const state = this[CAPABILITY] ??= createExecutionStats(nodeType);
+    const serialized = readSerializedImageOutputs(data);
+    state.serializedImageOutputs = serialized;
+    for (const [slot, encoded] of serialized) {
+      void deserializeGraphImage(encoded)
+        .then((image) => {
+          state.outputs.set(slot, image);
+          this.setOutputData(slot, image);
+          if (!asyncBusy(this)) {
+            state.signature = executionSignature(this);
+            state.hasResult = true;
+            state.running = false;
+            state.cached = true;
+            state.progress = 1;
+          }
+          this.setDirtyCanvas?.(true, true);
+        })
+        .catch((error) => appendNodeInspectorLog(this, error));
+    }
   };
   prototype.onRemoved = function(this: DecoratedNode) {
     originalRemoved?.call(this); const state = this[CAPABILITY]; if (state) state.running = false;

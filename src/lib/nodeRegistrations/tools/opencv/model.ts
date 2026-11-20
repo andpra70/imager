@@ -1,5 +1,5 @@
 export type OpenCvOperationId =
-  | "grayscale" | "hsv" | "lab" | "invert" | "channel" | "convert-scale"
+  | "grayscale" | "hsv" | "lab" | "invert" | "channel" | "convert-scale" | "brightness"
   | "box-blur" | "gaussian-blur" | "median-blur" | "bilateral" | "sharpen" | "emboss"
   | "threshold" | "adaptive-threshold" | "otsu"
   | "canny" | "sobel" | "scharr" | "laplacian"
@@ -42,6 +42,7 @@ export const openCvOperationSpecs: OpenCvOperationSpec[] = [
   {id:"invert",label:"Invert",glyph:"OCI",description:"Inversione bitwise dei canali.",controls:[]},
   {id:"channel",label:"Channel",glyph:"CHN",description:"Estrazione di un singolo canale.",controls:[combo("channel","Channel",0,[0,1,2,3])]},
   {id:"convert-scale",label:"Scale Abs",glyph:"SAB",description:"Regolazione lineare alpha/beta con saturazione.",controls:[slider("alpha","Alpha",1,-3,3,.1),slider("beta","Beta",0,-255,255,1)]},
+  {id:"brightness",label:"Brightness",glyph:"BCS",description:"Regola luminosità, contrasto e saturazione preservando i colori con conversione HSV.",controls:[slider("brightness","Luminosità",0,-100,100,1),slider("contrast","Contrasto",0,-100,100,1),slider("saturation","Saturazione",0,-100,200,1)]},
   {id:"box-blur",label:"Box Blur",glyph:"BBL",description:"Filtro media normalizzato.",controls:[slider("kernel","Kernel",5,1,51,2)]},
   {id:"gaussian-blur",label:"Gaussian",glyph:"GBL",description:"Sfocatura gaussiana.",controls:[slider("kernel","Kernel",5,1,51,2),slider("sigma","Sigma",0,0,20,.1)]},
   {id:"median-blur",label:"Median",glyph:"MBL",description:"Filtro mediano robusto al rumore impulsivo.",controls:[slider("kernel","Kernel",5,1,31,2)]},

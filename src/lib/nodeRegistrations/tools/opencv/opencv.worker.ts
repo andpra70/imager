@@ -38,6 +38,24 @@ function process(cv:CvRuntime,operation:string,params:OpenCvParams,source:any) {
   else if(operation==="invert") cv.bitwise_not(source,dst);
   else if(operation==="channel"){const channels=new cv.MatVector();cv.split(source,channels);const index=Math.max(0,Math.min(channels.size()-1,Math.round(numberParam(params,"channel",0))));dst=channels.get(index).clone();for(let i=0;i<channels.size();i++)channels.get(i).delete();channels.delete();}
   else if(operation==="convert-scale") cv.convertScaleAbs(source,dst,numberParam(params,"alpha",1),numberParam(params,"beta",0));
+  else if(operation==="brightness") {
+    const brightness=Math.max(-100,Math.min(100,numberParam(params,"brightness",0)))*2.55;
+    const contrastValue=Math.max(-100,Math.min(100,numberParam(params,"contrast",0)));
+    const contrast=contrastValue<0?1+contrastValue/100:1+2*contrastValue/100;
+    const saturationValue=Math.max(-100,Math.min(200,numberParam(params,"saturation",0)));
+    const saturation=Math.max(0,1+saturationValue/100);
+    const rgb=new cv.Mat(),hsv=new cv.Mat(),channels=new cv.MatVector(),adjustedHsv=new cv.Mat(),saturatedRgb=new cv.Mat();
+    cv.cvtColor(source,rgb,cv.COLOR_RGBA2RGB);
+    cv.cvtColor(rgb,hsv,cv.COLOR_RGB2HSV);
+    cv.split(hsv,channels);
+    const saturationChannel=channels.get(1),scaledSaturation=new cv.Mat();
+    cv.convertScaleAbs(saturationChannel,scaledSaturation,saturation,0);
+    channels.set(1,scaledSaturation);
+    cv.merge(channels,adjustedHsv);
+    cv.cvtColor(adjustedHsv,saturatedRgb,cv.COLOR_HSV2RGB);
+    cv.convertScaleAbs(saturatedRgb,dst,contrast,brightness);
+    saturationChannel.delete();scaledSaturation.delete();channels.delete();rgb.delete();hsv.delete();adjustedHsv.delete();saturatedRgb.delete();
+  }
   else if(operation==="box-blur") cv.blur(source,dst,new cv.Size(odd(numberParam(params,"kernel",5)),odd(numberParam(params,"kernel",5))),new cv.Point(-1,-1),cv.BORDER_DEFAULT);
   else if(operation==="gaussian-blur") cv.GaussianBlur(source,dst,new cv.Size(odd(numberParam(params,"kernel",5)),odd(numberParam(params,"kernel",5))),numberParam(params,"sigma",0),0,cv.BORDER_DEFAULT);
   else if(operation==="median-blur") cv.medianBlur(source,dst,odd(numberParam(params,"kernel",5),3));
