@@ -25,10 +25,21 @@ export interface KleinImg2ImgPromptSettings {
   textPrompt: string;
 }
 
+export const KLEIN_IMG2IMG_FIDELITY_PROMPT =
+  "Usa l'immagine 1 come riferimento principale e conservala con la massima fedelta. " +
+  "Mantieni lo stesso soggetto e la sua identita, i lineamenti e le fattezze del volto, " +
+  "la posa, l'espressione, le proporzioni, l'inquadratura, la composizione, la prospettiva " +
+  "e la disposizione degli elementi. Modifica soltanto lo stile visivo richiesto. " +
+  "Non sostituire il soggetto, non alterarne i tratti distintivi e non inventare una nuova posa.";
+
 export function resolveKleinImg2ImgPrompt(settings: KleinImg2ImgPromptSettings) {
   const stylePrompt = settings.stylePrompt.trim();
   const textPrompt = settings.textPrompt.trim();
-  return [settings.useStylePreset ? stylePrompt : "", textPrompt].filter(Boolean).join(" ");
+  return [
+    KLEIN_IMG2IMG_FIDELITY_PROMPT,
+    settings.useStylePreset ? stylePrompt : "",
+    textPrompt,
+  ].filter(Boolean).join(" ");
 }
 
 export interface KleinTxt2ImgRequest {
