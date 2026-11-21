@@ -20,9 +20,11 @@ export interface KleinImg2ImgOptions extends KleinCommonOptions {
 }
 
 export interface KleinImg2ImgPromptSettings {
+  preserveSource: boolean;
   useStylePreset: boolean;
   stylePrompt: string;
   textPrompt: string;
+  promptSuffix: string;
 }
 
 export const KLEIN_IMG2IMG_FIDELITY_PROMPT =
@@ -35,10 +37,12 @@ export const KLEIN_IMG2IMG_FIDELITY_PROMPT =
 export function resolveKleinImg2ImgPrompt(settings: KleinImg2ImgPromptSettings) {
   const stylePrompt = settings.stylePrompt.trim();
   const textPrompt = settings.textPrompt.trim();
+  const promptSuffix = settings.promptSuffix.trim();
   return [
-    KLEIN_IMG2IMG_FIDELITY_PROMPT,
+    settings.preserveSource ? KLEIN_IMG2IMG_FIDELITY_PROMPT : "",
     settings.useStylePreset ? stylePrompt : "",
     textPrompt,
+    promptSuffix,
   ].filter(Boolean).join(" ");
 }
 

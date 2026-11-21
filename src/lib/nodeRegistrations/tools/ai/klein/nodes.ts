@@ -103,7 +103,7 @@ export class KleinImg2ImgToolNode {
   constructor() {
     const node = this as unknown as KleinNode & KleinImg2ImgToolNode;
     node.title = "TOOLS / AI / KLEIN IMG2IMG"; const initial = KLEIN_STYLE_PRESETS[1];
-    node.properties = { ...KLEIN_DEFAULTS, styleId: initial.id, prompt: initial.prompt, useStylePreset: true, textPrompt: "" };
+    node.properties = { ...KLEIN_DEFAULTS, styleId: initial.id, prompt: initial.prompt, preserveSource: true, useStylePreset: true, textPrompt: "", promptSuffix: "" };
     node.addInput("image 1 (base)", "image");
     node.addInput("image 2", "image");
     node.addInput("image 3", "image");
@@ -115,7 +115,9 @@ export class KleinImg2ImgToolNode {
     node.addWidget("combo", "Stile", initial.label, (value) => node.selectStyle(String(value)), { values: initialPath.subgenre.styles.map((item) => item.label) });
     node.addWidget("text", "Prompt", initial.prompt, (value) => { node.properties.prompt = String(value); node.properties.styleId = "custom"; notify(node); });
     node.addWidget("toggle", "Usa preset", true, (value) => { node.properties.useStylePreset = Boolean(value); notify(node); });
+    node.addWidget("toggle", "Conserva", true, (value) => { node.properties.preserveSource = Boolean(value); notify(node); });
     node.addWidget("text", "Prompt immagini (image 1..4)", "", (value) => { node.properties.textPrompt = String(value); notify(node); });
+    node.addWidget("text", "Prompt fisso in coda", "", (value) => { node.properties.promptSuffix = String(value); notify(node); });
     node.addWidget("number", "Prescale max", KLEIN_DEFAULTS.maxSize, (value) => { node.properties.maxSize = Number(value); notify(node); }, { min: 128, max: 1024, step: 64, precision: 0 });
     addCommonWidgets(node);
     node.addWidget("button", "Trasforma immagine", null, () => { if (!node.isRunning) node.pendingRun = true; node.setDirtyCanvas(true, true); });
@@ -157,6 +159,8 @@ export class KleinImg2ImgToolNode {
     const values: Record<string, unknown> = {
       Prompt: this.properties.prompt, "Prescale max": this.properties.maxSize, "Klein URL": this.properties.baseUrl,
       "Usa preset": this.properties.useStylePreset ?? true, "Prompt immagini (image 1..4)": this.properties.textPrompt ?? "",
+      Conserva: this.properties.preserveSource ?? true,
+      "Prompt fisso in coda": this.properties.promptSuffix ?? "",
       Steps: this.properties.steps, Guidance: this.properties.guidanceScale, Seed: this.properties.seed,
     };
     Object.entries(values).forEach(([name, value]) => { const target = widget(this, name); if (target && value !== undefined) target.value = value; });
@@ -170,9 +174,11 @@ export class KleinImg2ImgToolNode {
     const hasGap = firstEmptySlot >= 0 && lastConnectedSlot > firstEmptySlot;
     const images = inputSlots.slice(0, lastConnectedSlot + 1).filter(isImage);
     const useStylePreset = Boolean(this.properties.useStylePreset ?? true), styleId = String(this.properties.styleId ?? "custom"), prompt = resolveKleinImg2ImgPrompt({
+      preserveSource: Boolean(this.properties.preserveSource ?? true),
       useStylePreset,
       stylePrompt: String(this.properties.prompt ?? ""),
       textPrompt: String(this.properties.textPrompt ?? ""),
+      promptSuffix: String(this.properties.promptSuffix ?? ""),
     });
     if (!isImage(inputSlots[0])) { this.status = "collega almeno image 1 (base)"; return; }
     if (hasGap) { this.status = "collega le immagini in ordine, senza slot vuoti"; return; }

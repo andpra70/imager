@@ -17,6 +17,8 @@ interface ExecutionStats {
   initialExecutionMs: number | null;
   observedWork: boolean;
   serializedImageOutputs: Map<number, string>;
+  previewBeforeBypass: HTMLCanvasElement | null;
+  bypassed: boolean;
 }
 
 interface RuntimeNode {
@@ -41,6 +43,8 @@ interface RuntimeNode {
   isRunning?: boolean;
   isPlaying?: boolean;
   pendingRun?: boolean;
+  pendingRunSignature?: string;
+  debouncedRunSignature?: string;
   executionMs?: number | null;
   progress?: number | { overall?: number; progress?: number } | null;
   job?: unknown;
@@ -79,6 +83,7 @@ function createExecutionStats(nodeType: string): ExecutionStats {
     signature: "", outputs: new Map(), startedAt: 0, elapsedMs: 0, progress: 0,
     running: false, cached: false, hasResult: false, durations: readDurations(nodeType),
     initialExecutionMs: null, observedWork: false, serializedImageOutputs: new Map(),
+    previewBeforeBypass: null, bypassed: false,
   };
 }
 
@@ -143,7 +148,10 @@ function stableProperties(properties: Record<string, unknown> | undefined) {
 function executionSignature(node: RuntimeNode) {
   const count = node.inputs?.length ?? 0;
   const inputs = Array.from({ length: count }, (_, slot) => valueSignature(node.getInputData(slot)));
-  return `${inputs.join(";")}#${hashText(stableProperties(node.properties))}#pending:${Boolean(node.pendingRun)}`;
+  const debounceState = node.pendingRunSignature === undefined && node.debouncedRunSignature === undefined
+    ? ""
+    : `#debounce:${node.pendingRunSignature ?? ""}:${node.debouncedRunSignature ?? ""}`;
+  return `${inputs.join(";")}#${hashText(stableProperties(node.properties))}#pending:${Boolean(node.pendingRun)}${debounceState}`;
 }
 
 function readDurations(nodeType: string) {
@@ -258,8 +266,14 @@ export function withBaseNodeCapabilities(nodeType: string, ctor: NodeCtor): Node
     }
     const setOutput = this[ORIGINAL_SET_OUTPUT];
     if (!isNodeEnabled(this) && supportsBypass(this)) {
-      state.running = false; state.cached = false; state.hasResult = false; state.signature = ""; state.outputs.clear();
       const input = this.getInputData(0);
+      if (!state.bypassed) state.previewBeforeBypass = this.preview ?? null;
+      state.bypassed = true;
+      if (typeof HTMLCanvasElement !== "undefined" && input instanceof HTMLCanvasElement && "preview" in this) {
+        this.preview = input;
+        this.refreshPreviewLayout?.();
+      }
+      state.running = false; state.cached = false; state.hasResult = false; state.signature = ""; state.outputs.clear();
       for (let slot = 0; slot < (this.outputs?.length ?? 0); slot += 1) {
         const value = slot === 0 ? input : null;
         state.outputs.set(slot, value); setOutput(slot, value);
@@ -267,6 +281,14 @@ export function withBaseNodeCapabilities(nodeType: string, ctor: NodeCtor): Node
       this.setDirtyCanvas?.(true, true);
       reportProgress(this, nodeType, state, "bypassed");
       return;
+    }
+    if (state.bypassed) {
+      state.bypassed = false;
+      if ("preview" in this) {
+        this.preview = state.previewBeforeBypass;
+        this.refreshPreviewLayout?.();
+      }
+      state.previewBeforeBypass = null;
     }
     const signature = executionSignature(this);
     if (state.running && asyncBusy(this)) {

@@ -25,7 +25,7 @@ export interface InspectorNodeLike {
   logs?: unknown;
   setDirtyCanvas?(foreground?: boolean, background?: boolean): void;
   getOutputData?(slot: number): unknown;
-  graph?: { onGraphStateChange?: () => void };
+  graph?: { onGraphStateChange?: () => void; remove?: (node: InspectorNodeLike) => void };
   onDrawTitle?(context: CanvasRenderingContext2D): void;
   onMouseDown?(event: PointerEvent, position?: [number, number], ...args: unknown[]): unknown;
 }

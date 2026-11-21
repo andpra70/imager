@@ -14,12 +14,79 @@ import {
   refreshNode,
 } from "../shared";
 import { OptimizedToolNode } from "../shared";
+import { DEFAULT_CROP_OPTIONS, resolveCropRect, type CropOptions } from "./model";
 
 interface CropRect {
   x: number;
   y: number;
   width: number;
   height: number;
+}
+
+export class CropToolNode extends OptimizedToolNode {
+  size: [number, number] = [280, 390];
+  preview: GraphImage | null = null;
+  cropRect: CropRect | null = null;
+
+  constructor() {
+    super();
+    const node = this as unknown as PreviewAwareNode & CropToolNode;
+    node.title = createToolTitle("Crop");
+    node.properties = { ...DEFAULT_CROP_OPTIONS };
+    node.addInput("image", "image");
+    node.addOutput("image", "image");
+    const addPercent = (name: string, key: keyof CropOptions, initial: number, min: number) => {
+      node.addWidget("slider", name, initial, (value) => {
+        node.properties[key] = clamp(Math.round(Number(value)), min, 100);
+        notifyGraphStateChange(node);
+      }, { min, max: 100, step: 1, precision: 0 });
+    };
+    addPercent("X %", "xPercent", DEFAULT_CROP_OPTIONS.xPercent, 0);
+    addPercent("Y %", "yPercent", DEFAULT_CROP_OPTIONS.yPercent, 0);
+    addPercent("Width %", "widthPercent", DEFAULT_CROP_OPTIONS.widthPercent, 1);
+    addPercent("Height %", "heightPercent", DEFAULT_CROP_OPTIONS.heightPercent, 1);
+    node.refreshPreviewLayout = () => refreshNode(node, node.preview, 3);
+    node.refreshPreviewLayout();
+  }
+
+  onExecute(this: PreviewAwareNode & CropToolNode) {
+    const start = performance.now();
+    const input = this.getInputData(0);
+    if (!input) {
+      this.preview = null; this.cropRect = null; this.resetOptimizedCache();
+      this.completeOptimizedExecution(start); this.setOutputData(0, null); this.refreshPreviewLayout(); return;
+    }
+    const options: CropOptions = {
+      xPercent: clamp(Number(this.properties.xPercent ?? 0), 0, 100),
+      yPercent: clamp(Number(this.properties.yPercent ?? 0), 0, 100),
+      widthPercent: clamp(Number(this.properties.widthPercent ?? 100), 1, 100),
+      heightPercent: clamp(Number(this.properties.heightPercent ?? 100), 1, 100),
+    };
+    const signature = getGraphImageSignature(input);
+    const optionsSignature = JSON.stringify(options);
+    if (this.canReuseOptimizedResult(signature, optionsSignature)) {
+      this.setOutputData(0, this.preview); this.refreshPreviewLayout(); return;
+    }
+    const rect = resolveCropRect(input.width, input.height, options);
+    const output = document.createElement("canvas"); output.width = rect.width; output.height = rect.height;
+    const context = output.getContext("2d");
+    if (!context) {
+      this.preview = null; this.cropRect = null; this.resetOptimizedCache();
+      this.completeOptimizedExecution(start); this.setOutputData(0, null); this.refreshPreviewLayout(); return;
+    }
+    context.drawImage(input, rect.x, rect.y, rect.width, rect.height, 0, 0, rect.width, rect.height);
+    this.preview = output; this.cropRect = rect;
+    this.completeOptimizedExecution(start, signature, optionsSignature);
+    this.setOutputData(0, output); this.refreshPreviewLayout();
+  }
+
+  onDrawBackground(this: PreviewAwareNode & CropToolNode, context: CanvasRenderingContext2D) {
+    const layout = drawImagePreview(context, this, this.preview, { footerLines: 3 });
+    context.save(); context.fillStyle = "rgba(255,255,255,0.65)"; context.font = "12px sans-serif";
+    context.fillText(this.cropRect ? `origine ${this.cropRect.x}, ${this.cropRect.y}` : "no crop", 10, layout.footerTop + 12);
+    context.fillText(this.preview ? `output ${this.preview.width}x${this.preview.height}` : "no output", 10, layout.footerTop + 30);
+    context.fillText(formatExecutionInfo(this.executionMs), 10, layout.footerTop + 48); context.restore();
+  }
 }
 
 export class ScaleToolNode extends OptimizedToolNode {

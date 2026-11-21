@@ -171,21 +171,20 @@ export function getGraphImageSignature(image: GraphImage | null) {
     return `${image.width}x${image.height}:nocontent`;
   }
 
-  const samplePoints = [
-    [0, 0],
-    [Math.floor(image.width / 2), Math.floor(image.height / 2)],
-    [Math.max(0, image.width - 1), Math.max(0, image.height - 1)],
-    [Math.floor(image.width / 3), Math.floor(image.height * 0.7)],
-  ];
-
-  const values = samplePoints
-    .map(([x, y]) => {
-      const pixel = context.getImageData(x, y, 1, 1).data;
-      return `${pixel[0]}-${pixel[1]}-${pixel[2]}-${pixel[3]}`;
-    })
-    .join("|");
-
-  return `${image.width}x${image.height}:${values}`;
+  const sampleSize = 8;
+  const sample = document.createElement("canvas");
+  sample.width = sampleSize;
+  sample.height = sampleSize;
+  const sampleContext = sample.getContext("2d", { willReadFrequently: true });
+  if (!sampleContext) return `${image.width}x${image.height}:nosample`;
+  sampleContext.drawImage(image, 0, 0, sampleSize, sampleSize);
+  const pixels = sampleContext.getImageData(0, 0, sampleSize, sampleSize).data;
+  let hash = 2166136261;
+  for (let index = 0; index < pixels.length; index += 1) {
+    hash ^= pixels[index];
+    hash = Math.imul(hash, 16777619);
+  }
+  return `${image.width}x${image.height}:${(hash >>> 0).toString(36)}`;
 }
 
 export function isGraphImageReady(value: unknown): value is GraphImage {

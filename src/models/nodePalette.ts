@@ -35,6 +35,7 @@ export const nodePalette: NodePaletteItem[] = [
   { type: "tools/basic/rotatePanZoom", category: "basic", glyph: "RPZ", shortLabel: "RPZ", tooltip: "ROTATE PAN ZOOM: ruota, zooma e croppa con pan sliders e bird-eye della zona di crop." },
   { type: "tools/basic/scale", category: "basic", glyph: "SCL", shortLabel: "Scale", tooltip: "SCALE: ridimensiona l'immagine in percentuale." },
   { type: "tools/basic/rotate", category: "basic", glyph: "ROT", shortLabel: "Rotate", tooltip: "ROTATE: ruota l'immagine dell'angolo impostato." },
+  { type: "tools/basic/crop", category: "basic", glyph: "CRP", shortLabel: "Crop", tooltip: "CROP: ritaglia una zona dell'immagine regolando origine, larghezza e altezza in percentuale." },
   { type: "tools/colors/brightness-contrast", category: "colors", glyph: "B/C", shortLabel: "Bri/Con", tooltip: "BRIGHTNESS/CONTRAST: regola luminosita e contrasto." },
   { type: "tools/colors/AWB", category: "colors", glyph: "AWB", shortLabel: "AWB", tooltip: "AUTO WHITE BALANCE: bilanciamento automatico del bianco con Gray World, White Patch, Shades of Gray e Gray Edge." },
   { type: "tools/colors/rgb-split", category: "colors", glyph: "RGB", shortLabel: "RGB Split", tooltip: "RGB SPLIT: separa l'immagine in 3 uscite (R,G,B)." },

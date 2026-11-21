@@ -138,6 +138,7 @@ export function registerImageNodes() {
     RotatePanZoomToolNode: basicToolCtors.RotatePanZoomToolNode,
     ScaleToolNode: basicToolCtors.ScaleToolNode,
     RotateToolNode: basicToolCtors.RotateToolNode,
+    CropToolNode: basicToolCtors.CropToolNode,
   });
 
   registerFocusToolNodes(registerNodeType, {
