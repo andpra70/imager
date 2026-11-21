@@ -9,6 +9,7 @@ import {
   type RemoteControlOptions,
   type RemoteControlValue,
 } from "./model";
+import { NODE_ENABLED_PROPERTY, NODE_ENABLED_WIDGET } from "../../../shared/nodeRuntimeControls";
 
 interface GraphWidget {
   name?: string;
@@ -24,6 +25,9 @@ interface GraphTargetNode {
   title?: string;
   widgets?: GraphWidget[];
   setDirtyCanvas?: (foreground?: boolean, background?: boolean) => void;
+  properties?: Record<string, unknown>;
+  inputs?: unknown[];
+  outputs?: unknown[];
 }
 
 interface ControlsGraph {
@@ -95,10 +99,21 @@ export class RemoteControlsToolNode {
   }
 
   targetWidgetNames() {
-    const names = (this.target()?.widgets ?? [])
+    const target = this.target();
+    const names = (target?.widgets ?? [])
       .filter((item) => isRemoteControlKind(item.type))
       .map((item) => item.name || "Controllo senza nome");
+    if (target?.inputs?.length && target.outputs?.length) names.unshift(NODE_ENABLED_WIDGET);
     return names.length ? names : ["Nessun controllo compatibile"];
+  }
+
+  private selectedTargetControl() {
+    const target = this.target();
+    if (!target) return undefined;
+    if (this.selectedWidgetName === NODE_ENABLED_WIDGET && target.inputs?.length && target.outputs?.length) {
+      return { name: NODE_ENABLED_WIDGET, type: "toggle", value: target.properties?.[NODE_ENABLED_PROPERTY] !== false, options: {} } satisfies GraphWidget;
+    }
+    return target.widgets?.find((item) => item.name === this.selectedWidgetName && isRemoteControlKind(item.type));
   }
 
   bindingLabels() {
@@ -122,7 +137,7 @@ export class RemoteControlsToolNode {
     const node = this as unknown as ControlsNode;
     if (this.bindings.length >= MAX_REMOTE_CONTROLS) { this.status = `massimo ${MAX_REMOTE_CONTROLS} controlli`; return; }
     const target = this.target();
-    const targetWidget = target?.widgets?.find((item) => item.name === this.selectedWidgetName && isRemoteControlKind(item.type));
+    const targetWidget = this.selectedTargetControl();
     if (!target || !targetWidget || !isRemoteControlKind(targetWidget.type)) { this.status = "seleziona nodo e controllo"; return; }
     const duplicate = this.bindings.some((item) => item.targetNodeId === target.id && item.targetWidgetName === targetWidget.name);
     if (duplicate) { this.status = "controllo già presente"; return; }
@@ -153,9 +168,16 @@ export class RemoteControlsToolNode {
   private applyBinding(binding: RemoteControlBinding, value: RemoteControlValue) {
     const node = this as unknown as ControlsNode;
     const target = node.graph?.getNodeById?.(binding.targetNodeId);
-    const targetWidget = target?.widgets?.find((item) => item.name === binding.targetWidgetName);
+    const isEnableControl = binding.targetWidgetName === NODE_ENABLED_WIDGET && Boolean(target?.inputs?.length && target.outputs?.length);
+    const targetWidget = isEnableControl
+      ? { name: NODE_ENABLED_WIDGET, type: "toggle", value: target?.properties?.[NODE_ENABLED_PROPERTY] !== false } as GraphWidget
+      : target?.widgets?.find((item) => item.name === binding.targetWidgetName);
     if (!target || !targetWidget) { this.status = `disconnesso: ${binding.label}`; node.setDirtyCanvas(true, true); return; }
     binding.value = normalizeRemoteValue(binding.kind, value); targetWidget.value = binding.value;
+    if (isEnableControl) {
+      target.properties ??= {};
+      target.properties[NODE_ENABLED_PROPERTY] = Boolean(binding.value);
+    }
     try { targetWidget.callback?.call(target, binding.value, undefined, target); this.status = `${binding.label} → #${binding.targetNodeId}`; }
     catch (error) { this.status = error instanceof Error ? error.message : `errore: ${binding.label}`; }
     target.setDirtyCanvas?.(true, true); node.graph?.onGraphStateChange?.(); node.setDirtyCanvas(true, true);

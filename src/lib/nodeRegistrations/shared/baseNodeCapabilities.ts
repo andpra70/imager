@@ -1,6 +1,8 @@
 import type { NodeCtor, RegisterNodeTypeFn } from "./types";
 import { deserializeGraphImage, serializeCompressedGraphImage } from "../../imageUtils";
 import { appendNodeInspectorLog, captureNodeInspectorState, withNodeInspector } from "./nodeInspector";
+import { NODE_ENABLED_PROPERTY } from "./nodeRuntimeControls";
+import { removeGraphNodeProgress, reportGraphNodeProgress } from "../../../models/graphProgress";
 
 interface ExecutionStats {
   signature: string;
@@ -18,6 +20,9 @@ interface ExecutionStats {
 }
 
 interface RuntimeNode {
+  id?: number;
+  title?: string;
+  type?: string;
   inputs?: Array<{ name?: string; type?: unknown }>;
   properties?: Record<string, unknown>;
   getInputData(slot: number): unknown;
@@ -41,6 +46,10 @@ interface RuntimeNode {
   job?: unknown;
   preview?: HTMLCanvasElement | null;
   refreshPreviewLayout?(): void;
+  outputs?: Array<{ name?: string; type?: unknown }>;
+  widgets?: Array<{ name?: string; value?: unknown; callback?: (...args: unknown[]) => void }>;
+  addWidget?(type: string, name: string, value: unknown, callback: (value: unknown) => void, options?: Record<string, unknown>): unknown;
+  graph?: { onGraphStateChange?: () => void };
 }
 
 const CAPABILITY = Symbol("base-node-capability");
@@ -51,6 +60,19 @@ const HISTORY_LIMIT = 8;
 const STORAGE_PREFIX = "plotterfun.node-duration.";
 const MIN_RECORDED_DURATION_MS = 0.01;
 const SERIALIZED_IMAGE_OUTPUTS_KEY = "__plotterfunCachedImageOutputs";
+function supportsBypass(node: RuntimeNode) {
+  return Boolean(node.inputs?.length && node.outputs?.length);
+}
+
+function isNodeEnabled(node: RuntimeNode) {
+  return node.properties?.[NODE_ENABLED_PROPERTY] !== false;
+}
+
+function ensureEnableControl(node: RuntimeNode) {
+  if (!supportsBypass(node)) return;
+  node.properties ??= {};
+  if (!(NODE_ENABLED_PROPERTY in node.properties)) node.properties[NODE_ENABLED_PROPERTY] = true;
+}
 
 function createExecutionStats(nodeType: string): ExecutionStats {
   return {
@@ -150,6 +172,12 @@ function nativeProgress(node: RuntimeNode) {
   return null;
 }
 
+function progressKey(node: RuntimeNode, nodeType: string) { return `${nodeType}:${node.id ?? "pending"}`; }
+function reportProgress(node: RuntimeNode, nodeType: string, state: ExecutionStats, status: "running" | "complete" | "cached" | "bypassed" | "error") {
+  const elapsedMs = state.running ? performance.now() - state.startedAt : state.elapsedMs;
+  reportGraphNodeProgress({ key: progressKey(node, nodeType), label: node.title || nodeType, progress: status === "running" ? state.progress : status === "error" ? state.progress : 1, status, elapsedMs: status === "bypassed" ? 0 : elapsedMs });
+}
+
 function drawProgress(node: RuntimeNode, context: CanvasRenderingContext2D, state: ExecutionStats) {
   const width = Math.max(80, node.size?.[0] ?? 160), barX = 8, barWidth = width - 16, barHeight = 5, y = 24;
   const elapsed = state.running ? performance.now() - state.startedAt : state.elapsedMs;
@@ -188,6 +216,7 @@ function finish(node: RuntimeNode, nodeType: string, state: ExecutionStats) {
     state.durations.push(state.elapsedMs); state.durations = state.durations.slice(-HISTORY_LIMIT); saveDurations(nodeType, state.durations);
   }
   node.setDirtyCanvas?.(true, true);
+  reportProgress(node, nodeType, state, "complete");
 }
 
 function waitForAsyncCompletion(node: RuntimeNode, nodeType: string, state: ExecutionStats) {
@@ -198,6 +227,7 @@ function waitForAsyncCompletion(node: RuntimeNode, nodeType: string, state: Exec
   state.elapsedMs = performance.now() - state.startedAt;
   const estimate = lastDuration(state.durations), reportedProgress = nativeProgress(node);
   state.progress = reportedProgress ?? (estimate > 0 ? Math.min(.95, state.elapsedMs / estimate) : Math.min(.9, state.progress + .02));
+  reportProgress(node, nodeType, state, "running");
   node.setDirtyCanvas?.(true, true);
   window.setTimeout(() => waitForAsyncCompletion(node, nodeType, state), 50);
 }
@@ -215,14 +245,29 @@ export function withBaseNodeCapabilities(nodeType: string, ctor: NodeCtor): Node
   const originalConfigure = prototype.onConfigure;
 
   prototype.onExecute = function(this: DecoratedNode) {
+    ensureEnableControl(this);
     captureNodeInspectorState(this);
     const state = this[CAPABILITY] ??= createExecutionStats(nodeType);
     if (!this[ORIGINAL_SET_OUTPUT]) {
       const setOutput = this.setOutputData.bind(this);
       this[ORIGINAL_SET_OUTPUT] = setOutput;
-      this.setOutputData = (slot: number, value: unknown) => { state.outputs.set(slot, value); setOutput(slot, value); };
+      this.setOutputData = (slot: number, value: unknown) => {
+        const nextValue = isNodeEnabled(this) ? value : slot === 0 ? this.getInputData(0) : null;
+        state.outputs.set(slot, nextValue); setOutput(slot, nextValue);
+      };
     }
     const setOutput = this[ORIGINAL_SET_OUTPUT];
+    if (!isNodeEnabled(this) && supportsBypass(this)) {
+      state.running = false; state.cached = false; state.hasResult = false; state.signature = ""; state.outputs.clear();
+      const input = this.getInputData(0);
+      for (let slot = 0; slot < (this.outputs?.length ?? 0); slot += 1) {
+        const value = slot === 0 ? input : null;
+        state.outputs.set(slot, value); setOutput(slot, value);
+      }
+      this.setDirtyCanvas?.(true, true);
+      reportProgress(this, nodeType, state, "bypassed");
+      return;
+    }
     const signature = executionSignature(this);
     if (state.running && asyncBusy(this)) {
       for (const [slot, value] of state.outputs) setOutput(slot, value);
@@ -237,20 +282,23 @@ export function withBaseNodeCapabilities(nodeType: string, ctor: NodeCtor): Node
       state.cached = true;
       for (const [slot, value] of state.outputs) setOutput(slot, value);
       this.setDirtyCanvas?.(true, true);
+      reportProgress(this, nodeType, state, "cached");
       return;
     }
     state.signature = signature; state.outputs.clear(); state.startedAt = performance.now(); state.elapsedMs = 0; state.progress = 0; state.running = true; state.cached = false; state.hasResult = false;
     state.initialExecutionMs = Number.isFinite(Number(this.executionMs)) ? Number(this.executionMs) : null;
     state.observedWork = false;
+    reportProgress(this, nodeType, state, "running");
     let result: unknown;
     try { result = originalExecute?.call(this); }
-    catch (error) { appendNodeInspectorLog(this, error); finish(this, nodeType, state); throw error; }
+    catch (error) { appendNodeInspectorLog(this, error); finish(this, nodeType, state); reportProgress(this, nodeType, state, "error"); throw error; }
     state.observedWork = asyncBusy(this);
-    if (result instanceof Promise) { state.observedWork = true; void result.then(() => finish(this, nodeType, state), error => { appendNodeInspectorLog(this, error); finish(this, nodeType, state); }); }
+    if (result instanceof Promise) { state.observedWork = true; void result.then(() => finish(this, nodeType, state), error => { appendNodeInspectorLog(this, error); finish(this, nodeType, state); reportProgress(this, nodeType, state, "error"); }); }
     else window.setTimeout(() => waitForAsyncCompletion(this, nodeType, state), 0);
     return result;
   };
   prototype.onDrawForeground = function(this: DecoratedNode, context: CanvasRenderingContext2D, ...args: unknown[]) {
+    ensureEnableControl(this);
     originalDrawForeground?.call(this, context, ...args);
     const state = this[CAPABILITY]; if (state) drawProgress(this, context, state);
   };
@@ -301,7 +349,7 @@ export function withBaseNodeCapabilities(nodeType: string, ctor: NodeCtor): Node
     }
   };
   prototype.onRemoved = function(this: DecoratedNode) {
-    originalRemoved?.call(this); const state = this[CAPABILITY]; if (state) state.running = false;
+    originalRemoved?.call(this); const state = this[CAPABILITY]; if (state) state.running = false; removeGraphNodeProgress(progressKey(this, nodeType));
   };
   return ctor;
 }

@@ -2,7 +2,10 @@ import { useEffect, useRef, useState } from "react";
 import type { ChangeEvent } from "react";
 import { LGraph, LGraphCanvas, LiteGraph } from "litegraph.js";
 import "litegraph.js/css/litegraph.css";
-import GraphToolbar from "./GraphToolbar";
+import TopBar from "./editorChrome/TopBar";
+import NodePaletteSidebar from "./editorChrome/NodePaletteSidebar";
+import { GRAPH_LAYOUT_SPACING } from "../models/editorChrome";
+import type { EditorCommandId, GraphLayoutMode } from "../models/editorChrome";
 import { registerImageNodes } from "../lib/registerImageNodes";
 import { drawActiveKleinStylePreviewOverlay } from "../lib/nodeRegistrations/tools/ai/klein/stylePreview/overlay";
 import { installKleinStyleMenuPreview } from "../lib/nodeRegistrations/tools/ai/klein/stylePreview/menuHover";
@@ -12,16 +15,36 @@ import {
   setPreviewWidth,
 } from "../lib/nodePreviewSettings";
 import sampleGraph from "../data/sample.json";
+import {
+  getProjectNameFromUrl,
+  listGraphProjects,
+  loadGraphProject,
+  saveGraphProject,
+  setProjectNameInUrl,
+  UNTITLED_PROJECT_NAME,
+} from "../models/graphProject";
 
 const GRAPH_STORAGE_KEY = "plotterfun.graph";
 const AUTO_SAVE_INTERVAL_MS = 60_000;
 const GRAPH_TICK_FAST_MS = 33;
 const GRAPH_TICK_MEDIUM_MS = 50;
 const GRAPH_TICK_SLOW_MS = 80;
+const GRAPH_LAYOUT_SPACING_KEY = "plotterfun.layoutSpacing";
+
+function getSavedLayoutSpacing() {
+  const saved = Number(localStorage.getItem(GRAPH_LAYOUT_SPACING_KEY));
+  return Number.isFinite(saved)
+    ? Math.min(GRAPH_LAYOUT_SPACING.max, Math.max(GRAPH_LAYOUT_SPACING.min, saved))
+    : GRAPH_LAYOUT_SPACING.default;
+}
 
 interface GraphNodeInstance {
+  id?: number;
+  _level?: number;
+  type?: string;
   pos: [number, number];
   size?: [number, number];
+  preview?: unknown;
   connect: (slot: number, targetNode: GraphNodeInstance, targetSlot: number) => void;
   refreshPreviewLayout?: () => void;
 }
@@ -32,6 +55,8 @@ interface GraphRuntime extends InstanceType<typeof LGraph> {
   onNodeRemoved?: () => void;
   onConnectionChange?: () => void;
   onGraphStateChange?: () => void;
+  arrange: (margin?: number, layout?: string) => void;
+  computeExecutionOrder: (onlyOnExecute: boolean, setLevel: boolean) => GraphNodeInstance[];
 }
 
 interface GraphCanvasRuntime extends InstanceType<typeof LGraphCanvas> {
@@ -49,6 +74,10 @@ interface GraphCanvasRuntime extends InstanceType<typeof LGraphCanvas> {
   clear_background_color?: string;
   background_image?: string;
   default_link_color?: string;
+  copyToClipboard: () => void;
+  pasteFromClipboard: () => void;
+  deleteSelectedNodes: () => void;
+  selected_nodes: Record<number, GraphNodeInstance>;
 }
 
 interface SerializedGraph {
@@ -130,6 +159,9 @@ function GraphEditor() {
   const autoSaveIntervalRef = useRef<number | null>(null);
   const previewWidthBounds = getPreviewWidthBounds();
   const [previewWidthValue, setPreviewWidthValue] = useState(getPreviewWidth());
+  const [paletteOpen, setPaletteOpen] = useState(true);
+  const [projectName, setProjectName] = useState(() => getProjectNameFromUrl() || UNTITLED_PROJECT_NAME);
+  const [layoutSpacing, setLayoutSpacing] = useState(getSavedLayoutSpacing);
   const [statusMessage, setStatusMessage] = useState(
     "Create nodes from the toolbar or from the LiteGraph context menu.",
   );
@@ -312,7 +344,20 @@ function GraphEditor() {
   };
 
   const saveGraph = () => {
-    persistGraph("Graph saved to localStorage.");
+    const requestedName = window.prompt("Nome del progetto", projectName === UNTITLED_PROJECT_NAME ? "" : projectName);
+    if (requestedName === null) return;
+    const serialized = serializeGraphWithViewport();
+    if (!serialized) return;
+    try {
+      const project = saveGraphProject(requestedName, serialized);
+      setProjectName(project.name);
+      setProjectNameInUrl(project.name);
+      document.title = `${project.name} · Plotterfun`;
+      localStorage.setItem(GRAPH_STORAGE_KEY, JSON.stringify(serialized));
+      setStatusMessage(`Progetto “${project.name}” salvato.`);
+    } catch {
+      setStatusMessage("Inserisci un nome valido per salvare il progetto.");
+    }
   };
 
   const loadGraphFromData = (serializedGraph: SerializedGraph, message: string) => {
@@ -330,18 +375,27 @@ function GraphEditor() {
     persistGraph(message);
   };
 
-  const loadGraph = () => {
-    const rawGraph = localStorage.getItem(GRAPH_STORAGE_KEY);
-    if (!rawGraph) {
-      setStatusMessage("No saved graph found in localStorage.");
-      return;
+  const loadProjectByName = (name: string) => {
+    const project = loadGraphProject<SerializedGraph>(name);
+    if (!project) {
+      setStatusMessage(`Progetto “${name}” non trovato.`);
+      return false;
     }
+    loadGraphFromData(project.graph, `Progetto “${project.name}” caricato.`);
+    setProjectName(project.name);
+    setProjectNameInUrl(project.name);
+    document.title = `${project.name} · Plotterfun`;
+    return true;
+  };
 
-    try {
-      loadGraphFromData(JSON.parse(rawGraph) as SerializedGraph, "Saved graph loaded.");
-    } catch {
-      setStatusMessage("Saved graph is not valid JSON.");
-    }
+  const loadGraph = () => {
+    const projects = listGraphProjects();
+    const suggestion = projectName !== UNTITLED_PROJECT_NAME ? projectName : projects[0] ?? "";
+    const requestedName = window.prompt(
+      projects.length ? `Nome del progetto\nDisponibili: ${projects.join(", ")}` : "Nome del progetto",
+      suggestion,
+    );
+    if (requestedName !== null) loadProjectByName(requestedName);
   };
 
   const exportGraph = () => {
@@ -356,7 +410,8 @@ function GraphEditor() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = "plotterfun-graph.json";
+    const safeProjectName = projectName.replace(/[^a-z0-9_-]+/gi, "-").replace(/^-|-$/g, "") || "plotterfun-graph";
+    link.download = `${safeProjectName}.json`;
     link.click();
     URL.revokeObjectURL(url);
     setStatusMessage("Graph JSON exported.");
@@ -365,6 +420,168 @@ function GraphEditor() {
   const importGraph = () => {
     importInputRef.current?.click();
   };
+
+  const copySelectedNodes = () => {
+    const graphCanvas = graphCanvasRef.current;
+    const count = Object.keys(graphCanvas?.selected_nodes ?? {}).length;
+    if (!graphCanvas || count === 0) {
+      setStatusMessage("Seleziona almeno un nodo da copiare.");
+      return;
+    }
+    graphCanvas.copyToClipboard();
+    setStatusMessage(`${count} ${count === 1 ? "nodo copiato" : "nodi copiati"}.`);
+  };
+
+  const pasteNodes = () => {
+    const graphCanvas = graphCanvasRef.current;
+    if (!graphCanvas || !localStorage.getItem("litegrapheditor_clipboard")) {
+      setStatusMessage("Gli appunti dei nodi sono vuoti.");
+      return;
+    }
+    graphCanvas.pasteFromClipboard();
+    restartGraphWithAdaptiveTick();
+    refreshCanvas();
+    persistGraph("Nodo incollato.");
+  };
+
+  const cutSelectedNodes = () => {
+    const graphCanvas = graphCanvasRef.current;
+    const count = Object.keys(graphCanvas?.selected_nodes ?? {}).length;
+    if (!graphCanvas || count === 0) {
+      setStatusMessage("Seleziona almeno un nodo da tagliare.");
+      return;
+    }
+    graphCanvas.copyToClipboard();
+    graphCanvas.deleteSelectedNodes();
+    restartGraphWithAdaptiveTick();
+    refreshCanvas();
+    persistGraph(`${count} ${count === 1 ? "nodo tagliato" : "nodi tagliati"}.`);
+  };
+
+  const runCommand = (command: EditorCommandId) => {
+    const actions: Record<EditorCommandId, () => void> = {
+      save: saveGraph,
+      load: loadGraph,
+      export: exportGraph,
+      import: importGraph,
+      fit: fitView,
+      reset: () => resetGraph(),
+      copy: copySelectedNodes,
+      paste: pasteNodes,
+      cut: cutSelectedNodes,
+    };
+    actions[command]();
+  };
+
+  const applyGraphLayout = (mode: GraphLayoutMode) => {
+    const graph = graphRef.current;
+    if (!graph?._nodes?.length) {
+      setStatusMessage("Il grafo non contiene nodi da organizzare.");
+      return;
+    }
+
+    if (mode === "hierarchical-horizontal") {
+      graph.arrange(layoutSpacing);
+    } else if (mode === "hierarchical-vertical") {
+      graph.arrange(layoutSpacing, LiteGraph.VERTICAL_LAYOUT);
+    } else if (mode === "tree") {
+      const orderedNodes = graph.computeExecutionOrder(false, true);
+      const levels = new Map<number, GraphNodeInstance[]>();
+      orderedNodes.forEach((node) => {
+        const level = node._level ?? 1;
+        levels.set(level, [...(levels.get(level) ?? []), node]);
+      });
+      const levelEntries = [...levels.entries()].sort(([a], [b]) => a - b);
+      const maxLevelHeight = Math.max(...levelEntries.map(([, nodes]) =>
+        nodes.reduce((height, node) => height + (node.size?.[1] ?? 120) + layoutSpacing, 0),
+      ));
+      let x = 80;
+      levelEntries.forEach(([, nodes]) => {
+        const levelHeight = nodes.reduce((height, node) => height + (node.size?.[1] ?? 120) + layoutSpacing, 0);
+        let y = 60 + Math.max(0, (maxLevelHeight - levelHeight) / 2);
+        let maxWidth = 160;
+        nodes.forEach((node) => {
+          node.pos = [x, y];
+          y += (node.size?.[1] ?? 120) + layoutSpacing;
+          maxWidth = Math.max(maxWidth, node.size?.[0] ?? 160);
+        });
+        x += maxWidth + layoutSpacing;
+      });
+    } else {
+      const nodes = [...graph._nodes].sort((a, b) => (a.type ?? "").localeCompare(b.type ?? "", "it"));
+      const columns = Math.max(1, Math.ceil(Math.sqrt(nodes.length)));
+      const columnWidths = Array.from({ length: columns }, () => 180);
+      nodes.forEach((node, index) => {
+        const column = index % columns;
+        columnWidths[column] = Math.max(columnWidths[column], node.size?.[0] ?? 160);
+      });
+      const columnX = columnWidths.map((_, index) => 70 + columnWidths.slice(0, index).reduce((sum, width) => sum + width + layoutSpacing, 0));
+      const rowHeights: number[] = [];
+      nodes.forEach((node, index) => {
+        const row = Math.floor(index / columns);
+        rowHeights[row] = Math.max(rowHeights[row] ?? 0, node.size?.[1] ?? 120);
+      });
+      nodes.forEach((node, index) => {
+        const column = index % columns;
+        const row = Math.floor(index / columns);
+        const y = 60 + rowHeights.slice(0, row).reduce((sum, height) => sum + height + layoutSpacing, 0);
+        node.pos = [columnX[column], y];
+      });
+    }
+
+    refreshCanvas();
+    fitView();
+    persistGraph(`Nodi riorganizzati: ${mode}.`);
+  };
+
+  const updateLayoutSpacing = (spacing: number) => {
+    const nextSpacing = Math.min(
+      GRAPH_LAYOUT_SPACING.max,
+      Math.max(GRAPH_LAYOUT_SPACING.min, Number.isFinite(spacing) ? spacing : GRAPH_LAYOUT_SPACING.default),
+    );
+    setLayoutSpacing(nextSpacing);
+    localStorage.setItem(GRAPH_LAYOUT_SPACING_KEY, String(nextSpacing));
+  };
+
+  const getNodePreview = (type: string) => {
+    const matchingNodes = (graphRef.current?._nodes ?? []).filter((node) => node.type === type).reverse();
+    for (const node of matchingNodes) {
+      const source = node.preview;
+      try {
+        if (source instanceof HTMLCanvasElement) return source.toDataURL("image/jpeg", 0.72);
+        if (source instanceof HTMLImageElement) return source.currentSrc || source.src || null;
+        if (source instanceof ImageData) {
+          const canvas = document.createElement("canvas");
+          canvas.width = source.width;
+          canvas.height = source.height;
+          canvas.getContext("2d")?.putImageData(source, 0, 0);
+          return canvas.toDataURL("image/jpeg", 0.72);
+        }
+      } catch {
+        // A tainted or unavailable source simply has no sidebar thumbnail.
+      }
+    }
+    return null;
+  };
+
+  useEffect(() => {
+    const onEditorShortcut = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target?.matches("input, textarea, select, [contenteditable='true']")) return;
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
+        event.preventDefault();
+        saveGraph();
+      } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "x") {
+        event.preventDefault();
+        cutSelectedNodes();
+      } else if (!event.ctrlKey && !event.metaKey && event.key.toLowerCase() === "f") {
+        event.preventDefault();
+        fitView();
+      }
+    };
+    window.addEventListener("keydown", onEditorShortcut);
+    return () => window.removeEventListener("keydown", onEditorShortcut);
+  });
 
   const onImportFileChange = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -430,9 +647,29 @@ function GraphEditor() {
       };
     }
 
+    const requestedProjectName = getProjectNameFromUrl();
+    const requestedProject = requestedProjectName
+      ? loadGraphProject<SerializedGraph>(requestedProjectName)
+      : null;
     const savedGraph = localStorage.getItem(GRAPH_STORAGE_KEY);
     let initialViewportState: SerializedViewportState | null = null;
-    if (savedGraph) {
+    if (requestedProject) {
+      graph.configure(requestedProject.graph);
+      initialViewportState = extractViewportFromSerializedGraph(requestedProject.graph);
+      setProjectName(requestedProject.name);
+      document.title = `${requestedProject.name} · Plotterfun`;
+      setStatusMessage(`Progetto “${requestedProject.name}” aperto dal link.`);
+    } else if (requestedProjectName) {
+      try {
+        const serialized = sampleGraph as SerializedGraph;
+        graph.configure(serialized);
+        initialViewportState = extractViewportFromSerializedGraph(serialized);
+        setStatusMessage(`Progetto “${requestedProjectName}” non trovato. Caricato il grafo di esempio.`);
+      } catch {
+        createDefaultGraph(graph);
+        setStatusMessage(`Progetto “${requestedProjectName}” non trovato.`);
+      }
+    } else if (savedGraph) {
       try {
         const serialized = JSON.parse(savedGraph) as SerializedGraph;
         graph.configure(serialized);
@@ -501,21 +738,32 @@ function GraphEditor() {
 
   return (
     <section className="editor-panel">
-      <GraphToolbar
+      <TopBar
         onAddNode={addNode}
-        onExportGraph={exportGraph}
-        onFitView={fitView}
-        onImportGraph={importGraph}
-        onLoadGraph={loadGraph}
-        onPreviewWidthChange={updatePreviewWidth}
-        onResetGraph={() => resetGraph()}
-        onSaveGraph={saveGraph}
-        previewWidth={previewWidthValue}
-        previewWidthMax={previewWidthBounds.max}
-        previewWidthMin={previewWidthBounds.min}
+        onCommand={runCommand}
+        onLayout={applyGraphLayout}
+        layoutSpacing={layoutSpacing}
+        onLayoutSpacingChange={updateLayoutSpacing}
+        onWorkImageSizeChange={updatePreviewWidth}
+        workImageSize={previewWidthValue}
+        workImageSizeMax={previewWidthBounds.max}
+        workImageSizeMin={previewWidthBounds.min}
+        workImageSizeStep={previewWidthBounds.step}
+        onTogglePalette={() => setPaletteOpen((open) => !open)}
+        paletteOpen={paletteOpen}
+        projectName={projectName}
         statusMessage={statusMessage}
       />
-      <canvas className="editor-stage" ref={canvasRef} />
+      <div className="editor-workspace">
+        {paletteOpen && (
+          <NodePaletteSidebar
+            getNodePreview={getNodePreview}
+            onAddNode={addNode}
+            onClose={() => setPaletteOpen(false)}
+          />
+        )}
+        <canvas className="editor-stage" ref={canvasRef} />
+      </div>
       <input
         accept="application/json"
         className="visually-hidden"
