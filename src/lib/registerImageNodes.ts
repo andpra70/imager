@@ -228,6 +228,9 @@ export function registerImageNodes() {
   registerLinesartToolNodes(registerNodeType, linesartToolCtors);
 
   registerGcodeToolNodes(registerNodeType, {
+    BaseGcodeToolNode: gcodeToolCtors.BaseGcodeToolNode,
+    Base2GcodeToolNode: gcodeToolCtors.Base2GcodeToolNode,
+    Svg2Gcode2ToolNode: gcodeToolCtors.Svg2Gcode2ToolNode,
     SvgToGcodeToolNode: gcodeToolCtors.SvgToGcodeToolNode,
     GcodeViewerToolNode: gcodeToolCtors.GcodeViewerToolNode,
     GcodeCncToolNode: gcodeToolCtors.GcodeCncToolNode,

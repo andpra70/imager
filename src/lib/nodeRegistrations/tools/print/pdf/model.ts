@@ -1,3 +1,5 @@
+import type { GraphImage } from "../../../../../models/graphImage";
+
 export type PdfPageFormat = "a3" | "a4" | "a5" | "letter" | "legal" | "photo-10x15";
 export type PdfOrientation = "auto" | "portrait" | "landscape";
 export type PdfImageFit = "contain" | "cover";
@@ -16,6 +18,8 @@ export interface GraphPdfData {
   mimeType: "application/pdf";
   fileName: string;
   blob: Blob;
+  pageSvg: string;
+  preview: GraphImage;
   options: PdfPrintOptions;
   page: { widthMm: number; heightMm: number };
   source: { type: "image" | "svg"; vector: boolean; width: number; height: number };

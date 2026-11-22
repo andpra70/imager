@@ -12,6 +12,9 @@ export interface SvgToGcodeOptions {
   closePaths: boolean;
   includeHeader: boolean;
   decimals: number;
+  toolsColors?: boolean;
+  pressure?: boolean;
+  pressureLevels?: number;
 }
 
 export interface SvgToGcodeStats {
@@ -37,7 +40,7 @@ export const svgToGcodeDefaults: SvgToGcodeOptions = {
   travelFeedRate: 3000,
   safeZ: 5,
   drawZ: 0,
-  closePaths: true,
+  closePaths: false,
   includeHeader: true,
   decimals: 3,
 };

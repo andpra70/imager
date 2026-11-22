@@ -3,6 +3,9 @@ import type { NodeCtor, PreviewAwareNode } from "../../shared";
 import { clamp, createToolTitle, formatExecutionInfo, notifyGraphStateChange } from "../shared";
 import { type SvgToGcodeOptions, svgToGcodeDefaults } from "./model";
 import { startSvgToGcodeWorker, type GcodeWorkerJob } from "./svgToGcodeWorkerClient";
+import { flattenSvgPaint } from "./svg2gcode2/paint";
+import { cncStrokeStyle, type CncPressureRange, type CncStrokeSettings } from "./cncPreviewStyle";
+import { getCncPreviewLayout } from "./cncPreviewLayout";
 
 interface GcodeConverterPayload {
   family: "gcode";
@@ -44,6 +47,9 @@ function normalizeConverterOptions(properties: Record<string, unknown>): SvgToGc
     closePaths: Boolean(properties.closePaths ?? svgToGcodeDefaults.closePaths),
     includeHeader: Boolean(properties.includeHeader ?? svgToGcodeDefaults.includeHeader),
     decimals: clamp(Math.round(Number(properties.decimals ?? svgToGcodeDefaults.decimals)), 0, 6),
+    toolsColors: Boolean(properties.toolsColors),
+    pressure: Boolean(properties.pressure),
+    pressureLevels: clamp(Math.round(Number(properties.pressureLevels ?? 8)), 2, 256),
   };
 }
 
@@ -235,7 +241,7 @@ export class SvgToGcodeToolNode {
 
     if (signature !== this.lastQueuedSignature) {
       this.lastQueuedSignature = signature;
-      this.pendingSvg = svg;
+      this.pendingSvg = options.toolsColors || options.pressure ? flattenSvgPaint(svg) : svg;
       this.pendingOptions = options;
       this.gcode = "";
       this.payload = null;
@@ -453,12 +459,15 @@ interface CncSegment {
   feedRate: number;
   startTimeSec: number;
   endTimeSec: number;
+  tool: number | null;
+  color: string | null;
 }
 
 interface CncProgram {
   segments: CncSegment[];
   totalTimeSec: number;
   commandCount: number;
+  pressureRange: CncPressureRange;
   bounds: {
     minX: number;
     minY: number;
@@ -478,6 +487,10 @@ function parseGcodeProgram(gcode: GraphGcode): CncProgram {
   let feedRate = 1200;
   let timeCursorSec = 0;
   let bounds: CncProgram["bounds"] = null;
+  let activeTool: number | null = null;
+  const toolColors = new Map<number, string>();
+  let pressureRange: CncPressureRange | null = null;
+  let minZ = Infinity, maxZ = -Infinity;
 
   const updateBounds = (point: CncPoint) => {
     if (!bounds) {
@@ -498,6 +511,10 @@ function parseGcodeProgram(gcode: GraphGcode): CncProgram {
   updateBounds({ x, y });
 
   for (const rawLine of lines) {
+    const toolColor = rawLine.match(/;\s*tool\s+T(\d+)\s+color\s+(#[0-9a-f]{3,6})\b/i);
+    if (toolColor) toolColors.set(Number(toolColor[1]), normalizeHexColor(toolColor[2], "#000000"));
+    const pressureComment = rawLine.match(/;\s*pressure\s+drawZ\s+([-+\d.]+)\s+safeZ\s+([-+\d.]+)/i);
+    if (pressureComment) pressureRange = { drawZ: Number(pressureComment[1]), safeZ: Number(pressureComment[2]) };
     const cleanLine = rawLine.replace(/\(.*?\)/g, "");
     const commandText = cleanLine.split(";")[0].trim().toUpperCase();
     if (!commandText) {
@@ -527,6 +544,8 @@ function parseGcodeProgram(gcode: GraphGcode): CncProgram {
         nextZ = value;
       } else if (code === "F") {
         nextFeed = value;
+      } else if (code === "T") {
+        activeTool = Math.round(value);
       }
     }
 
@@ -551,6 +570,8 @@ function parseGcodeProgram(gcode: GraphGcode): CncProgram {
     const targetX = nextX === null ? x : absoluteMode ? nextX : x + nextX;
     const targetY = nextY === null ? y : absoluteMode ? nextY : y + nextY;
     const targetZ = nextZ === null ? z : absoluteMode ? nextZ : z + nextZ;
+    minZ = Math.min(minZ, targetZ);
+    maxZ = Math.max(maxZ, targetZ);
 
     const dx = targetX - x;
     const dy = targetY - y;
@@ -569,6 +590,8 @@ function parseGcodeProgram(gcode: GraphGcode): CncProgram {
         feedRate: moveFeed,
         startTimeSec: timeCursorSec,
         endTimeSec: timeCursorSec + durationSec,
+        tool: activeTool,
+        color: activeTool === null ? null : toolColors.get(activeTool) ?? null,
       };
       segments.push(segment);
       updateBounds(segment.start);
@@ -585,6 +608,7 @@ function parseGcodeProgram(gcode: GraphGcode): CncProgram {
     segments,
     totalTimeSec: timeCursorSec,
     commandCount,
+    pressureRange: pressureRange ?? { drawZ: Number.isFinite(minZ) ? minZ : 0, safeZ: Number.isFinite(maxZ) ? maxZ : 5 },
     bounds,
   };
 }
@@ -644,11 +668,13 @@ export class GcodeCncToolNode {
       showTravelMoves: true,
       invertX: false,
       invertY: false,
-      bgColor: "#000000",
-      traceColor: "#00AA00",
-      travelColor: "#303030",
+      bgColor: "#FFFFFF",
+      traceColor: "#000000",
+      travelColor: "#D0D0D0",
       drawWidth: 1.4,
       travelWidth: 0.8,
+      toolsColors: false,
+      pressure: false,
     };
     node.addInput("gcode", "gcode");
     node.addOutput("gcode", "gcode");
@@ -688,6 +714,16 @@ export class GcodeCncToolNode {
       notifyGraphStateChange(node);
     });
 
+    node.addWidget("toggle", "Tools=colors", false, value => {
+      node.properties.toolsColors = Boolean(value);
+      notifyGraphStateChange(node);
+    });
+
+    node.addWidget("toggle", "Pressure", false, value => {
+      node.properties.pressure = Boolean(value);
+      notifyGraphStateChange(node);
+    });
+
     node.addWidget("toggle", "Invert X", false, (value) => {
       node.properties.invertX = Boolean(value);
       notifyGraphStateChange(node);
@@ -698,18 +734,18 @@ export class GcodeCncToolNode {
       notifyGraphStateChange(node);
     });
 
-    node.addWidget("text", "BG color", "#000000", (value) => {
-      node.properties.bgColor = normalizeHexColor(value, "#000000");
+    node.addWidget("text", "BG color", "#FFFFFF", (value) => {
+      node.properties.bgColor = normalizeHexColor(value, "#FFFFFF");
       notifyGraphStateChange(node);
     });
 
-    node.addWidget("text", "Trace color", "#00AA00", (value) => {
-      node.properties.traceColor = normalizeHexColor(value, "#00AA00");
+    node.addWidget("text", "Trace color", "#000000", (value) => {
+      node.properties.traceColor = normalizeHexColor(value, "#000000");
       notifyGraphStateChange(node);
     });
 
-    node.addWidget("text", "Travel color", "#303030", (value) => {
-      node.properties.travelColor = normalizeHexColor(value, "#303030");
+    node.addWidget("text", "Travel color", "#D0D0D0", (value) => {
+      node.properties.travelColor = normalizeHexColor(value, "#D0D0D0");
       notifyGraphStateChange(node);
     });
 
@@ -724,6 +760,8 @@ export class GcodeCncToolNode {
     }, { min: 0.2, max: 6, step: 0.1, precision: 1 });
 
     node.refreshPreviewLayout = () => {
+      const layout = getCncPreviewLayout(node.widgets?.length ?? 0, node.program?.bounds ?? null);
+      node.size = layout.size;
       node.setDirtyCanvas(true, true);
     };
     node.refreshPreviewLayout();
@@ -863,19 +901,16 @@ export class GcodeCncToolNode {
   }
 
   onDrawBackground(this: PreviewAwareNode & GcodeCncToolNode, context: CanvasRenderingContext2D) {
-    const padding = 10;
-    const headerHeight = 34 + (this.widgets?.length ?? 0) * 28;
-    const footerLines = 7;
-    const footerHeight = footerLines * 16 + 14;
-    const plotLeft = padding;
-    const plotTop = headerHeight;
-    const plotWidth = this.size[0] - padding * 2;
-    const plotHeight = Math.max(120, this.size[1] - headerHeight - footerHeight - 8);
+    const { plotLeft, plotTop, plotWidth, plotHeight, size } = getCncPreviewLayout(
+      this.widgets?.length ?? 0,
+      this.program?.bounds ?? null,
+    );
+    if (this.size[0] !== size[0] || this.size[1] !== size[1]) this.size = size;
 
     context.save();
-    const bgColor = normalizeHexColor(this.properties.bgColor, "#000000");
-    const traceColor = normalizeHexColor(this.properties.traceColor, "#00AA00");
-    const travelColor = normalizeHexColor(this.properties.travelColor, "#303030");
+    const bgColor = this.properties.toolsColors || this.properties.pressure ? "#FFFFFF" : normalizeHexColor(this.properties.bgColor, "#FFFFFF");
+    const traceColor = normalizeHexColor(this.properties.traceColor, "#000000");
+    const travelColor = normalizeHexColor(this.properties.travelColor, "#D0D0D0");
 
     context.fillStyle = bgColor;
     context.fillRect(plotLeft, plotTop, plotWidth, plotHeight);
@@ -893,6 +928,13 @@ export class GcodeCncToolNode {
       const invertY = Boolean(this.properties.invertY ?? false);
       const drawWidth = clamp(Number(this.properties.drawWidth ?? 1.4), 0.3, 8);
       const travelWidth = clamp(Number(this.properties.travelWidth ?? 0.8), 0.2, 6);
+      const strokeSettings: CncStrokeSettings = {
+        toolsColors: Boolean(this.properties.toolsColors),
+        pressure: Boolean(this.properties.pressure),
+        traceColor, travelColor, drawWidth, travelWidth,
+        penDownThreshold, showTravelMoves,
+        pressureRange: this.program.pressureRange,
+      };
 
       const project = (point: CncPoint) => {
         const transformedX = invertX ? bounds.maxX - (point.x - bounds.minX) : point.x;
@@ -906,15 +948,13 @@ export class GcodeCncToolNode {
       const completedCount = Math.min(this.currentSegmentIndex, this.program.segments.length);
       for (let index = 0; index < completedCount; index += 1) {
         const segment = this.program.segments[index];
-        const penDown = Math.min(segment.startZ, segment.endZ) <= penDownThreshold;
-        if (!penDown && !showTravelMoves) {
-          continue;
-        }
+        const stroke = cncStrokeStyle(segment, strokeSettings);
+        if (!stroke) continue;
         const start = project(segment.start);
         const end = project(segment.end);
         context.beginPath();
-        context.lineWidth = penDown ? drawWidth : travelWidth;
-        context.strokeStyle = penDown ? traceColor : travelColor;
+        context.lineWidth = stroke.width;
+        context.strokeStyle = stroke.color;
         context.moveTo(start.x, start.y);
         context.lineTo(end.x, end.y);
         context.stroke();
@@ -931,16 +971,17 @@ export class GcodeCncToolNode {
           y: segment.start.y + (segment.end.y - segment.start.y) * t,
         };
         const currentZ = segment.startZ + (segment.endZ - segment.startZ) * t;
-        penDown = currentZ <= penDownThreshold;
+        penDown = strokeSettings.pressure ? !segment.rapid && currentZ < this.program.pressureRange.safeZ : !segment.rapid && currentZ <= penDownThreshold;
         feedRate = segment.feedRate;
         penPoint = partialPoint;
 
-        if (t > 0 && (penDown || showTravelMoves)) {
+        const stroke = cncStrokeStyle({ ...segment, endZ: currentZ }, strokeSettings);
+        if (t > 0 && stroke) {
           const start = project(segment.start);
           const partial = project(partialPoint);
           context.beginPath();
-          context.lineWidth = penDown ? drawWidth : travelWidth;
-          context.strokeStyle = penDown ? traceColor : travelColor;
+          context.lineWidth = stroke.width;
+          context.strokeStyle = stroke.color;
           context.moveTo(start.x, start.y);
           context.lineTo(partial.x, partial.y);
           context.stroke();

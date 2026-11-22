@@ -144,9 +144,25 @@ async function generatePdf(source: GraphImage, svg: GraphSvg | null, options: Pd
   const scale = svg || options.fit === "contain" ? Math.min(availableWidth / source.width, availableHeight / source.height) : Math.max(availableWidth / source.width, availableHeight / source.height);
   const drawWidth = source.width * scale, drawHeight = source.height * scale;
   const drawX = (pageWidth - drawWidth) / 2, drawY = (pageHeight - drawHeight) / 2;
+  let pageSvg: string;
   if (svg) {
     await import("svg2pdf.js");
     const vectorRoot = createFittedSvgForPdf(svg, source.width, source.height, pageWidth, pageHeight, drawX, drawY, drawWidth, drawHeight);
+    const svgRoot = vectorRoot.cloneNode(true) as SVGSVGElement;
+    const clip = svgRoot.ownerDocument.createElementNS("http://www.w3.org/2000/svg", "clipPath");
+    clip.setAttribute("id", "pdf-page-clip");
+    const clipRect = svgRoot.ownerDocument.createElementNS("http://www.w3.org/2000/svg", "rect");
+    clipRect.setAttribute("x", String(margin)); clipRect.setAttribute("y", String(margin));
+    clipRect.setAttribute("width", String(availableWidth)); clipRect.setAttribute("height", String(availableHeight));
+    clip.appendChild(clipRect);
+    const defs = svgRoot.ownerDocument.createElementNS("http://www.w3.org/2000/svg", "defs");
+    defs.appendChild(clip); svgRoot.insertBefore(defs, svgRoot.firstChild);
+    const pageClip = svgRoot.ownerDocument.createElementNS("http://www.w3.org/2000/svg", "g");
+    pageClip.setAttribute("clip-path", "url(#pdf-page-clip)");
+    const content = svgRoot.lastElementChild;
+    if (content && content !== defs) pageClip.appendChild(content);
+    svgRoot.appendChild(pageClip);
+    pageSvg = new XMLSerializer().serializeToString(svgRoot);
     pdfDocument.saveGraphicsState();
     pdfDocument.rect(margin, margin, availableWidth, availableHeight);
     pdfDocument.clip();
@@ -154,14 +170,17 @@ async function generatePdf(source: GraphImage, svg: GraphSvg | null, options: Pd
     await pdfDocument.svg(vectorRoot, { x: 0, y: 0, width: pageWidth, height: pageHeight, loadImages: true });
     pdfDocument.restoreGraphicsState();
   } else {
+    const imageData = opaqueJpegData(printableSource, options.jpegQuality);
+    pageSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="${pageWidth}mm" height="${pageHeight}mm" viewBox="0 0 ${pageWidth} ${pageHeight}"><defs><clipPath id="page-clip"><rect x="${margin}" y="${margin}" width="${availableWidth}" height="${availableHeight}"/></clipPath></defs><g clip-path="url(#page-clip)"><image x="${drawX}" y="${drawY}" width="${drawWidth}" height="${drawHeight}" href="${imageData}"/></g></svg>`;
     pdfDocument.saveGraphicsState(); pdfDocument.rect(margin, margin, availableWidth, availableHeight); pdfDocument.clip(); pdfDocument.discardPath();
-    pdfDocument.addImage(opaqueJpegData(printableSource, options.jpegQuality), "JPEG", drawX, drawY, drawWidth, drawHeight, undefined, "FAST"); pdfDocument.restoreGraphicsState();
+    pdfDocument.addImage(imageData, "JPEG", drawX, drawY, drawWidth, drawHeight, undefined, "FAST"); pdfDocument.restoreGraphicsState();
   }
   const blob = pdfDocument.output("blob");
   const fileName = `plotterfun-${options.pageFormat}-${orientation}.pdf`;
+  const preview = createPagePreview(printableSource, pageWidth, pageHeight, margin, drawX, drawY, drawWidth, drawHeight);
   return {
-    preview: createPagePreview(printableSource, pageWidth, pageHeight, margin, drawX, drawY, drawWidth, drawHeight),
-    data: { task: "document-to-pdf", mimeType: "application/pdf", fileName, blob, options: { ...options }, page: { widthMm: pageWidth, heightMm: pageHeight }, source: { type: svg ? "svg" : "image", vector: Boolean(svg), width: source.width, height: source.height }, bytes: blob.size, generatedAtIso: new Date().toISOString() },
+    preview,
+    data: { task: "document-to-pdf", mimeType: "application/pdf", fileName, blob, pageSvg, preview, options: { ...options }, page: { widthMm: pageWidth, heightMm: pageHeight }, source: { type: svg ? "svg" : "image", vector: Boolean(svg), width: source.width, height: source.height }, bytes: blob.size, generatedAtIso: new Date().toISOString() },
   };
 }
 
