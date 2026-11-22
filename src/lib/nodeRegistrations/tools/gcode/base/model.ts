@@ -1,3 +1,5 @@
+import { MAX_HATCH_LAYERS } from "./hatchLayers";
+
 export interface BaseGcodeOptions {
   width: number; height: number; margin: number; resolution: number;
   white: number; protect: number; step: number; layers: number; angle: number;
@@ -17,6 +19,6 @@ export const baseGcodeDefaults: BaseGcodeOptions = {
 };
 export function validateBaseGcodeOptions(c: BaseGcodeOptions) {
   if (Object.values(c).some(value => typeof value === "number" && !Number.isFinite(value))) throw Error("Parametri numerici non validi");
-  if (c.width <= 2 * c.margin || c.height <= 2 * c.margin || c.resolution <= 0 || c.step <= 0 || c.zStep <= 0 || c.minLength <= 0 || c.feed <= 0 || c.feedZ <= 0 || c.layers < 1 || c.layers > 3 || c.maxPaths < 1 || c.handWobble < 0 || c.handWobble > 2 || c.handScale <= 0) throw Error("Dimensioni o velocità non valide");
+  if (c.width <= 2 * c.margin || c.height <= 2 * c.margin || c.resolution <= 0 || c.step <= 0 || c.zStep <= 0 || c.minLength <= 0 || c.feed <= 0 || c.feedZ <= 0 || !Number.isInteger(c.layers) || c.layers < 1 || c.layers > MAX_HATCH_LAYERS || c.maxPaths < 1 || c.handWobble < 0 || c.handWobble > 2 || c.handScale <= 0) throw Error("Dimensioni o velocità non valide");
   if (c.lightZ > 0 || c.darkZ > c.lightZ || -c.darkZ >= c.spring || c.safeZ <= 0) throw Error("Quote Z non valide");
 }

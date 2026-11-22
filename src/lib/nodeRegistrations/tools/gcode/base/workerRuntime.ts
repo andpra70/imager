@@ -1,6 +1,7 @@
 import type { BaseGcodeRequest, BaseGcodeResult } from "./model";
 import { validateBaseGcodeOptions } from "./model";
 import { humanizePaths } from "./humanize";
+import { HATCH_ANGLES, quantizeTone } from "./hatchLayers";
 type Point = [number, number];
 type Path = Point[];
 const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
@@ -9,12 +10,13 @@ const distance = (a: Point, b: Point) => Math.hypot(a[0] - b[0], a[1] - b[1]);
 export function generateBaseGcode({ pixels, width: w, height: h, options: c }: BaseGcodeRequest): BaseGcodeResult {
   validateBaseGcodeOptions(c);
   if (pixels.length !== w * h * 4 || w < 2 || h < 2 || w * h > 2_500_000) throw Error("Raster non valido");
-  const dark = new Float32Array(w * h), ink = new Uint8Array(w * h), allowed = new Uint8Array(w * h);
+  const dark = new Float32Array(w * h), tones = new Uint8Array(w * h), ink = new Uint8Array(w * h), allowed = new Uint8Array(w * h);
   for (let i = 0; i < w * h; i++) {
     const alpha = pixels[4 * i + 3] / 255;
     const luminance = (0.2126 * pixels[4 * i] + 0.7152 * pixels[4 * i + 1] + 0.0722 * pixels[4 * i + 2]) * alpha + 255 * (1 - alpha);
     dark[i] = clamp((255 - luminance) / 255, 0, 1);
-    ink[i] = alpha >= 0.125 && luminance < c.white ? 1 : 0;
+    tones[i] = quantizeTone(luminance, alpha, c.white, c.layers);
+    ink[i] = tones[i] > 0 ? 1 : 0;
   }
   const radius = Math.ceil(c.protect * c.resolution);
   if (!radius) allowed.set(ink);
@@ -30,11 +32,12 @@ export function generateBaseGcode({ pixels, width: w, height: h, options: c }: B
   const index = (x: number, y: number) => { const ix = Math.round(x), iy = Math.round(y); return ix < 0 || iy < 0 || ix >= w || iy >= h ? -1 : iy * w + ix; };
   const isAllowed = (p: Point) => { const i = index(p[0], p[1]); return i >= 0 && allowed[i] === 1; };
   const darkness = (p: Point) => { const i = index(p[0], p[1]); return i < 0 ? 0 : dark[i]; };
+  const tone = (p: Point) => { const i = index(p[0], p[1]); return i < 0 ? 0 : tones[i]; };
   const paths: Path[] = [];
   const add = (path: Path) => { if (path.length < 2) return; let len = 0; for (let i = 1; i < path.length; i++) len += distance(path[i - 1], path[i]); if (len / c.resolution >= c.minLength) { paths.push(path); if (paths.length > c.maxPaths) throw Error("Limite percorsi superato"); } };
   const corners: Point[] = [[0, 0], [w - 1, 0], [0, h - 1], [w - 1, h - 1]];
   for (let layer = 0; layer < c.layers; layer++) {
-    const angle = (c.angle + [0, 90, 45][layer]) * Math.PI / 180;
+    const angle = (c.angle + HATCH_ANGLES[layer]) * Math.PI / 180;
     const dx = Math.cos(angle), dy = Math.sin(angle), nx = -dy, ny = dx;
     const projections = corners.map(p => p[0] * nx + p[1] * ny), ts = corners.map(p => p[0] * dx + p[1] * dy);
     const spacing = Math.max(1, c.step * c.resolution * (layer === 0 ? 1 : 1.3));
@@ -42,7 +45,7 @@ export function generateBaseGcode({ pixels, width: w, height: h, options: c }: B
       let run: Path = [];
       for (let t = Math.min(...ts) - 2; t <= Math.max(...ts) + 2; t += 0.65) {
         const p: Point = [dx * t + nx * q, dy * t + ny * q];
-        if (isAllowed(p) && darkness(p) >= [0.14, 0.43, 0.70][layer]) run.push(p);
+        if (isAllowed(p) && (tone(p) >= layer + 1)) run.push(p);
         else { add(run); run = []; }
       }
       add(run);

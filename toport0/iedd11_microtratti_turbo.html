@@ -1,0 +1,106 @@
+<!doctype html><html lang="it"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>IEDD 11 — Microtratti fino a MSE obiettivo</title><style>
+:root{font-family:system-ui,Arial;color-scheme:dark}*{box-sizing:border-box}body{margin:0;background:#101722;color:#eaf0f7}header{padding:18px 22px;border-bottom:1px solid #354356}h1{font-size:23px;margin:0}p{color:#b9c7d7;line-height:1.5;margin:7px 0}main{display:grid;grid-template-columns:320px minmax(0,1fr);gap:16px;padding:16px}aside,.panel{background:#1c2837;border:1px solid #35475b;border-radius:11px;padding:14px}aside{align-self:start}label{display:block;color:#c7d5e5;font-size:12px;margin:9px 0 4px}input,select,button{width:100%;border:1px solid #455a72;background:#101b2a;color:#fff;padding:8px;border-radius:6px}button{background:#2863ad;font-weight:650;cursor:pointer;margin-top:9px}button:disabled{opacity:.4;cursor:default}.secondary{background:#36475d}.pair{display:grid;grid-template-columns:1fr 1fr;gap:8px}.triple{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.panel h3{margin:0 0 8px;font-size:14px}.panel canvas{display:block;width:100%;height:auto;background:#fff}.stats{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}.stats span{background:#26374c;padding:7px 9px;border-radius:6px;font-size:12px}#log{white-space:pre-wrap;max-height:145px;overflow:auto;font-size:12px;color:#aabed2}#chart{height:105px;background:#111b29;border-radius:6px}small{color:#9aafc7}@media(max-width:1000px){main{grid-template-columns:1fr}.triple{grid-template-columns:1fr}}
+</style></head><body><header><h1>IEDD 11 · Microtratti fino a MSE obiettivo</h1><p>Microtratti brevi, curvi, separati e ravvicinati: orientamento secondo le forme, scelta per riduzione d’errore e spostamenti a penna sollevata minimizzati. Nessun tratto attraversa il bianco protetto.</p></header><main><aside>
+<label>Immagine originale</label><input id="file" type="file" accept="image/*">
+<div class="pair"><div><label>Larghezza (mm)</label><input id="wmm" type="number" value="160" min="30" max="400"></div><div><label>Altezza (mm)</label><input id="hmm" type="number" value="200" min="30" max="400"></div></div>
+<div class="pair"><div><label>Risoluzione (px/mm)</label><input id="ppm" type="number" value="3" min="1" max="8" step="0.5"></div><div><label>Diametro biro (mm)</label><input id="pen" type="number" value="0.5" min="0.1" max="2" step="0.05"></div></div>
+<div class="pair"><div><label>Opacità per passata</label><input id="alpha" type="number" value="0.18" min="0.01" max="0.9" step="0.01"></div><div><label>Soglia bianco (0–255)</label><input id="white" type="number" value="242" min="100" max="255"></div></div>
+<div class="pair"><div><label>Margine bianco (mm)</label><input id="margin" type="number" value="0.08" min="0" max="1" step="0.02"></div><div><label>Spazio minimo tra tratti (mm)</label><input id="spacing" type="number" value="0.12" min="0" max="3" step="0.02"></div></div>
+<div class="pair"><div><label>Lunghezza massima tratto (mm)</label><input id="maxlen" type="number" value="3.2" min="0.3" max="30" step="0.1"></div><div><label>Lunghezza minima (mm)</label><input id="minlen" type="number" value="0.65" min="0.2" max="20" step="0.05"></div></div><div class="pair"><div><label>Curvatura massima (°)</label><input id="bend" type="number" value="38" min="0" max="85"></div><div><label>Priorità vicinanza (0–10)</label><input id="locality" type="number" value="3" min="0" max="10" step="0.5"></div></div>
+<div class="pair"><div><label>Tratti massimi</label><input id="maxstrokes" type="number" value="100000" min="10" max="1000000"></div><div><label>Campioni orientamento</label><input id="candidates" type="number" value="10" min="4" max="100"></div></div>
+<div class="pair"><div><label>MSE obiettivo</label><input id="target" type="number" value="0.007" min="0" max="0.2" step="0.001"></div><div><label>Ricerche senza risultato prima di fermarsi</label><input id="failmax" type="number" value="1500" min="50" max="100000" step="50"></div></div>
+<div class="pair"><div><label>Z sicurezza (mm)</label><input id="zsafe" type="number" value="3" step="0.1"></div><div><label>Z disegno (mm)</label><input id="zdraw" type="number" value="-0.12" step="0.01"></div></div>
+<div class="pair"><div><label>Feed XY (mm/min)</label><input id="feed" type="number" value="1200" min="50"></div><div><label>Feed Z (mm/min)</label><input id="feedz" type="number" value="180" min="20"></div></div>
+<button id="start">Genera disegno</button><button id="stop" class="secondary" disabled>Interrompi</button><div class="pair"><button id="gcode" class="secondary" disabled>Scarica G-code</button><button id="png" class="secondary" disabled>Scarica PNG</button></div><small>Motore turbo a due stadi: stima rapida dei candidati, valutazione esatta solo dei migliori, ricerca per tile e rendering dilazionato. Nessun arresto per plateau: si prosegue fino al MSE obiettivo, all’interruzione manuale o ai limiti di sicurezza. Ogni microtratto è una curva autonoma: la penna si solleva tra tratti. Lunghezza misurata sull’arco e limitata al massimo impostato. G1 e archi G2/G3 quando compatibili. Verificare Z e simulare prima della CNC.</small>
+</aside><section><div class="triple"><div class="panel"><h3>Riferimento immutabile</h3><canvas id="original"></canvas></div><div class="panel"><h3>Disegno progressivo</h3><canvas id="drawing"></canvas></div><div class="panel"><h3>Residuo d'inchiostro</h3><canvas id="residual"></canvas></div></div><div class="stats"><span id="status">Pronto</span><span id="count">Tratti: 0</span><span id="segments">Microcurve: 0</span><span id="mse">MSE: —</span><span id="rate">Progresso: —</span><span id="elapsed">Tempo: —</span></div><div class="panel"><h3>Convergenza</h3><canvas id="chart" width="900" height="110"></canvas><div id="log">Carica un'immagine per iniziare.</div></div></section></main><script>
+'use strict';
+const $=id=>document.getElementById(id),num=id=>Number($(id).value),clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+const orig=$('original'),draw=$('drawing'),res=$('residual'),chart=$('chart');
+let image=null,work=null,running=false,stop=false,strokes=[],history=[],started=0,lastEnd=null;let visitStamp=1;let turboStats={quick:0,exact:0};
+function log(s){$('log').textContent=s+'\n'+$('log').textContent.slice(0,2400)}
+function download(name,blob){let u=URL.createObjectURL(blob),a=document.createElement('a');a.href=u;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(u),2000)}
+function loadImage(im){const ppm=num('ppm'),W=Math.min(1400,Math.max(50,Math.round(num('wmm')*ppm))),H=Math.min(1400,Math.max(50,Math.round(num('hmm')*ppm)));orig.width=draw.width=res.width=W;orig.height=draw.height=res.height=H;let ctx=orig.getContext('2d',{willReadFrequently:true});ctx.fillStyle='#fff';ctx.fillRect(0,0,W,H);let scale=Math.min(W/im.width,H/im.height);ctx.drawImage(im,(W-im.width*scale)/2,(H-im.height*scale)/2,im.width*scale,im.height*scale);let data=ctx.getImageData(0,0,W,H).data,N=W*H,T=new Float32Array(N),D=new Float32Array(N),mask=new Uint8Array(N);let th=num('white')/255;for(let i=0;i<N;i++){let k=i*4,l=(.2126*data[k]+.7152*data[k+1]+.0722*data[k+2])/255;T[i]=1-l;mask[i]=l<th?1:0}
+// Euclidean disk erosion: centers are allowed only if every pixel inside brush+margin is nonwhite.
+let radius=Math.ceil((num('pen')/2+num('margin'))*ppm),safe=new Uint8Array(N);let offsets=[];for(let dy=-radius;dy<=radius;dy++)for(let dx=-radius;dx<=radius;dx++)if(dx*dx+dy*dy<=radius*radius)offsets.push([dx,dy]);for(let y=radius;y<H-radius;y++)for(let x=radius;x<W-radius;x++){let ok=1;for(let [dx,dy] of offsets)if(!mask[(y+dy)*W+x+dx]){ok=0;break}safe[y*W+x]=ok}
+let err=0;for(let i=0;i<N;i++)err+=T[i]*T[i];work={W,H,N,T,D,safe,ppm,pen:num('pen')*ppm,alpha:num('alpha'),err,edge:new Float32Array(N),tileSize:20,tiles:[],tileCols:0,visited:new Int32Array(N)};
+// Structure orientation from Sobel: tangential to local intensity transitions.
+let {edge}=work;for(let y=1;y<H-1;y++)for(let x=1;x<W-1;x++){let i=y*W+x,gx=T[i+1]-T[i-1],gy=T[i+W]-T[i-W];edge[i]=Math.hypot(gx,gy)}
+let ts=work.tileSize,cols=Math.ceil(W/ts);work.tileCols=cols;for(let y=0;y<H;y+=ts)for(let x=0;x<W;x+=ts)work.tiles.push({x,y,w:Math.min(ts,W-x),h:Math.min(ts,H-y),score:0});strokes=[];lastEnd=null;history=[err/N];render();$('gcode').disabled=$('png').disabled=true;log('Immagine caricata: '+W+'×'+H+'; maschera bianco rigida attiva.')}
+$('file').addEventListener('change',async e=>{if(running){log('Interrompi prima di cambiare immagine.');return}let f=e.target.files[0];if(!f)return;let url=URL.createObjectURL(f);try{let im=new Image();await new Promise((ok,no)=>{im.onload=ok;im.onerror=()=>no(Error('Impossibile decodificare il file'));im.src=url});image=im;loadImage(im)}catch(err){log('Errore: '+err.message)}finally{URL.revokeObjectURL(url)}});
+function refreshTiles(){let {W,H,T,D,safe,tiles,tileSize,tileCols,edge}=work;for(let t of tiles)t.score=0;for(let y=0;y<H;y++)for(let x=0;x<W;x++){let i=y*W+x;if(!safe[i])continue;let e=Math.max(0,T[i]-D[i]);tiles[(y/tileSize|0)*tileCols+(x/tileSize|0)].score+=e*e*(1+Math.min(3,edge[i]*4))}rebuildBestTiles()}
+function rebuildBestTiles(){let tiles=work.tiles;work.bestTiles=tiles.filter(t=>t.score>0.00001).sort((a,b)=>b.score-a.score).slice(0,Math.max(24,Math.ceil(tiles.length*.12)))}
+function sampleT(x,y){let {W,H,T}=work,ix=clamp(Math.round(x),0,W-1),iy=clamp(Math.round(y),0,H-1);return T[iy*W+ix]}
+function tangent(x,y){let {W,H,T}=work,ix=clamp(Math.round(x),1,W-2),iy=clamp(Math.round(y),1,H-2),i=iy*W+ix;let gx=T[i+1]-T[i-1],gy=T[i+W]-T[i-W];return Math.atan2(gx,-gy)}
+function bez(p0,p1,p2,p3,t){let q=1-t;return {x:q*q*q*p0.x+3*q*q*t*p1.x+3*q*t*t*p2.x+t*t*t*p3.x,y:q*q*q*p0.y+3*q*q*t*p1.y+3*q*t*t*p2.y+t*t*t*p3.y}}
+function makeCurve(p,angle,len,delta){let a=angle+delta,p0={x:p.x,y:p.y},p1={x:p.x+Math.cos(angle)*len*.36,y:p.y+Math.sin(angle)*len*.36},p3={x:p.x+Math.cos(a)*len,y:p.y+Math.sin(a)*len},p2={x:p3.x-Math.cos(a)*len*.36,y:p3.y-Math.sin(a)*len*.36};let n=Math.max(6,Math.ceil(len/.42)),points=[];for(let j=0;j<=n;j++)points.push(bez(p0,p1,p2,p3,j/n));return {p0,p1,p2,p3,points,end:p3,angle:a}}
+// Exact same footprint model used for both candidate scoring and committed simulation.
+function footprint(points){let {W,H,safe,pen,visited}=work,brush=Math.max(.45,pen/2),rr=brush*brush,ids=[];visitStamp++;if(visitStamp>=2147483640){visited.fill(0);visitStamp=1}for(let p of points){let ix=Math.round(p.x),iy=Math.round(p.y);if(ix<0||iy<0||ix>=W||iy>=H||!safe[iy*W+ix])return null;for(let y=Math.max(0,Math.floor(p.y-brush));y<=Math.min(H-1,Math.ceil(p.y+brush));y++)for(let x=Math.max(0,Math.floor(p.x-brush));x<=Math.min(W-1,Math.ceil(p.x+brush));x++){let dx=x-p.x,dy=y-p.y;if(dx*dx+dy*dy>rr)continue;let id=y*W+x;if(!safe[id])return null;if(visited[id]!==visitStamp){visited[id]=visitStamp;ids.push(id)}}}return ids}
+function scoreCurve(curve,commit=false){let ids=footprint(curve.points);if(!ids||!ids.length)return null;let {D,T,alpha}=work,gain=0;for(let i of ids){let d=D[i],dn=d+(1-d)*alpha,t=T[i];gain+=(d-t)**2-(dn-t)**2}if(gain<=0)return null;if(commit){let {W,tileSize,tileCols,tiles,edge}=work;for(let i of ids){let d=D[i],dn=d+(1-d)*alpha,t=T[i];D[i]=dn;work.err+=(dn-t)**2-(d-t)**2;let x=i%W,y=i/W|0,ti=(y/tileSize|0)*tileCols+(x/tileSize|0),weight=1+Math.min(3,edge[i]*4),old=Math.max(0,t-d),now=Math.max(0,t-dn);tiles[ti].score+=((now*now)-(old*old))*weight}}return {gain,ids:ids.length}}
+// Semi di ricerca: il residuo guida la qualità, la distanza dall’ultimo tratto guida il percorso.
+function pickSeeds(){let tiles=work.bestTiles;if(!tiles||!tiles.length)return [];let pool=[],count=Math.min(38,tiles.length*3),locality=num('locality'),W=work.W,H=work.H,T=work.T,D=work.D,safe=work.safe,edge=work.edge;for(let j=0;j<count;j++){let tile=tiles[(Math.random()*Math.min(tiles.length,20))|0];let x=tile.x+Math.random()*tile.w,y=tile.y+Math.random()*tile.h,ix=x|0,iy=y|0;if(ix>=W||iy>=H)continue;let i=iy*W+ix;if(!safe[i])continue;let e=T[i]-D[i];if(e<0.035)continue;let dist=lastEnd?Math.hypot(x-lastEnd.x,y-lastEnd.y)/work.ppm:0;let priority=e*(1+Math.min(2,edge[i]*3))/(1+locality*.018*dist);pool.push({x,y,priority,dist})}pool.sort((a,b)=>b.priority-a.priority);return pool.slice(0,4)}
+// Stima economica O(numero di campioni), senza costruire footprint né allocare array di pixel.
+// La valutazione precisa è comunque obbligatoria prima di applicare l'inchiostro.
+function quickScore(curve){let {W,H,T,D,safe,alpha,pen}=work,pts=curve.points,brush=Math.max(.45,pen/2),r=Math.ceil(brush),gain=0;const offsets=r<=1?[[0,0],[1,0],[-1,0],[0,1],[0,-1]]:[[0,0],[r,0],[-r,0],[0,r],[0,-r]];for(let j=0;j<pts.length;j++){let p=pts[j],x=Math.round(p.x),y=Math.round(p.y);if(x<r||y<r||x>=W-r||y>=H-r)return -1;let id=y*W+x;if(!safe[id])return -1;for(let o of offsets){let xx=x+o[0],yy=y+o[1],ii=yy*W+xx;if(!safe[ii])return -1;let d=D[ii],dn=d+(1-d)*alpha,t=T[ii];gain+=(d-t)*(d-t)-(dn-t)*(dn-t)}}turboStats.quick++;return gain}
+function curveLength(points){let length=0;for(let i=1;i<points.length;i++)length+=Math.hypot(points[i].x-points[i-1].x,points[i].y-points[i-1].y);return length}
+function curveWithLimit(p,angle,len,delta){let c=makeCurve(p,angle,len,delta),max=num('maxlen')*work.ppm;let L=curveLength(c.points);if(L>max){c=makeCurve(p,angle,len*max/L*.998,delta);L=curveLength(c.points)}if(L>max+1e-5)return null;c.arcLength=L;return c}
+function findMicrostroke(){let seeds=pickSeeds(),n=Math.max(4,Math.floor(num('candidates'))),maxlen=Math.max(.3,num('maxlen')),minlen=Math.min(maxlen,Math.max(.2,num('minlen'))),bend=num('bend')*Math.PI/180,shortlist=[];let ppm=work.ppm,locality=num('locality');
+ for(let seed of seeds){let base=tangent(seed.x,seed.y);for(let j=0;j<n;j++){
+  let a=base+(j%2?Math.PI:0)+(Math.random()-.5)*1.2;
+  if(j%7===0)a=Math.random()*Math.PI*2;
+  let len=(minlen+(maxlen-minlen)*Math.pow(Math.random(),.72))*ppm;
+  let d=(Math.random()*2-1)*bend;
+  let c=curveWithLimit(seed,a,len,d);if(!c||c.arcLength<minlen*ppm*.96)continue;
+  let estimate=quickScore(c);if(estimate<=0)continue;
+  let distance=lastEnd?Math.hypot(seed.x-lastEnd.x,seed.y-lastEnd.y)/ppm:0;
+  let rank=estimate/(.4+Math.pow(c.arcLength/ppm,.55))/(1+locality*.012*distance);
+  if(shortlist.length<4||rank>shortlist[shortlist.length-1].rank){shortlist.push({curve:c,rank,distance});shortlist.sort((a,b)=>b.rank-a.rank);if(shortlist.length>4)shortlist.pop()}
+ }}let best=null;for(let item of shortlist){turboStats.exact++;let r=scoreCurve(item.curve);if(!r)continue;let score=r.gain/(.4+Math.pow(item.curve.arcLength/ppm,.55))/(1+locality*.012*item.distance);if(!best||score>best.score)best={curve:item.curve,score,gain:r.gain,distance:item.distance}}return best}
+function drawStroke(){let choice=findMicrostroke();if(!choice)return null;let r=scoreCurve(choice.curve,true);if(!r)return null;lastEnd=choice.curve.end;return {curves:[choice.curve],gain:r.gain,travel:choice.distance}}
+function render(){if(!work)return;let {W,H,N,T,D}=work,dc=draw.getContext('2d'),rc=res.getContext('2d'),a=dc.createImageData(W,H),b=rc.createImageData(W,H);for(let i=0;i<N;i++){let k=i*4,v=Math.round(255*(1-D[i])),r=Math.round(255*(1-Math.max(0,T[i]-D[i])));a.data[k]=a.data[k+1]=a.data[k+2]=v;a.data[k+3]=255;b.data[k]=b.data[k+1]=b.data[k+2]=r;b.data[k+3]=255}dc.putImageData(a,0,0);rc.putImageData(b,0,0);$('count').textContent='Tratti: '+strokes.length;$('segments').textContent='Microcurve: '+strokes.length;$('mse').textContent='MSE: '+(work.err/N).toFixed(6);$('elapsed').textContent='Tempo: '+((performance.now()-started)/1000).toFixed(1)+' s';let ctx=chart.getContext('2d'),w=chart.width,h=chart.height;ctx.clearRect(0,0,w,h);if(history.length>1){let max=history[0],min=Math.min(...history),range=max-min||1;ctx.strokeStyle='#68c1ff';ctx.lineWidth=2;ctx.beginPath();history.forEach((v,i)=>{let x=5+(w-10)*i/(history.length-1),y=5+(h-10)*(max-v)/range;if(!i)ctx.moveTo(x,y);else ctx.lineTo(x,y)});ctx.stroke()}}
+const yieldUI=()=>new Promise(r=>setTimeout(r,0));
+async function run(){
+ if(!image){log('Carica prima un’immagine.');return}
+ if(running)return;
+ loadImage(image);running=true;stop=false;turboStats={quick:0,exact:0};started=performance.now();
+ $('start').disabled=true;$('stop').disabled=false;$('status').textContent='Elaborazione';
+ let last=work.err,fail=0,reason='';
+ const target=Math.max(0,num('target')),limit=Math.max(1,Math.floor(num('maxstrokes')));
+ const maxFail=Math.max(50,Math.floor(num('failmax')));
+ try{
+  refreshTiles();
+  if(work.err/work.N<=target)reason='MSE obiettivo già raggiunto';
+  for(let k=0;k<limit&&!stop&&!reason;k++){
+   // Aggiorna solo la graduatoria delle tile: punteggi mantenuti incrementalmente a ogni tratto.
+   if(k%160===0||fail%120===119)rebuildBestTiles();
+   let stroke=drawStroke();
+   if(!stroke){
+    fail++;
+    if(fail>=maxFail){reason='Impossibile trovare ulteriori tratti utili dopo '+fail+' ricerche: soglia MSE non raggiunta';break}
+    if(fail%80===0){$('status').textContent='Ricerca tratti ('+fail+' tentativi)';await yieldUI()}
+    continue;
+   }
+   fail=0;strokes.push(stroke);
+   if(strokes.length%30===0){
+    let progress=(last-work.err)/Math.max(last,1e-12)*100;
+    $('rate').textContent='Progresso / 30: '+progress.toFixed(4)+'% (solo informativo)';
+    last=work.err;
+   }
+   if(work.err/work.N<=target){reason='MSE obiettivo raggiunto';break}
+   if(strokes.length%300===0){history.push(work.err/work.N);render();await yieldUI()}
+  }
+  if(!reason)reason=stop?'Interrotto manualmente':'Limite massimo di '+limit+' iterazioni raggiunto senza conseguire il MSE obiettivo';
+ }catch(e){reason='Errore: '+e.message;log('Errore: '+e.stack)}
+ finally{
+  running=false;$('start').disabled=false;$('stop').disabled=true;
+  $('gcode').disabled=$('png').disabled=!strokes.length;
+  let mse=work.err/work.N,success=mse<=target;
+  $('status').textContent=success?'Obiettivo raggiunto':stop?'Interrotto':'Soglia non raggiunta';
+  history.push(mse);render();
+  log(reason+'. '+strokes.length+' tratti, MSE '+mse.toFixed(6)+' / obiettivo '+target.toFixed(6)+'. Valutazioni veloci '+turboStats.quick+', esatte '+turboStats.exact+'.');
+ }
+}
+$('start').onclick=run;$('stop').onclick=()=>stop=true;$('png').onclick=()=>draw.toBlob(b=>download('iedd11_microtratti.png',b),'image/png');
+// Fit a circular arc through first/middle/last sampled points; reject if geometry differs > 0.12mm.
+function arcFit(pts,ppm){if(pts.length<9)return null;let a=pts[0],b=pts[Math.floor(pts.length/2)],c=pts[pts.length-1],det=2*(a.x*(b.y-c.y)+b.x*(c.y-a.y)+c.x*(a.y-b.y));if(Math.abs(det)<1e-5)return null;let aa=a.x*a.x+a.y*a.y,bb=b.x*b.x+b.y*b.y,cc=c.x*c.x+c.y*c.y,cx=(aa*(b.y-c.y)+bb*(c.y-a.y)+cc*(a.y-b.y))/det,cy=(aa*(c.x-b.x)+bb*(a.x-c.x)+cc*(b.x-a.x))/det,r=Math.hypot(a.x-cx,a.y-cy);if(r<1||r>100000)return null;for(let p of pts)if(Math.abs(Math.hypot(p.x-cx,p.y-cy)-r)>0.12*ppm)return null;let turns=0;for(let i=1;i<pts.length-1;i++){let p=pts[i-1],q=pts[i],s=pts[i+1];turns+=(q.x-p.x)*(s.y-q.y)-(q.y-p.y)*(s.x-q.x)}let sign=Math.sign(turns);if(!sign)return null;let total=0;for(let i=1;i<pts.length;i++){let p=pts[i-1],q=pts[i],u=Math.atan2(p.y-cy,p.x-cx),v=Math.atan2(q.y-cy,q.x-cx),d=v-u;if(sign>0){while(d<0)d+=2*Math.PI;while(d>=2*Math.PI)d-=2*Math.PI}else{while(d>0)d-=2*Math.PI;while(d<=-2*Math.PI)d+=2*Math.PI}if(Math.abs(d)>Math.PI/2)return null;total+=d}if(Math.abs(total)>Math.PI*1.9||Math.abs(total)<.08)return null;return {cx,cy,clockwise:sign>0}}
+$('gcode').onclick=()=>{if(!work||!strokes.length)return;let {ppm,H}=work,fmt=n=>n.toFixed(3),zs=num('zsafe'),zd=num('zdraw'),feed=num('feed'),fz=num('feedz');let g=['; IEDD 8 — microtratti giapponesi disgiunti','; coordinate XY in mm, origine in basso a sinistra','; Bézier campionate, archi G2/G3 solo se fit <= 0.12 mm','G21','G90','G17','G94','G0 Z'+fmt(zs)];for(let s of strokes){let start=s.curves[0].points[0];g.push('G0 X'+fmt(start.x/ppm)+' Y'+fmt((H-start.y)/ppm));g.push('G1 Z'+fmt(zd)+' F'+fmt(fz));for(let c of s.curves){let pts=c.points,fit=arcFit(pts,ppm);if(fit){let end=pts[pts.length-1],st=pts[0],cmd=fit.clockwise?'G3':'G2';g.push(cmd+' X'+fmt(end.x/ppm)+' Y'+fmt((H-end.y)/ppm)+' I'+fmt((fit.cx-st.x)/ppm)+' J'+fmt((st.y-fit.cy)/ppm)+' F'+fmt(feed))}else{for(let j=1;j<pts.length;j++){let p=pts[j];g.push('G1 X'+fmt(p.x/ppm)+' Y'+fmt((H-p.y)/ppm)+' F'+fmt(feed))}}}g.push('G0 Z'+fmt(zs))}g.push('M2');download('iedd11_microtratti.nc',new Blob([g.join('\n')+'\n'],{type:'text/plain'}))};
+</script></body></html>

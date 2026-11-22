@@ -13,7 +13,8 @@ function normalizePreviewWidth(width: number) {
 let previewWidth = DEFAULT_PREVIEW_WIDTH;
 
 if (typeof window !== "undefined") {
-  const savedWidth = Number(window.localStorage.getItem(PREVIEW_WIDTH_STORAGE_KEY));
+  const storedWidth = window.localStorage.getItem(PREVIEW_WIDTH_STORAGE_KEY);
+  const savedWidth = storedWidth === null ? NaN : Number(storedWidth);
   if (Number.isFinite(savedWidth)) {
     previewWidth = normalizePreviewWidth(savedWidth);
   }

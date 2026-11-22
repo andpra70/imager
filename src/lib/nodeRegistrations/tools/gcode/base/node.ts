@@ -2,6 +2,7 @@ import { drawImagePreview, resizeNodeForPreview } from "../../../../imageUtils";
 import type { GraphImage } from "../../../../../models/graphImage";
 import type { PreviewAwareNode } from "../../../shared";
 import { createToolTitle, getGraphImageSignature, isGraphImageReady, notifyGraphStateChange } from "../../shared";
+import { MAX_HATCH_LAYERS } from "./hatchLayers";
 import { baseGcodeDefaults, type BaseGcodeOptions, type BaseGcodeResult, validateBaseGcodeOptions } from "./model";
 import { prepareBaseGcodeRaster } from "./raster";
 import { startBaseGcodeWorker } from "./workerClient";
@@ -11,7 +12,7 @@ const controls: { label: string; key: keyof BaseGcodeOptions; min: number; max: 
   {label:"Width mm",key:"width",min:10,max:1000,step:1}, {label:"Height mm",key:"height",min:10,max:1000,step:1},
   {label:"Margin mm",key:"margin",min:0,max:100,step:0.5}, {label:"Resolution px/mm",key:"resolution",min:1,max:8,step:0.5},
   {label:"White threshold",key:"white",min:1,max:255,step:1}, {label:"White protect mm",key:"protect",min:0,max:2,step:0.05},
-  {label:"Hatch step mm",key:"step",min:0.25,max:3,step:0.05}, {label:"Layers",key:"layers",min:1,max:3,step:1},
+  {label:"Hatch step mm",key:"step",min:0.25,max:3,step:0.05}, {label:"Layers",key:"layers",min:1,max:MAX_HATCH_LAYERS,step:1},
   {label:"Angle deg",key:"angle",min:-180,max:180,step:1}, {label:"Min length mm",key:"minLength",min:0.1,max:10,step:0.05},
   {label:"Contour threshold",key:"contour",min:0.1,max:0.95,step:0.05},
   {label:"Safe Z mm",key:"safeZ",min:0.1,max:50,step:0.1}, {label:"Light Z mm",key:"lightZ",min:-5,max:0,step:0.01},
@@ -44,17 +45,21 @@ export class BaseGcodeToolNode {
     node.refreshPreviewLayout = () => { resizeNodeForPreview(node,node.preview,{footerLines:2}); node.setDirtyCanvas(true,true); };
     node.refreshPreviewLayout();
   }
+  private publishOutputs(this: BaseNode, gcode: string | null, image: GraphImage | null, svg: string | null) {
+    this.setOutputData(0, gcode);
+    this.setOutputData(1, image); this.setOutputData(2, svg);
+  }
   onExecute(this: BaseNode) {
     const image = this.getInputData(0);
     if (!isGraphImageReady(image)) {
       this.generation++; this.cancelJob?.(); this.cancelJob=null; this.signature=""; this.result=null; this.preview=null; this.status="waiting image";
-      this.setOutputData(0,null); this.setOutputData(1,null); this.setOutputData(2,null); this.refreshPreviewLayout(); return;
+      this.publishOutputs(null,null,null); this.refreshPreviewLayout(); return;
     }
     const options = this.getOptions(this.properties);
     const signature = `${getGraphImageSignature(image)}:${JSON.stringify(options)}`;
-    if (signature === this.signature) { this.setOutputData(0,this.result?.gcode ?? null); this.setOutputData(1,this.preview); this.setOutputData(2,this.result?.svg ?? null); return; }
+    if (signature === this.signature) { this.publishOutputs(this.result?.gcode ?? null,this.preview,this.result?.svg ?? null); return; }
     this.signature=signature; this.generation++; const current=this.generation;
-    this.cancelJob?.(); this.cancelJob=null; this.result=null; this.preview=null; this.setOutputData(0,null); this.setOutputData(1,null); this.setOutputData(2,null);
+    this.cancelJob?.(); this.cancelJob=null; this.result=null; this.preview=null; this.publishOutputs(null,null,null);
     try {
       validateBaseGcodeOptions(options);
       const job=startBaseGcodeWorker(prepareBaseGcodeRaster(image,options));
@@ -66,9 +71,9 @@ export class BaseGcodeToolNode {
         if (!context) { result.preview.close(); throw Error("Canvas anteprima non disponibile"); }
         context.drawImage(result.preview,0,0); result.preview.close();
         this.preview=canvas; this.result=result; this.status=`${result.paths} paths / ${result.lines} lines`; this.cancelJob=null;
-        this.setOutputData(0,result.gcode); this.setOutputData(1,canvas); this.setOutputData(2,result.svg); this.refreshPreviewLayout();
+        this.publishOutputs(result.gcode,canvas,result.svg); this.refreshPreviewLayout();
       })
-        .catch(error => { if (current!==this.generation) return; this.cancelJob=null; this.status=error instanceof Error?error.message:"G-code error"; this.setOutputData(0,null); this.setOutputData(1,null); this.setOutputData(2,null); this.refreshPreviewLayout(); });
+        .catch(error => { if (current!==this.generation) return; this.cancelJob=null; this.status=error instanceof Error?error.message:"G-code error"; this.publishOutputs(null,null,null); this.refreshPreviewLayout(); });
     } catch (error) { this.status=error instanceof Error?error.message:"G-code error"; }
     this.refreshPreviewLayout();
   }
