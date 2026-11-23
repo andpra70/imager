@@ -7,6 +7,7 @@ RUN ONNXRUNTIME_NODE_INSTALL_CUDA=skip npm ci
 
 COPY index.html tsconfig.json tsconfig.app.json vite.config.ts ./
 COPY src ./src
+COPY public ./public
 
 RUN npm run build
 

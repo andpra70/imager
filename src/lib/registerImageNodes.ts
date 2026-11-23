@@ -16,6 +16,8 @@ import { createToolArtistsNodeCtors, registerArtistsToolNodes } from "./nodeRegi
 import { createToolManualNodeCtors, registerManualToolNodes } from "./nodeRegistrations/tools/manual";
 import { createOpenCvNodeCtors, registerOpenCvToolNodes } from "./nodeRegistrations/tools/opencv";
 import { createToolPrintNodeCtors, registerPrintToolNodes } from "./nodeRegistrations/tools/print";
+import { createWasmToolNodeCtors, registerWasmToolNodes } from "./nodeRegistrations/tools/wasm";
+import { createLuaToolNodeCtors, registerLuaToolNodes } from "./nodeRegistrations/tools/lua";
 import { registerRemoteControlsNode } from "./nodeRegistrations/tools/io/controls";
 import type { LiteNode, PreviewAwareNode } from "./nodeRegistrations/shared";
 import { createBaseNodeRegister } from "./nodeRegistrations/shared";
@@ -122,6 +124,8 @@ export function registerImageNodes() {
   const graphicToolCtors = createToolGraphicNodeCtors();
   const linesartToolCtors = createToolLinesartNodeCtors();
   const gcodeToolCtors = createToolGcodeNodeCtors();
+  const wasmToolCtors = createWasmToolNodeCtors();
+  const luaToolCtors = createLuaToolNodeCtors();
   const artistsToolCtors = createToolArtistsNodeCtors();
   const manualToolCtors = createToolManualNodeCtors();
   const openCvToolCtors = createOpenCvNodeCtors();
@@ -245,6 +249,9 @@ export function registerImageNodes() {
     GcodeCncToolNode: gcodeToolCtors.GcodeCncToolNode,
     GcodeOptimizerToolNode: gcodeToolCtors.GcodeOptimizerToolNode,
   });
+
+  registerWasmToolNodes(registerNodeType, wasmToolCtors);
+  registerLuaToolNodes(registerNodeType, luaToolCtors);
 
   registerArtistsToolNodes(registerNodeType, {
     LineGeneratorToolNode: artistsToolCtors.LineGeneratorToolNode,

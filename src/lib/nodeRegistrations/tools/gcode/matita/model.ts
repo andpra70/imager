@@ -1,3 +1,5 @@
+import type { GcodeConvergenceSample } from "../shared/convergence";
+
 export type MatitaMode = "balanced" | "fast" | "fine";
 export interface MatitaOptions {
   width: number; ppm: number; mode: MatitaMode; candidates: number; horizon: number;
@@ -16,9 +18,10 @@ export const matitaDefaults: MatitaOptions = {
 export interface MatitaRequest<TOptions extends MatitaOptions = MatitaOptions> { width: number; height: number; pixels: Uint8ClampedArray; options: TOptions }
 export interface MatitaResult {
   gcode: string; svg: string; preview: ImageBitmap; strokes: number; mse: number;
-  lengthMm: number; arcs: number; lines: number; stopReason: string;
+  lengthMm: number; arcs: number; lines: number; stopReason: string; convergence: GcodeConvergenceSample[];
 }
 export type MatitaResponse =
+  | { type: "convergence"; strokes: number; mse: number; stage: number }
   | { type: "progress"; strokes: number; mse: number; stage: number; preview: ImageBitmap }
   | { type: "result"; result: MatitaResult }
   | { type: "error"; message: string };

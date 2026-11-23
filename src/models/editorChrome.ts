@@ -79,6 +79,8 @@ const categoryLabels: Record<NodePaletteItem["category"], string> = {
   manual: "Manuale",
   opencv: "OpenCV",
   gcode: "GCode",
+  wasm: "WASM",
+  lua: "LUA",
   ai: "AI",
   svg: "SVG",
   print: "Stampa",

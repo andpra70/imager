@@ -1,6 +1,6 @@
 import type { MatitaRequest, MatitaResponse, MatitaResult } from "../matita/model";
 import type { MatitaSplineOptions } from "./model";
-export function startMatitaSplineWorker(request: MatitaRequest<MatitaSplineOptions>, onProgress: (strokes: number, mse: number, stage: number, preview: ImageBitmap) => void) {
+export function startMatitaSplineWorker(request: MatitaRequest<MatitaSplineOptions>, onProgress: (strokes: number, mse: number, stage: number, preview: ImageBitmap) => void, onConvergence?: (strokes:number,mse:number,stage:number)=>void) {
   const worker = new Worker(new URL("./worker.ts", import.meta.url), { type: "module" });
   let settled = false;
   let rejectJob: (reason?: unknown) => void = () => {};
@@ -8,6 +8,7 @@ export function startMatitaSplineWorker(request: MatitaRequest<MatitaSplineOptio
     rejectJob = reject;
     worker.onmessage = (event: MessageEvent<MatitaResponse>) => {
       if (event.data.type === "progress") { onProgress(event.data.strokes, event.data.mse, event.data.stage, event.data.preview); return; }
+      if (event.data.type === "convergence") { onConvergence?.(event.data.strokes,event.data.mse,event.data.stage); return; }
       settled = true; worker.terminate();
       if (event.data.type === "result") resolve(event.data.result);
       else reject(Error(event.data.message));

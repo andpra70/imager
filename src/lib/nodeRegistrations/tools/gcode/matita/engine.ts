@@ -3,6 +3,7 @@ import { validateMatitaOptions } from "./model";
 import { blur, clamp, type Point, type Stroke } from "./geometry";
 import { exportMatita } from "./export";
 import { renderMatitaPreview } from "./preview";
+import { GcodeConvergenceSeries } from "../shared/convergence";
 
 export interface Evaluation { gain: number; length: number; overlay: Map<number, number> }
 export interface Candidate { score: number; evaluation: Evaluation; points: Point[]; angle: number; power: number; opacity: number }
@@ -17,6 +18,7 @@ export class MatitaEngine {
   private stopLastCheck = 0; private stopPreviousError: number; private stopPrevRate: number | null = null;
   private stopLowCount = 0; private stallWindows = 0; private seed = 0x12345678;
   protected totalLength = 0;
+  private readonly convergence = new GcodeConvergenceSeries();
 
   constructor({ width, height, pixels, options }: MatitaRequest) {
     validateMatitaOptions(options);
@@ -181,11 +183,14 @@ export class MatitaEngine {
   }
   protected renderPreview(): ImageBitmap { return renderMatitaPreview(this.draw,this.w,this.h); }
   protected exportResult(reason: string): MatitaResult {
-    return exportMatita(this.paths,this.draw,this.w,this.h,this.c,this.safeSegment,this.fullError(),this.totalLength,reason);
+    this.convergence.add({iteration:this.paths.length,error:this.fullError(),stage:this.stage});
+    return {...exportMatita(this.paths,this.draw,this.w,this.h,this.c,this.safeSegment,this.fullError(),this.totalLength,reason),convergence:this.convergence.values()};
   }
-  async run(onProgress:(strokes:number,mse:number,stage:number,preview:ImageBitmap)=>void):Promise<MatitaResult>{
+  async run(onProgress:(strokes:number,mse:number,stage:number,preview:ImageBitmap)=>void,onConvergence?:(strokes:number,mse:number,stage:number)=>void):Promise<MatitaResult>{
     let stopReason="no profitable stroke";
     let lastPreviewAt=performance.now();
+    let lastConvergenceAt=0;
+    this.convergence.add({iteration:0,error:this.fullError(),stage:this.stage});
     onProgress(0,this.fullError(),this.stage,this.renderPreview());
     const emitPreview=()=>{
       const now=performance.now();
@@ -199,6 +204,9 @@ export class MatitaEngine {
       if(this.stage===2&&this.iteration%20===0&&this.fullError()<=this.c.epsilon){stopReason="target MSE";break;}
       if(!this.nextStroke(emitPreview)){if(!this.switchStage()){stopReason="no profitable stroke";break;}}
       else if(this.convergenceCheck()){stopReason="early convergence";break;}
+      this.convergence.add({iteration:this.paths.length,error:this.fullError(),stage:this.stage});
+      const convergenceNow=performance.now();
+      if(onConvergence&&convergenceNow-lastConvergenceAt>=80){onConvergence(this.paths.length,this.fullError(),this.stage);lastConvergenceAt=convergenceNow;}
       const now=performance.now();
       if(now-lastPreviewAt>=250){
         onProgress(this.paths.length,this.fullError(),this.stage,this.renderPreview());

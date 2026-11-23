@@ -1,11 +1,11 @@
 import { copyGcodePreview } from "../shared/copyPreview";
-import { drawImagePreview, resizeNodeForPreview } from "../../../../imageUtils";
 import type { GraphImage } from "../../../../../models/graphImage";
 import type { PreviewAwareNode } from "../../../shared";
 import { createToolTitle, getGraphImageSignature, isGraphImageReady, notifyGraphStateChange } from "../../shared";
 import { matitaDefaults, type MatitaOptions, type MatitaResult, validateMatitaOptions } from "./model";
 import { prepareMatitaRaster } from "./raster";
 import { startMatitaWorker } from "./workerClient";
+import { GcodeMatitaSuperNode } from "../shared/matitaSuperNode";
 
 type MatitaNode = PreviewAwareNode & MatitaGcodeToolNode;
 type NumericKey = Exclude<keyof MatitaOptions, "mode">;
@@ -21,7 +21,7 @@ const controls: { label: string; key: NumericKey; min: number; max: number; step
   {label:"Safe Z mm",key:"zSafe",min:.5,max:20,step:.5}, {label:"Spring mm",key:"spring",min:.5,max:20,step:.5},
   {label:"Feed XY",key:"feed",min:100,max:10000,step:10}, {label:"Feed Z",key:"feedZ",min:30,max:2000,step:10},
 ];
-export class MatitaGcodeToolNode {
+export class MatitaGcodeToolNode extends GcodeMatitaSuperNode {
   size: [number,number] = [300,680];
   preview: GraphImage | null = null;
   result: MatitaResult | null = null;
@@ -30,6 +30,7 @@ export class MatitaGcodeToolNode {
   private generation = 0;
   private cancelJob: (()=>void) | null = null;
   constructor() {
+    super();
     const node=this as unknown as MatitaNode;
     node.title=createToolTitle("GCode/Matita"); node.properties={...matitaDefaults};
     node.addInput("image","image"); node.addOutput("gcode","gcode"); node.addOutput("svg","svg");
@@ -40,33 +41,40 @@ export class MatitaGcodeToolNode {
       const number=Number(value);
       if(Number.isFinite(number)) { node.properties[control.key]=Math.max(control.min,Math.min(control.max,(["candidates","maxStrokes","stopSensitivity","stopWindow","white"].includes(control.key) ? Math.round(number) : number))); notifyGraphStateChange(node); }
     },{min:control.min,max:control.max,step:control.step,precision:control.step<.01?4:control.step<1?2:0});
-    node.refreshPreviewLayout=()=>{resizeNodeForPreview(node,node.preview,{footerLines:2});node.setDirtyCanvas(true,true);};
+    node.refreshPreviewLayout=()=>node.updateMatitaLayout(node.preview);
     node.refreshPreviewLayout();
   }
   onExecute(this: MatitaNode) {
     const image=this.getInputData(0);
     if(!isGraphImageReady(image)){
-      this.generation++;this.cancelJob?.();this.cancelJob=null;this.signature="";this.result=null;this.preview=null;this.status="waiting image";
+      this.generation++;this.cancelJob?.();this.cancelJob=null;this.signature="";this.result=null;this.preview=null;this.resetConvergence();this.status="waiting image";
       this.setOutputData(0,null);this.setOutputData(1,null);this.refreshPreviewLayout();return;
     }
     const options={...matitaDefaults,...this.properties} as MatitaOptions;
     const signature=`${getGraphImageSignature(image)}:${JSON.stringify(options)}`;
     if(signature===this.signature){this.setOutputData(0,this.result?.gcode??null);this.setOutputData(1,this.result?.svg??null);return;}
     this.signature=signature;this.generation++;const current=this.generation;
-    this.cancelJob?.();this.cancelJob=null;this.result=null;this.preview=null;this.setOutputData(0,null);this.setOutputData(1,null);
+    this.cancelJob?.();this.cancelJob=null;this.result=null;this.preview=null;this.resetConvergence();this.setOutputData(0,null);this.setOutputData(1,null);
     try{
       validateMatitaOptions(options);
       const job=startMatitaWorker(prepareMatitaRaster(image,options),(strokes,mse,stage,bitmap)=>{
         if(current!==this.generation){bitmap.close();return;}
         const firstPreview=this.preview===null;this.preview=copyGcodePreview(bitmap,image,this.preview);
+        this.recordConvergence(strokes,mse,stage);
         this.status=`stage ${stage+1}/3 · ${strokes} strokes · MSE ${mse.toFixed(5)}`;
         if(firstPreview) this.refreshPreviewLayout(); else this.setDirtyCanvas(true,true);
+      },(strokes,mse,stage)=>{
+        if(current!==this.generation)return;
+        this.recordConvergence(strokes,mse,stage);
+        this.status=`stage ${stage+1}/3 · ${strokes} strokes · MSE ${mse.toFixed(5)}`;
+        this.setDirtyCanvas(true,true);
       });
       this.cancelJob=job.cancel;this.status="generating";
       job.promise.then(result=>{
         if(current!==this.generation){result.preview.close();return;}
         const canvas=copyGcodePreview(result.preview,image,this.preview);
         this.preview=canvas;this.result=result;this.status=`${result.strokes} strokes · MSE ${result.mse.toFixed(5)} · ${result.stopReason}`;
+        this.replaceConvergence(result.convergence);
         this.cancelJob=null;this.setOutputData(0,result.gcode);this.setOutputData(1,result.svg);this.refreshPreviewLayout();
       }).catch(error=>{
         if(current!==this.generation)return;
@@ -78,10 +86,6 @@ export class MatitaGcodeToolNode {
   }
   onRemoved(this:MatitaNode){this.generation++;this.cancelJob?.();this.cancelJob=null;}
   onDrawBackground(this:MatitaNode,context:CanvasRenderingContext2D){
-    const layout=drawImagePreview(context,this,this.preview,{footerLines:2});
-    context.save();context.fillStyle="#d9e7ed";context.font="12px sans-serif";
-    context.fillText(this.status,10,layout.footerTop+12);
-    if(this.result)context.fillText(`${this.result.lengthMm.toFixed(1)} mm · ${this.result.arcs} arcs · ${this.result.lines} lines`,10,layout.footerTop+30);
-    context.restore();
+    this.drawMatitaChrome(context,this.preview,this.status,Number(this.properties.epsilon??matitaDefaults.epsilon),this.result?`${this.result.lengthMm.toFixed(1)} mm · ${this.result.arcs} arcs · ${this.result.lines} lines`:undefined);
   }
 }

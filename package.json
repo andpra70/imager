@@ -4,7 +4,9 @@
   "version": "0.0.1",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "build:wasm:base0": "cargo build --manifest-path wasm/gcode-base0/Cargo.toml --target wasm32-unknown-unknown --release && mkdir -p public/wasm && cp wasm/gcode-base0/target/wasm32-unknown-unknown/release/plotterfun_gcode_base0.wasm public/wasm/base0.wasm",
+    "build:wasm:segmenti": "cargo build --manifest-path wasm/gcode-segmenti/Cargo.toml --target wasm32-unknown-unknown --release && mkdir -p public/wasm && cp wasm/gcode-segmenti/target/wasm32-unknown-unknown/release/plotterfun_gcode_segmenti.wasm public/wasm/segmenti.wasm",
+    "dev": "vite --force",
     "build": "tsc -b && vite build",
     "preview": "vite preview"
   },
@@ -14,6 +16,7 @@
     "@tensorflow/tfjs": "^4.11.0",
     "@ultralytics/yolo": "^0.0.60",
     "@upscalerjs/esrgan-slim": "^1.0.0",
+    "fengari": "^0.1.5",
     "jspdf": "^3.0.4",
     "litegraph.js": "^0.7.17",
     "react": "^18.3.1",

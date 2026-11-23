@@ -47,5 +47,5 @@ export function exportMatita(paths: Stroke[], draw: Float32Array, w: number, h: 
   }
   lines.push(`G0 Z${c.zSafe.toFixed(3)}`, "M2");
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${(w/c.ppm).toFixed(3)}mm" height="${(h/c.ppm).toFixed(3)}mm" viewBox="0 0 ${(w/c.ppm).toFixed(3)} ${(h/c.ppm).toFixed(3)}"><g fill="none" stroke="#222" stroke-width="${c.diameter}" stroke-linecap="round" stroke-linejoin="round">${svgPaths.join("")}</g></svg>`;
-  return { gcode: lines.join("\n") + "\n", svg, preview: renderMatitaPreview(draw, w, h, 1), strokes: paths.length, mse, lengthMm, arcs, lines: linear, stopReason };
+  return { gcode: lines.join("\n") + "\n", svg, preview: renderMatitaPreview(draw, w, h, 1), strokes: paths.length, mse, lengthMm, arcs, lines: linear, stopReason, convergence: [] };
 }

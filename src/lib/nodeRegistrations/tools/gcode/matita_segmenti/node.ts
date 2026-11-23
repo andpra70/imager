@@ -6,6 +6,7 @@ import { matitaSegmentiDefaults, type MatitaSegmentiOptions, type MatitaSegmenti
 import { prepareMatitaSegmentiRaster } from "./raster";
 import { startMatitaSegmentiWorker } from "./workerClient";
 import { getGcodePreviewAboveWidgetsLayout } from "../shared/previewLayout";
+import { GcodeMatitaSuperNode } from "../shared/matitaSuperNode";
 
 type MatitaSegmentiNode=PreviewAwareNode&MatitaSegmentiGcodeToolNode;
 const controls:{label:string;key:keyof MatitaSegmentiOptions;min:number;max:number;step:number}[]=[
@@ -26,12 +27,13 @@ const controls:{label:string;key:keyof MatitaSegmentiOptions;min:number;max:numb
   {label:"Feed Z",key:"feedZ",min:1,max:2000,step:10},
   {label:"Arc tolerance mm",key:"arcTolerance",min:.01,max:1,step:.01},
 ];
-export class MatitaSegmentiGcodeToolNode {
+export class MatitaSegmentiGcodeToolNode extends GcodeMatitaSuperNode {
   size:[number,number]=[300,680];
   widgets_start_y=0;
   preview:GraphImage|null=null;result:MatitaSegmentiResult|null=null;status="waiting image";
   private signature="";private generation=0;private job:ReturnType<typeof startMatitaSegmentiWorker>|null=null;
   constructor(){
+    super();
     const node=this as unknown as MatitaSegmentiNode;
     node.title=createToolTitle("GCode/Matita Segmenti");node.properties={...matitaSegmentiDefaults};
     node.addInput("image","image");node.addOutput("gcode","gcode");node.addOutput("svg","svg");
@@ -41,12 +43,7 @@ export class MatitaSegmentiGcodeToolNode {
       node.properties[control.key]=Math.max(control.min,Math.min(control.max,adjusted));
       notifyGraphStateChange(node);
     },{min:control.min,max:control.max,step:control.step,precision:control.step<.01?4:control.step<1?2:0});
-    node.refreshPreviewLayout=()=>{
-      const layout=getGcodePreviewAboveWidgetsLayout(node.preview,node.widgets?.length??0);
-      node.widgets_start_y=layout.widgetTop;
-      node.size=layout.size;
-      node.setDirtyCanvas(true,true);
-    };
+    node.refreshPreviewLayout=()=>node.updateMatitaLayout(node.preview);
     node.refreshPreviewLayout();
   }
   onExecute(this:MatitaSegmentiNode){
@@ -61,14 +58,14 @@ export class MatitaSegmentiGcodeToolNode {
     }
     const signature=`${getGraphImageSignature(image)}:${JSON.stringify(options)}`;
     if(signature===this.signature){this.setOutputData(0,this.result?.gcode??null);this.setOutputData(1,this.result?.svg??null);return;}
-    this.signature=signature;this.generation++;const current=this.generation;
+    this.signature=signature;this.generation++;const current=this.generation;this.resetConvergence();
     this.job?.cancel();this.job=null;this.result=null;this.preview=null;
     this.setOutputData(0,null);this.setOutputData(1,null);
     try{
       validateMatitaSegmentiOptions(options);
       const job=startMatitaSegmentiWorker(prepareMatitaSegmentiRaster(image,options),(strokes,segments,mse,bitmap)=>{
         if(current!==this.generation){bitmap.close();return;}
-        const first=this.preview===null;this.preview=copyGcodePreview(bitmap,image,this.preview);
+        this.recordConvergence(strokes,mse);const first=this.preview===null;this.preview=copyGcodePreview(bitmap,image,this.preview);
         this.status=`${strokes} strokes · ${segments} segments · MSE ${mse.toFixed(5)}`;
         if(first)this.refreshPreviewLayout();else this.setDirtyCanvas(true,true);
       });
@@ -89,19 +86,7 @@ export class MatitaSegmentiGcodeToolNode {
   }
   onRemoved(this:MatitaSegmentiNode){this.generation++;this.job?.cancel();this.job=null;}
   onDrawBackground(this:MatitaSegmentiNode,context:CanvasRenderingContext2D){
-    const layout=getGcodePreviewAboveWidgetsLayout(this.preview,this.widgets?.length??0);
-    context.save();
-    context.fillStyle="#fff";
-    context.fillRect(layout.padding,layout.top,layout.width,layout.height);
-    if(this.preview)context.drawImage(this.preview,layout.padding,layout.top,layout.width,layout.height);
-    context.fillStyle="rgba(255,255,255,.85)";
-    context.fillRect(layout.padding,layout.top+layout.height-22,layout.width,22);
-    context.fillStyle="#25313a";context.font="11px sans-serif";
-    context.fillText(this.status,layout.padding+6,layout.top+layout.height-7,layout.width-12);
-    context.fillStyle="#d9e7ed";context.font="12px sans-serif";
-    context.fillText(this.status,10,layout.footerTop+12);
-    if(this.result)context.fillText(`${this.result.segments} segments · ${this.result.arcs} arcs · travel ${(this.result.travelMm/1000).toFixed(2)} m (-${(this.result.travelSavedMm/1000).toFixed(2)} m)`,10,layout.footerTop+30);
-    context.restore();
+    this.drawMatitaChrome(context,this.preview,this.status,Number(this.properties.epsilon??matitaSegmentiDefaults.epsilon),this.result?`${this.result.segments} segments · ${this.result.arcs} arcs · travel ${(this.result.travelMm/1000).toFixed(2)} m`:undefined);
   }
 }
 

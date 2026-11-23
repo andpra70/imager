@@ -6,6 +6,7 @@ import { MAX_HATCH_LAYERS } from "./hatchLayers";
 import { baseGcodeDefaults, type BaseGcodeOptions, type BaseGcodeResult, validateBaseGcodeOptions } from "./model";
 import { prepareBaseGcodeRaster } from "./raster";
 import { startBaseGcodeWorker } from "./workerClient";
+import { GcodeMatitaSuperNode } from "../shared/matitaSuperNode";
 
 type BaseNode = PreviewAwareNode & BaseGcodeToolNode;
 const controls: { label: string; key: keyof BaseGcodeOptions; min: number; max: number; step: number }[] = [
@@ -20,7 +21,7 @@ const controls: { label: string; key: keyof BaseGcodeOptions; min: number; max: 
   {label:"Feed XY",key:"feed",min:50,max:10000,step:10}, {label:"Feed Z",key:"feedZ",min:20,max:5000,step:10},
   {label:"Z sample mm",key:"zStep",min:0.3,max:10,step:0.1}, {label:"Max paths",key:"maxPaths",min:100,max:200000,step:100},
 ];
-export class BaseGcodeToolNode {
+export class BaseGcodeToolNode extends GcodeMatitaSuperNode {
   size: [number, number] = [300, 680];
   status = "waiting image";
   result: BaseGcodeResult | null = null;
@@ -33,6 +34,7 @@ export class BaseGcodeToolNode {
   private generation = 0;
 
   constructor() {
+    super();
     const node = this as unknown as BaseNode;
     node.title = createToolTitle("GCode/Base");
     node.properties = { ...baseGcodeDefaults };
