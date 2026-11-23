@@ -16,6 +16,7 @@ interface GcodeToolNodeCtors {
   Svg2Gcode2ToolNode: NodeCtor;
   GcodeViewerToolNode: NodeCtor;
   GcodeCncToolNode: NodeCtor;
+  GcodeOptimizerToolNode: NodeCtor;
 }
 
 export function registerGcodeToolNodes(registerNodeType: RegisterNodeTypeFn, ctors: GcodeToolNodeCtors) {
@@ -34,4 +35,5 @@ export function registerGcodeToolNodes(registerNodeType: RegisterNodeTypeFn, cto
   registerNodeType("tools/gcode/svg2gcode2", ctors.Svg2Gcode2ToolNode);
   registerNodeType("tools/gcode/viewer", ctors.GcodeViewerToolNode);
   registerNodeType("tools/gcode/cnc", ctors.GcodeCncToolNode);
+  registerNodeType("tools/gcode/optimizer", ctors.GcodeOptimizerToolNode);
 }

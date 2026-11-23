@@ -4,6 +4,11 @@ export interface StoredGraphProject<TGraph = unknown> {
   updatedAt: string;
 }
 
+export interface GraphProjectSummary {
+  name: string;
+  updatedAt: string | null;
+}
+
 const PROJECT_INDEX_KEY = "plotterfun.projects";
 const PROJECT_KEY_PREFIX = "plotterfun.project.";
 
@@ -36,6 +41,16 @@ export function listGraphProjects() {
   } catch {
     return [];
   }
+}
+
+export function listGraphProjectSummaries(): GraphProjectSummary[] {
+  return listGraphProjects().map((name) => {
+    const project = loadGraphProject(name);
+    return {
+      name,
+      updatedAt: typeof project?.updatedAt === "string" ? project.updatedAt : null,
+    };
+  });
 }
 
 export function saveGraphProject<TGraph>(name: string, graph: TGraph) {

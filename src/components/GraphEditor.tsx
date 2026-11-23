@@ -4,6 +4,7 @@ import { LGraph, LGraphCanvas, LiteGraph } from "litegraph.js";
 import "litegraph.js/css/litegraph.css";
 import TopBar from "./editorChrome/TopBar";
 import NodePaletteSidebar from "./editorChrome/NodePaletteSidebar";
+import GraphProjectPicker from "./projects/GraphProjectPicker";
 import { GRAPH_LAYOUT_SPACING } from "../models/editorChrome";
 import type { EditorCommandId, GraphLayoutMode } from "../models/editorChrome";
 import { registerImageNodes } from "../lib/registerImageNodes";
@@ -17,7 +18,7 @@ import {
 import sampleGraph from "../data/sample.json";
 import {
   getProjectNameFromUrl,
-  listGraphProjects,
+  listGraphProjectSummaries,
   loadGraphProject,
   saveGraphProject,
   setProjectNameInUrl,
@@ -162,6 +163,7 @@ function GraphEditor() {
   const [paletteOpen, setPaletteOpen] = useState(true);
   const [projectName, setProjectName] = useState(() => getProjectNameFromUrl() || UNTITLED_PROJECT_NAME);
   const [layoutSpacing, setLayoutSpacing] = useState(getSavedLayoutSpacing);
+  const [availableProjects, setAvailableProjects] = useState<ReturnType<typeof listGraphProjectSummaries> | null>(null);
   const [statusMessage, setStatusMessage] = useState(
     "Create nodes from the toolbar or from the LiteGraph context menu.",
   );
@@ -385,17 +387,12 @@ function GraphEditor() {
     setProjectName(project.name);
     setProjectNameInUrl(project.name);
     document.title = `${project.name} · Plotterfun`;
+    setAvailableProjects(null);
     return true;
   };
 
   const loadGraph = () => {
-    const projects = listGraphProjects();
-    const suggestion = projectName !== UNTITLED_PROJECT_NAME ? projectName : projects[0] ?? "";
-    const requestedName = window.prompt(
-      projects.length ? `Nome del progetto\nDisponibili: ${projects.join(", ")}` : "Nome del progetto",
-      suggestion,
-    );
-    if (requestedName !== null) loadProjectByName(requestedName);
+    setAvailableProjects(listGraphProjectSummaries());
   };
 
   const exportGraph = () => {
@@ -764,6 +761,14 @@ function GraphEditor() {
         )}
         <canvas className="editor-stage" ref={canvasRef} />
       </div>
+      {availableProjects && (
+        <GraphProjectPicker
+          currentProjectName={projectName}
+          onCancel={() => setAvailableProjects(null)}
+          onLoad={loadProjectByName}
+          projects={availableProjects}
+        />
+      )}
       <input
         accept="application/json"
         className="visually-hidden"

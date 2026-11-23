@@ -243,6 +243,7 @@ export function registerImageNodes() {
     SvgToGcodeToolNode: gcodeToolCtors.SvgToGcodeToolNode,
     GcodeViewerToolNode: gcodeToolCtors.GcodeViewerToolNode,
     GcodeCncToolNode: gcodeToolCtors.GcodeCncToolNode,
+    GcodeOptimizerToolNode: gcodeToolCtors.GcodeOptimizerToolNode,
   });
 
   registerArtistsToolNodes(registerNodeType, {

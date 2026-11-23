@@ -11,3 +11,4 @@ export { MatitaRettangoliGcodeToolNode } from "./matita_rettangoli/node";
 export { MatitaCerchiGcodeToolNode } from "./matita_cerchi/node";
 export { MatitaCalligraficaGcodeToolNode } from "./matita_calligrafica/node";
 export { MicrotrattiVeloceGcodeToolNode,MicrotrattiTurboGcodeToolNode } from "./microtratti/node";
+export { GcodeOptimizerToolNode } from "./optimizer/node";

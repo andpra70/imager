@@ -129,6 +129,7 @@ export const nodePalette: NodePaletteItem[] = [
   { type: "tools/gcode/svg2gcode2", category: "gcode", glyph: "S2G2", shortLabel: "Svg2G2", tooltip: "GCODE/SVG2GCODE2: ordina i tracciati per colore con cambio tool e controlla la pressione Z con livelli di luminanza quantizzati." },
   { type: "tools/gcode/viewer", category: "gcode", glyph: "GCV", shortLabel: "Viewer", tooltip: "GCODE/VIEWER: visualizza il GCode in ingresso, esporta file .gcode e fornisce uscita TXT." },
   { type: "tools/gcode/cnc", category: "gcode", glyph: "CNC", shortLabel: "CNC", tooltip: "GCODE/CNC: simula il tracciamento con colori dei tool e pressione Z opzionali su foglio bianco, oltre a play/reset, posizione e tempo stimato." },
+  { type: "tools/gcode/optimizer", category: "gcode", glyph: "OPT", shortLabel: "Optimizer", tooltip: "GCODE/OPTIMIZER: semplifica e riordina rapidamente i percorsi per tool, riducendo gli spostamenti a penna sollevata e mostrando le metriche prima/dopo." },
   { type: "tools/svg/rough", category: "svg", glyph: "RFX", shortLabel: "Rough", tooltip: "ROUGH: applica stile rough a un SVG in ingresso e produce un nuovo SVG." },
   { type: "tools/svg/svg-simplify", category: "svg", glyph: "SMP", shortLabel: "Simplify", tooltip: "SVG SIMPLIFY: semplifica path e minifica SVG riducendo il peso mantenendo i colori." },
   { type: "tools/ai/bg-remove", category: "ai", glyph: "BGR", shortLabel: "BG Remove", tooltip: "BG REMOVE: rimuove lo sfondo con segmentazione persona AI (stile MediaPipe/selfie segmentation)." },

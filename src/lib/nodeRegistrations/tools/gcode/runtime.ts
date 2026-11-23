@@ -10,6 +10,7 @@ import { LegacyMatita2GcodeToolNode, MatitaSegmentiGcodeToolNode } from "./matit
 import type { NodeCtor } from "../../shared";
 import { GcodeCncToolNode, GcodeViewerToolNode, SvgToGcodeToolNode } from "./nodes";
 import { Svg2Gcode2ToolNode } from "./svg2gcode2/node";
+import { GcodeOptimizerToolNode } from "./optimizer/node";
 
 interface ToolGcodeNodeCtors {
   BaseGcodeToolNode: NodeCtor;
@@ -27,6 +28,7 @@ interface ToolGcodeNodeCtors {
   Svg2Gcode2ToolNode: NodeCtor;
   GcodeViewerToolNode: NodeCtor;
   GcodeCncToolNode: NodeCtor;
+  GcodeOptimizerToolNode: NodeCtor;
 }
 
 export function createToolGcodeNodeCtors(): ToolGcodeNodeCtors {
@@ -46,5 +48,6 @@ export function createToolGcodeNodeCtors(): ToolGcodeNodeCtors {
     Svg2Gcode2ToolNode: Svg2Gcode2ToolNode as unknown as NodeCtor,
     GcodeViewerToolNode: GcodeViewerToolNode as unknown as NodeCtor,
     GcodeCncToolNode: GcodeCncToolNode as unknown as NodeCtor,
+    GcodeOptimizerToolNode: GcodeOptimizerToolNode as unknown as NodeCtor,
   };
 }

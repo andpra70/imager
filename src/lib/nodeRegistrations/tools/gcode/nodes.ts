@@ -481,6 +481,9 @@ function parseGcodeProgram(gcode: GraphGcode): CncProgram {
   const segments: CncSegment[] = [];
   let commandCount = 0;
   let absoluteMode = true;
+  let absoluteArcCenterMode = false;
+  let unitsScale = 1;
+  let modalMotionCode = 0;
   let x = 0;
   let y = 0;
   let z = 0;
@@ -527,6 +530,11 @@ function parseGcodeProgram(gcode: GraphGcode): CncProgram {
     let nextY: number | null = null;
     let nextZ: number | null = null;
     let nextFeed: number | null = null;
+    let arcI: number | null = null;
+    let arcJ: number | null = null;
+    let arcR: number | null = null;
+    let curveP: number | null = null;
+    let curveQ: number | null = null;
 
     for (const token of tokens) {
       const code = token[0];
@@ -535,7 +543,7 @@ function parseGcodeProgram(gcode: GraphGcode): CncProgram {
         continue;
       }
       if (code === "G") {
-        gCode = Math.round(value);
+        gCode = value;
       } else if (code === "X") {
         nextX = value;
       } else if (code === "Y") {
@@ -546,9 +554,27 @@ function parseGcodeProgram(gcode: GraphGcode): CncProgram {
         nextFeed = value;
       } else if (code === "T") {
         activeTool = Math.round(value);
+      } else if (code === "I") {
+        arcI = value;
+      } else if (code === "J") {
+        arcJ = value;
+      } else if (code === "R") {
+        arcR = value;
+      } else if (code === "P") {
+        curveP = value;
+      } else if (code === "Q") {
+        curveQ = value;
       }
     }
 
+    if (gCode === 20) {
+      unitsScale = 25.4;
+      continue;
+    }
+    if (gCode === 21) {
+      unitsScale = 1;
+      continue;
+    }
     if (gCode === 90) {
       absoluteMode = true;
       continue;
@@ -557,37 +583,85 @@ function parseGcodeProgram(gcode: GraphGcode): CncProgram {
       absoluteMode = false;
       continue;
     }
+    if (gCode === 90.1) {
+      absoluteArcCenterMode = true;
+      continue;
+    }
+    if (gCode === 91.1) {
+      absoluteArcCenterMode = false;
+      continue;
+    }
     if (nextFeed !== null && nextFeed > 0) {
       feedRate = nextFeed;
     }
 
-    const isMotion = gCode === 0 || gCode === 1;
+    if (gCode === 0 || gCode === 1 || gCode === 2 || gCode === 3 || gCode === 5 || gCode === 5.1) {
+      modalMotionCode = gCode;
+    }
+    const motionCode = gCode === null ? modalMotionCode : gCode;
+    const isMotion = motionCode === 0 || motionCode === 1 || motionCode === 2 || motionCode === 3 || motionCode === 5 || motionCode === 5.1;
     if (!isMotion) {
       continue;
     }
     commandCount += 1;
 
-    const targetX = nextX === null ? x : absoluteMode ? nextX : x + nextX;
-    const targetY = nextY === null ? y : absoluteMode ? nextY : y + nextY;
-    const targetZ = nextZ === null ? z : absoluteMode ? nextZ : z + nextZ;
+    const targetX = nextX === null ? x : absoluteMode ? nextX * unitsScale : x + nextX * unitsScale;
+    const targetY = nextY === null ? y : absoluteMode ? nextY * unitsScale : y + nextY * unitsScale;
+    const targetZ = nextZ === null ? z : absoluteMode ? nextZ * unitsScale : z + nextZ * unitsScale;
     minZ = Math.min(minZ, targetZ);
     maxZ = Math.max(maxZ, targetZ);
 
-    const dx = targetX - x;
-    const dy = targetY - y;
-    const dz = targetZ - z;
-    const distance = Math.hypot(dx, dy, dz);
     const moveFeed = feedRate > 0 ? feedRate : 1200;
-    const durationSec = distance > 0 ? distance / (moveFeed / 60) : 0;
-
-    if (distance > 0) {
+    const points: CncPoint[] = [];
+    if (motionCode === 2 || motionCode === 3) {
+      let centerX: number | null = null, centerY: number | null = null;
+      if (arcI !== null || arcJ !== null) {
+        centerX = absoluteArcCenterMode ? (arcI ?? x / unitsScale) * unitsScale : x + (arcI ?? 0) * unitsScale;
+        centerY = absoluteArcCenterMode ? (arcJ ?? y / unitsScale) * unitsScale : y + (arcJ ?? 0) * unitsScale;
+      } else if (arcR !== null) {
+        const radius = Math.abs(arcR * unitsScale), dx = targetX - x, dy = targetY - y, chord = Math.hypot(dx, dy);
+        if (chord > 1e-9 && chord <= radius * 2 + 1e-7) {
+          const midpointX = (x + targetX) / 2, midpointY = (y + targetY) / 2;
+          const height = Math.sqrt(Math.max(0, radius * radius - chord * chord / 4));
+          const direction = ((motionCode === 3) !== (arcR < 0)) ? 1 : -1;
+          centerX = midpointX - dy / chord * height * direction;
+          centerY = midpointY + dx / chord * height * direction;
+        }
+      }
+      if (centerX !== null && centerY !== null) {
+        const radius = Math.hypot(x - centerX, y - centerY), startAngle = Math.atan2(y - centerY, x - centerX);
+        let sweep = Math.atan2(targetY - centerY, targetX - centerX) - startAngle;
+        if (motionCode === 2) { while (sweep >= 0) sweep -= Math.PI * 2; }
+        else { while (sweep <= 0) sweep += Math.PI * 2; }
+        const arcLength = Math.abs(sweep) * radius;
+        const steps = Math.max(8, Math.min(10000, Math.ceil(Math.max(arcLength / 0.5, Math.abs(sweep) / (Math.PI / 24)))));
+        for (let step = 1; step <= steps; step += 1) {
+          const t = step / steps, angle = startAngle + sweep * t;
+          points.push(step === steps ? { x: targetX, y: targetY } : { x: centerX + Math.cos(angle) * radius, y: centerY + Math.sin(angle) * radius });
+        }
+      }
+    } else if (motionCode === 5 || motionCode === 5.1) {
+      const start={x,y}, end={x:targetX,y:targetY};
+      const control1={x:x+(arcI??0)*unitsScale,y:y+(arcJ??0)*unitsScale};
+      const control2=motionCode===5?{x:targetX+(curveP??0)*unitsScale,y:targetY+(curveQ??0)*unitsScale}:control1;
+      const estimate=Math.hypot(control1.x-x,control1.y-y)+Math.hypot(control2.x-control1.x,control2.y-control1.y)+Math.hypot(targetX-control2.x,targetY-control2.y);
+      const steps=Math.max(8,Math.min(10000,Math.ceil(estimate/0.5)));
+      for(let step=1;step<=steps;step+=1){const t=step/steps,u=1-t;if(motionCode===5){points.push({x:u*u*u*start.x+3*u*u*t*control1.x+3*u*t*t*control2.x+t*t*t*end.x,y:u*u*u*start.y+3*u*u*t*control1.y+3*u*t*t*control2.y+t*t*t*end.y});}else{points.push({x:u*u*start.x+2*u*t*control1.x+t*t*end.x,y:u*u*start.y+2*u*t*control1.y+t*t*end.y});}}
+    }
+    if (points.length === 0 && (targetX !== x || targetY !== y || targetZ !== z)) points.push({ x: targetX, y: targetY });
+    let segmentStart={x,y},segmentStartZ=z;
+    for(let pointIndex=0;pointIndex<points.length;pointIndex+=1){
+      const point=points[pointIndex],t=(pointIndex+1)/points.length,segmentEndZ=z+(targetZ-z)*t;
+      const distance=Math.hypot(point.x-segmentStart.x,point.y-segmentStart.y,segmentEndZ-segmentStartZ);
+      const durationSec=distance>0?distance/(moveFeed*unitsScale/60):0;
+      if(distance>0){
       const segment: CncSegment = {
-        start: { x, y },
-        end: { x: targetX, y: targetY },
-        startZ: z,
-        endZ: targetZ,
-        rapid: gCode === 0,
-        feedRate: moveFeed,
+        start: segmentStart,
+        end: point,
+        startZ: segmentStartZ,
+        endZ: segmentEndZ,
+        rapid: motionCode === 0,
+        feedRate: moveFeed * unitsScale,
         startTimeSec: timeCursorSec,
         endTimeSec: timeCursorSec + durationSec,
         tool: activeTool,
@@ -597,6 +671,8 @@ function parseGcodeProgram(gcode: GraphGcode): CncProgram {
       updateBounds(segment.start);
       updateBounds(segment.end);
       timeCursorSec += durationSec;
+      }
+      segmentStart=point;segmentStartZ=segmentEndZ;
     }
 
     x = targetX;
