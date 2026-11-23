@@ -209,6 +209,7 @@ export function registerImageNodes() {
     ClassificaToolNode: aiToolCtors.ClassificaToolNode,
     UpscalerToolNode: aiToolCtors.UpscalerToolNode,
     YoloToolNode: aiToolCtors.YoloToolNode,
+    FaceSwapToolNode: aiToolCtors.FaceSwapToolNode,
   });
 
   registerSvgToolNodes(registerNodeType, {

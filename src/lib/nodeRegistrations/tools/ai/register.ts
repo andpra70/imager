@@ -13,6 +13,7 @@ interface AiToolNodeCtors {
   ClassificaToolNode: NodeCtor;
   UpscalerToolNode: NodeCtor;
   YoloToolNode: NodeCtor;
+  FaceSwapToolNode: NodeCtor;
 }
 
 export function registerAiToolNodes(registerNodeType: RegisterNodeTypeFn, ctors: AiToolNodeCtors) {
@@ -28,4 +29,5 @@ export function registerAiToolNodes(registerNodeType: RegisterNodeTypeFn, ctors:
   registerNodeType("tools/ai/classifica", ctors.ClassificaToolNode);
   registerNodeType("tools/ai/upscaler", ctors.UpscalerToolNode);
   registerNodeType("tools/ai/yolo", ctors.YoloToolNode);
+  registerNodeType("tools/ai/faceswap", ctors.FaceSwapToolNode);
 }

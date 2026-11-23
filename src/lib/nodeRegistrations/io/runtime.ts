@@ -1,4 +1,5 @@
 import type { GraphImage } from "../../../models/graphImage";
+import type { GraphVideo } from "../../../models/graphVideo";
 import type { GraphPalette } from "../../../models/graphPalette";
 import type { GraphSvg } from "../../../models/graphSvg";
 import type { LiteNode, NodeCtor, PreviewAwareNode } from "../shared";
@@ -278,6 +279,7 @@ export function createIoNodeCtors(deps: IoNodeRuntimeDeps): IoNodeCtors {
     animationFrameId: number | null = null;
     size: [number, number] = [280, 300];
     serializedImage: string | null = null;
+    graphVideo: GraphVideo | null = null;
 
     constructor() {
       const node = this as unknown as PreviewAwareNode & WebcamImageNode;
@@ -286,6 +288,7 @@ export function createIoNodeCtors(deps: IoNodeRuntimeDeps): IoNodeCtors {
         status: "requesting camera",
       };
       node.addOutput("image", "image");
+      node.addOutput("video", "video");
       node.addWidget("button", "Grab", null, () => {
         if (node.video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
           node.image = drawSourceToCanvas(node.video);
@@ -318,6 +321,18 @@ export function createIoNodeCtors(deps: IoNodeRuntimeDeps): IoNodeCtors {
     async startCamera(this: PreviewAwareNode & WebcamImageNode) {
       try {
         this.stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        const track = this.stream.getVideoTracks()[0];
+        const settings = track?.getSettings();
+        this.graphVideo = track ? {
+          kind: "graph-video",
+          track,
+          stream: this.stream,
+          size: settings?.width && settings?.height
+            ? { width: settings.width, height: settings.height }
+            : null,
+          source: "webcam",
+          generatedAtIso: new Date().toISOString(),
+        } : null;
         this.video.srcObject = this.stream;
         await this.video.play();
         this.properties.status = "camera live";
@@ -345,6 +360,7 @@ export function createIoNodeCtors(deps: IoNodeRuntimeDeps): IoNodeCtors {
 
     onExecute(this: PreviewAwareNode & WebcamImageNode) {
       this.setOutputData(0, this.image);
+      this.setOutputData(1, this.graphVideo);
     }
 
     onSerialize(this: WebcamImageNode, data: Record<string, unknown>) {
@@ -395,6 +411,7 @@ export function createIoNodeCtors(deps: IoNodeRuntimeDeps): IoNodeCtors {
         this.animationFrameId = null;
       }
       this.stream?.getTracks().forEach((track) => track.stop());
+      this.graphVideo = null;
     }
   }
 

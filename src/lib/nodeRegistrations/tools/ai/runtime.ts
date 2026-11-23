@@ -12,6 +12,7 @@ import {
   ClassificaToolNode,
   UpscalerToolNode,
   YoloToolNode,
+  FaceSwapToolNode,
 } from "./nodes";
 
 export interface ToolAiNodeCtors {
@@ -27,6 +28,7 @@ export interface ToolAiNodeCtors {
   ClassificaToolNode: NodeCtor;
   UpscalerToolNode: NodeCtor;
   YoloToolNode: NodeCtor;
+  FaceSwapToolNode: NodeCtor;
 }
 
 export function createToolAiNodeCtors(): ToolAiNodeCtors {
@@ -43,6 +45,7 @@ export function createToolAiNodeCtors(): ToolAiNodeCtors {
     ClassificaToolNode: ClassificaToolNode as NodeCtor,
     UpscalerToolNode: UpscalerToolNode as NodeCtor,
     YoloToolNode: YoloToolNode as NodeCtor,
+    FaceSwapToolNode: FaceSwapToolNode as NodeCtor,
   };
 }
 export * from "./chatgptImage/runtime";
@@ -50,3 +53,4 @@ export * from "./nanoBanana/runtime";
 export * from "./klein/runtime";
 export * from "./upscaler/runtime";
 export * from "./yolo/runtime";
+export * from "./faceswap/runtime";
