@@ -11,7 +11,7 @@ export class MatitaSegmentiEngine {
   private readonly target:Float32Array;private readonly draw:Float32Array;private readonly weight:Float32Array;private readonly alphaMask:Float32Array;
   private readonly tilesX:number;private readonly tilesY:number;private readonly tileScores:Float32Array;private readonly dirtyTiles=new Set<number>();
   private readonly paths:MatitaSegmentiPath[]=[];
-  private errorSum=0;private segments=0;
+  private errorSum=0;private segments=0;private readonly initialMse:number;
   constructor({width,height,pixels,options}:MatitaSegmentiRequest){
     validateMatitaSegmentiOptions(options);
     if(width<10||height<10||width*height>850_000||pixels.length!==width*height*4)throw Error("Raster non valido");
@@ -32,6 +32,7 @@ export class MatitaSegmentiEngine {
     this.tilesX=Math.ceil(width/16);this.tilesY=Math.ceil(height/16);
     this.tileScores=new Float32Array(this.tilesX*this.tilesY);
     for(let i=0;i<this.tileScores.length;i++)this.updateTile(i);
+    this.initialMse=this.mse();
   }
   private errorAt(i:number,value:number){const e=value-this.target[i];return this.weight[i]*(e>0?this.c.over:1)*e*e;}
   private mse(){return this.errorSum/this.target.length;}
@@ -121,23 +122,28 @@ export class MatitaSegmentiEngine {
       onProgress(strokes,segments,this.mse(),renderMatitaPreview(this.draw,this.w,this.h));
       lastPreview=now;
     };
-    while(this.segments<this.c.maxSegments){
+    let plateauCount=0;
+    while(true){
       if(this.mse()<=this.c.epsilon){reason="Soglia di convergenza raggiunta.";break;}
+      const mseBefore=this.mse();
       const options=this.seeds(last);let best:{seed:Seed;initial:Step;score:number}|null=null;
       for(const seed of options){
         const initial=this.bestStep(seed.x,seed.y,0,true);if(!initial)continue;
         const travel=last?Math.hypot(seed.x-last.x,seed.y-last.y)/this.c.resolution:0;
-        const score=initial.score/(1+.004*travel);
+        const convergence=clamp(1-this.mse()/Math.max(this.initialMse,1e-9),0,1);
+        const score=initial.score/(1+travel*(.018+.065*convergence));
         if(!best||score>best.score)best={seed,initial,score};
       }
       if(!best||best.score<=0)break;
       const path=this.grow(best.seed,best.initial,count=>emitPreview(this.paths.length+1,this.segments+count));
       if(!path){if(++stalled>10){reason="Stagnazione della ricerca.";break;}continue;}
       this.paths.push(path);this.segments+=path.length-1;last=path[path.length-1];stalled=0;
+      const improvement=mseBefore-this.mse(),minimumUsefulImprovement=Math.max(this.c.epsilon*1e-5,mseBefore*1e-7);
+      plateauCount=improvement<=minimumUsefulImprovement?plateauCount+1:0;
+      if(plateauCount>=24){reason="Plateau dell’errore raggiunto.";break;}
       emitPreview(this.paths.length,this.segments);
       if(this.paths.length%8===0)await new Promise<void>(resolve=>setTimeout(resolve,0));
     }
-    if(this.segments>=this.c.maxSegments)reason="Limite segmenti raggiunto.";
     return exportMatitaSegmenti(this.paths,this.draw,this.w,this.h,this.c,this.segments,this.mse(),reason);
   }
 }

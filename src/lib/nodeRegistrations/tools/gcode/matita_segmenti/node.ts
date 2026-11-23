@@ -14,7 +14,6 @@ const controls:{label:string;key:keyof MatitaSegmentiOptions;min:number;max:numb
   {label:"Stroke diameter mm",key:"diameter",min:.1,max:2,step:.05},
   {label:"Ink alpha",key:"alpha",min:.05,max:.6,step:.01},
   {label:"Target MSE",key:"epsilon",min:.0001,max:.3,step:.001},
-  {label:"Max segments",key:"maxSegments",min:100,max:200000,step:500},
   {label:"Step mm",key:"step",min:.2,max:2,step:.05},
   {label:"Initial directions",key:"directions",min:8,max:64,step:4},
   {label:"Overink penalty",key:"over",min:1,max:30,step:1},
@@ -38,7 +37,7 @@ export class MatitaSegmentiGcodeToolNode {
     node.addInput("image","image");node.addOutput("gcode","gcode");node.addOutput("svg","svg");
     for(const control of controls)node.addWidget("number",control.label,matitaSegmentiDefaults[control.key],value=>{
       const raw=Number(value);if(!Number.isFinite(raw))return;
-      const adjusted=control.key==="directions"||control.key==="maxSegments"?Math.round(raw):raw;
+      const adjusted=control.key==="directions"?Math.round(raw):raw;
       node.properties[control.key]=Math.max(control.min,Math.min(control.max,adjusted));
       notifyGraphStateChange(node);
     },{min:control.min,max:control.max,step:control.step,precision:control.step<.01?4:control.step<1?2:0});
@@ -101,7 +100,7 @@ export class MatitaSegmentiGcodeToolNode {
     context.fillText(this.status,layout.padding+6,layout.top+layout.height-7,layout.width-12);
     context.fillStyle="#d9e7ed";context.font="12px sans-serif";
     context.fillText(this.status,10,layout.footerTop+12);
-    if(this.result)context.fillText(`${this.result.segments} segments · ${this.result.arcs} arcs`,10,layout.footerTop+30);
+    if(this.result)context.fillText(`${this.result.segments} segments · ${this.result.arcs} arcs · travel ${(this.result.travelMm/1000).toFixed(2)} m (-${(this.result.travelSavedMm/1000).toFixed(2)} m)`,10,layout.footerTop+30);
     context.restore();
   }
 }

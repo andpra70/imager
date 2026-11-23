@@ -1,7 +1,7 @@
 import type { GraphImage } from "../../../../../models/graphImage";
 import { drawImagePreview, resizeNodeForPreview } from "../../../../imageUtils";
 import type { PreviewAwareNode } from "../../../shared";
-import { KLEIN_DEFAULTS, KLEIN_STYLE_PRESETS, resolveKleinImg2ImgPrompt, type KleinImg2ImgOptions, type KleinTxt2ImgOptions } from "./model";
+import { KLEIN_DEFAULTS, KLEIN_IMG2IMG_FIDELITY_PROMPT, KLEIN_STYLE_PRESETS, resolveKleinImg2ImgPrompt, type KleinImg2ImgOptions, type KleinTxt2ImgOptions } from "./model";
 import { kleinImg2Img, kleinTxt2Img } from "./runtime";
 import { cacheKleinStylePreview, getKleinStylePreview } from "./stylePreview/cache";
 import { showKleinStylePreviewOverlay } from "./stylePreview/overlay";
@@ -103,7 +103,7 @@ export class KleinImg2ImgToolNode {
   constructor() {
     const node = this as unknown as KleinNode & KleinImg2ImgToolNode;
     node.title = "TOOLS / AI / KLEIN IMG2IMG"; const initial = KLEIN_STYLE_PRESETS[1];
-    node.properties = { ...KLEIN_DEFAULTS, styleId: initial.id, prompt: initial.prompt, preserveSource: true, useStylePreset: true, textPrompt: "", promptSuffix: "" };
+    node.properties = { ...KLEIN_DEFAULTS, styleId: initial.id, prompt: initial.prompt, preserveSource: true, preservationPrompt: KLEIN_IMG2IMG_FIDELITY_PROMPT, useStylePreset: true, textPrompt: "", promptSuffix: "" };
     node.addInput("image 1 (base)", "image");
     node.addInput("image 2", "image");
     node.addInput("image 3", "image");
@@ -115,16 +115,31 @@ export class KleinImg2ImgToolNode {
     node.addWidget("combo", "Stile", initial.label, (value) => node.selectStyle(String(value)), { values: initialPath.subgenre.styles.map((item) => item.label) });
     node.addWidget("text", "Prompt", initial.prompt, (value) => { node.properties.prompt = String(value); node.properties.styleId = "custom"; notify(node); });
     node.addWidget("toggle", "Usa preset", true, (value) => { node.properties.useStylePreset = Boolean(value); notify(node); });
-    node.addWidget("toggle", "Conserva", true, (value) => { node.properties.preserveSource = Boolean(value); notify(node); });
+    node.addWidget("toggle", "Conserva", true, (value) => {
+      node.properties.preserveSource = Boolean(value);
+      if (value) node.properties.preservationPrompt = KLEIN_IMG2IMG_FIDELITY_PROMPT;
+      node.syncPreservationPrompt(); notify(node);
+    });
+    node.addWidget("text", "Prompt conservazione", KLEIN_IMG2IMG_FIDELITY_PROMPT, (value) => {
+      if (Boolean(node.properties.preserveSource)) { node.syncPreservationPrompt(); return; }
+      node.properties.preservationPrompt = String(value); notify(node);
+    });
     node.addWidget("text", "Prompt immagini (image 1..4)", "", (value) => { node.properties.textPrompt = String(value); notify(node); });
     node.addWidget("text", "Prompt fisso in coda", "", (value) => { node.properties.promptSuffix = String(value); notify(node); });
     node.addWidget("number", "Prescale max", KLEIN_DEFAULTS.maxSize, (value) => { node.properties.maxSize = Number(value); notify(node); }, { min: 128, max: 1024, step: 64, precision: 0 });
     addCommonWidgets(node);
     node.addWidget("button", "Trasforma immagine", null, () => { if (!node.isRunning) node.pendingRun = true; node.setDirtyCanvas(true, true); });
     node.addWidget("button", "Annulla", null, () => node.controller?.abort());
-    node.refreshPreviewLayout = () => { resizeNodeForPreview(node, node.preview, { footerLines: 3 }); node.setDirtyCanvas(true, true); }; node.syncStyleCatalog(true); node.refreshPreviewLayout();
+    node.refreshPreviewLayout = () => { resizeNodeForPreview(node, node.preview, { footerLines: 3 }); node.setDirtyCanvas(true, true); }; node.syncStyleCatalog(true); node.syncPreservationPrompt(); node.refreshPreviewLayout();
   }
   syncWidgets() { /* API comune dei nodi Klein; i preset sono statici. */ }
+  syncPreservationPrompt() {
+    const enabled=Boolean(this.properties.preserveSource ?? true);
+    if(enabled)this.properties.preservationPrompt=KLEIN_IMG2IMG_FIDELITY_PROMPT;
+    const target=widget(this as unknown as PreviewAwareNode,"Prompt conservazione");
+    if(target){target.value=String(this.properties.preservationPrompt??"");target.options={...(target.options??{}),disabled:enabled};}
+    (this as unknown as PreviewAwareNode).setDirtyCanvas(true,true);
+  }
   private setCombo(name: string, value: string, values: string[]) {
     const item = widget(this as unknown as PreviewAwareNode, name); if (!item) return;
     item.value = value; item.options = { ...(item.options ?? {}), values };
@@ -155,15 +170,18 @@ export class KleinImg2ImgToolNode {
     const path = findKleinStylePath(styleId) ?? findKleinStylePath("custom"); if (path) this.applyPath(path.genre, path.subgenre, path.style.id);
   }
   onConfigure(this: KleinNode & KleinImg2ImgToolNode) {
+    if(typeof this.properties.preservationPrompt!=="string")this.properties.preservationPrompt=Boolean(this.properties.preserveSource??true)?KLEIN_IMG2IMG_FIDELITY_PROMPT:"";
     this.syncedStyleId = ""; this.syncStyleCatalog(true);
     const values: Record<string, unknown> = {
       Prompt: this.properties.prompt, "Prescale max": this.properties.maxSize, "Klein URL": this.properties.baseUrl,
       "Usa preset": this.properties.useStylePreset ?? true, "Prompt immagini (image 1..4)": this.properties.textPrompt ?? "",
       Conserva: this.properties.preserveSource ?? true,
+      "Prompt conservazione": this.properties.preservationPrompt ?? "",
       "Prompt fisso in coda": this.properties.promptSuffix ?? "",
       Steps: this.properties.steps, Guidance: this.properties.guidanceScale, Seed: this.properties.seed,
     };
     Object.entries(values).forEach(([name, value]) => { const target = widget(this, name); if (target && value !== undefined) target.value = value; });
+    this.syncPreservationPrompt();
     this.refreshPreviewLayout();
   }
   onExecute(this: KleinNode & KleinImg2ImgToolNode) {
@@ -175,6 +193,7 @@ export class KleinImg2ImgToolNode {
     const images = inputSlots.slice(0, lastConnectedSlot + 1).filter(isImage);
     const useStylePreset = Boolean(this.properties.useStylePreset ?? true), styleId = String(this.properties.styleId ?? "custom"), prompt = resolveKleinImg2ImgPrompt({
       preserveSource: Boolean(this.properties.preserveSource ?? true),
+      preservationPrompt: String(this.properties.preservationPrompt ?? ""),
       useStylePreset,
       stylePrompt: String(this.properties.prompt ?? ""),
       textPrompt: String(this.properties.textPrompt ?? ""),

@@ -1,5 +1,6 @@
 import type { MatitaSegmentiOptions, MatitaSegmentiResult } from "./model";
 import { renderMatitaPreview } from "../matita/preview";
+import { optimizeMatitaSegmentiPaths, pathTravel } from "./pathOptimizer";
 export interface MatitaSegmentiPoint { x: number; y: number; z: number }
 export type MatitaSegmentiPath = MatitaSegmentiPoint[];
 const fmt = (v: number) => (Math.abs(v) < .0005 ? 0 : v).toFixed(3);
@@ -28,11 +29,13 @@ function fitArc(path: MatitaSegmentiPath, i: number, j: number, c: MatitaSegment
   return {...arc,sign};
 }
 export function exportMatitaSegmenti(paths: MatitaSegmentiPath[], draw: Float32Array, w: number, h: number, c: MatitaSegmentiOptions, segments: number, mse: number, reason: string): MatitaSegmentiResult {
+  const machineOrigin={x:-c.margin*c.resolution,y:h-1+c.margin*c.resolution,z:0};
+  const travelBefore=pathTravel(paths,machineOrigin),optimizedPaths=optimizeMatitaSegmentiPaths(paths,machineOrigin),travelAfter=pathTravel(optimizedPaths,machineOrigin);
   const out=["; IEDD 2 continuous error-driven pen plotter","; Z0 = first pen contact, spring not compressed","; WARNING: simulate and test Z before running","G21","G90","G17","G94",`G0 Z${fmt(c.zSafe)}`];
   const x=(p:MatitaSegmentiPoint)=>c.margin+p.x/c.resolution,y=(p:MatitaSegmentiPoint)=>c.margin+(h-1-p.y)/c.resolution;
   let arcs=0;
   const svgPaths:string[]=[];
-  for(const path of paths){
+  for(const path of optimizedPaths){
     const first=path[0];out.push(`G0 X${fmt(x(first))} Y${fmt(y(first))}`,`G1 Z${fmt(-first.z)} F${fmt(c.feedZ)}`);
     svgPaths.push(`<path d="${path.map((p,i)=>`${i?"L":"M"}${fmt(x(p))} ${fmt(c.margin+p.y/c.resolution)}`).join(" ")}"/>`);
     let i=0;
@@ -49,5 +52,5 @@ export function exportMatitaSegmenti(paths: MatitaSegmentiPath[], draw: Float32A
   out.push("M2");
   const width=c.margin*2+w/c.resolution,height=c.margin*2+h/c.resolution;
   const svg=`<svg xmlns="http://www.w3.org/2000/svg" width="${fmt(width)}mm" height="${fmt(height)}mm" viewBox="0 0 ${fmt(width)} ${fmt(height)}"><g fill="none" stroke="#222" stroke-width="${c.diameter}" stroke-linecap="round" stroke-linejoin="round">${svgPaths.join("")}</g></svg>`;
-  return {gcode:out.join("\n")+"\n",svg,preview:renderMatitaPreview(draw,w,h),strokes:paths.length,segments,mse,arcs,reason};
+  return {gcode:out.join("\n")+"\n",svg,preview:renderMatitaPreview(draw,w,h),strokes:optimizedPaths.length,segments,mse,arcs,travelMm:travelAfter/c.resolution,travelSavedMm:Math.max(0,(travelBefore-travelAfter)/c.resolution),reason};
 }

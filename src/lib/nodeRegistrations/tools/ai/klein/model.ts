@@ -21,6 +21,7 @@ export interface KleinImg2ImgOptions extends KleinCommonOptions {
 
 export interface KleinImg2ImgPromptSettings {
   preserveSource: boolean;
+  preservationPrompt: string;
   useStylePreset: boolean;
   stylePrompt: string;
   textPrompt: string;
@@ -35,11 +36,14 @@ export const KLEIN_IMG2IMG_FIDELITY_PROMPT =
   "Non sostituire il soggetto, non alterarne i tratti distintivi e non inventare una nuova posa.";
 
 export function resolveKleinImg2ImgPrompt(settings: KleinImg2ImgPromptSettings) {
+  const preservationPrompt = settings.preserveSource
+    ? KLEIN_IMG2IMG_FIDELITY_PROMPT
+    : settings.preservationPrompt.trim();
   const stylePrompt = settings.stylePrompt.trim();
   const textPrompt = settings.textPrompt.trim();
   const promptSuffix = settings.promptSuffix.trim();
   return [
-    settings.preserveSource ? KLEIN_IMG2IMG_FIDELITY_PROMPT : "",
+    preservationPrompt,
     settings.useStylePreset ? stylePrompt : "",
     textPrompt,
     promptSuffix,
