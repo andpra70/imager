@@ -1,7 +1,7 @@
 import type { GraphImage } from "../../../../../models/graphImage";
 import { drawImagePreview, resizeNodeForPreview } from "../../../../imageUtils";
 import type { PreviewAwareNode } from "../../../shared";
-import { KLEIN_DEFAULTS, KLEIN_IMG2IMG_FIDELITY_PROMPT, KLEIN_STYLE_PRESETS, resolveKleinImg2ImgPrompt, type KleinImg2ImgOptions, type KleinTxt2ImgOptions } from "./model";
+import { KLEIN_DEFAULTS, KLEIN_IMG2IMG_FIDELITY_PROMPT, KLEIN_IMG2IMG_NEGATIVE_PROMPT_PRESET, KLEIN_STYLE_PRESETS, resolveKleinImg2ImgPrompt, type KleinImg2ImgOptions, type KleinTxt2ImgOptions } from "./model";
 import { kleinImg2Img, kleinTxt2Img } from "./runtime";
 import { cacheKleinStylePreview, getKleinStylePreview } from "./stylePreview/cache";
 import { showKleinStylePreviewOverlay } from "./stylePreview/overlay";
@@ -103,7 +103,7 @@ export class KleinImg2ImgToolNode {
   constructor() {
     const node = this as unknown as KleinNode & KleinImg2ImgToolNode;
     node.title = "TOOLS / AI / KLEIN IMG2IMG"; const initial = KLEIN_STYLE_PRESETS[1];
-    node.properties = { ...KLEIN_DEFAULTS, styleId: initial.id, prompt: initial.prompt, preserveSource: true, preservationPrompt: KLEIN_IMG2IMG_FIDELITY_PROMPT, useStylePreset: true, textPrompt: "", promptSuffix: "" };
+    node.properties = { ...KLEIN_DEFAULTS, styleId: initial.id, prompt: initial.prompt, preserveSource: true, preservationPrompt: KLEIN_IMG2IMG_FIDELITY_PROMPT, useStylePreset: true, textPrompt: "", promptSuffix: "", negativePrompt: KLEIN_IMG2IMG_NEGATIVE_PROMPT_PRESET };
     node.addInput("image 1 (base)", "image");
     node.addInput("image 2", "image");
     node.addInput("image 3", "image");
@@ -126,6 +126,7 @@ export class KleinImg2ImgToolNode {
     });
     node.addWidget("text", "Prompt immagini (image 1..4)", "", (value) => { node.properties.textPrompt = String(value); notify(node); });
     node.addWidget("text", "Prompt fisso in coda", "", (value) => { node.properties.promptSuffix = String(value); notify(node); });
+    node.addWidget("text", "Negative prompt", KLEIN_IMG2IMG_NEGATIVE_PROMPT_PRESET, (value) => { node.properties.negativePrompt = String(value); notify(node); });
     node.addWidget("number", "Prescale max", KLEIN_DEFAULTS.maxSize, (value) => { node.properties.maxSize = Number(value); notify(node); }, { min: 128, max: 1024, step: 64, precision: 0 });
     addCommonWidgets(node);
     node.addWidget("button", "Trasforma immagine", null, () => { if (!node.isRunning) node.pendingRun = true; node.setDirtyCanvas(true, true); });
@@ -171,6 +172,7 @@ export class KleinImg2ImgToolNode {
   }
   onConfigure(this: KleinNode & KleinImg2ImgToolNode) {
     if(typeof this.properties.preservationPrompt!=="string")this.properties.preservationPrompt=Boolean(this.properties.preserveSource??true)?KLEIN_IMG2IMG_FIDELITY_PROMPT:"";
+    if(typeof this.properties.negativePrompt!=="string")this.properties.negativePrompt=KLEIN_IMG2IMG_NEGATIVE_PROMPT_PRESET;
     this.syncedStyleId = ""; this.syncStyleCatalog(true);
     const values: Record<string, unknown> = {
       Prompt: this.properties.prompt, "Prescale max": this.properties.maxSize, "Klein URL": this.properties.baseUrl,
@@ -178,6 +180,7 @@ export class KleinImg2ImgToolNode {
       Conserva: this.properties.preserveSource ?? true,
       "Prompt conservazione": this.properties.preservationPrompt ?? "",
       "Prompt fisso in coda": this.properties.promptSuffix ?? "",
+      "Negative prompt": this.properties.negativePrompt,
       Steps: this.properties.steps, Guidance: this.properties.guidanceScale, Seed: this.properties.seed,
     };
     Object.entries(values).forEach(([name, value]) => { const target = widget(this, name); if (target && value !== undefined) target.value = value; });
@@ -198,6 +201,7 @@ export class KleinImg2ImgToolNode {
       stylePrompt: String(this.properties.prompt ?? ""),
       textPrompt: String(this.properties.textPrompt ?? ""),
       promptSuffix: String(this.properties.promptSuffix ?? ""),
+      negativePrompt: String(this.properties.negativePrompt ?? KLEIN_IMG2IMG_NEGATIVE_PROMPT_PRESET),
     });
     if (!isImage(inputSlots[0])) { this.status = "collega almeno image 1 (base)"; return; }
     if (hasGap) { this.status = "collega le immagini in ordine, senza slot vuoti"; return; }

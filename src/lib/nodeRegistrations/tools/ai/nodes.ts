@@ -12,6 +12,7 @@ export { ClassificaToolNode } from "./classifica";
 export { UpscalerToolNode } from "./upscaler";
 export { YoloToolNode } from "./yolo";
 export { FaceSwapToolNode } from "./faceswap";
+export { FluxWebGpuToolNode } from "./fluxWebgpu";
 import { drawImagePreview, drawSourceToCanvas, resizeNodeForPreview } from "../../../imageUtils";
 import type { LiteNode, PreviewAwareNode } from "../../shared";
 

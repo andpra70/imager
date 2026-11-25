@@ -14,6 +14,7 @@ interface AiToolNodeCtors {
   UpscalerToolNode: NodeCtor;
   YoloToolNode: NodeCtor;
   FaceSwapToolNode: NodeCtor;
+  FluxWebGpuToolNode: NodeCtor;
 }
 
 export function registerAiToolNodes(registerNodeType: RegisterNodeTypeFn, ctors: AiToolNodeCtors) {
@@ -30,4 +31,5 @@ export function registerAiToolNodes(registerNodeType: RegisterNodeTypeFn, ctors:
   registerNodeType("tools/ai/upscaler", ctors.UpscalerToolNode);
   registerNodeType("tools/ai/yolo", ctors.YoloToolNode);
   registerNodeType("tools/ai/faceswap", ctors.FaceSwapToolNode);
+  registerNodeType("tools/ai/flux-webgpu", ctors.FluxWebGpuToolNode);
 }

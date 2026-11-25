@@ -9,3 +9,4 @@ export * from "./classifica";
 export * from "./upscaler";
 export * from "./yolo";
 export * from "./faceswap";
+export * from "./fluxWebgpu";

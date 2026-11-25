@@ -10,6 +10,7 @@ import {
 import { COMIC_MASTER_PRESETS, PHOTOGRAPHY_MASTER_PRESETS } from "./famousArtistsPresets";
 import { BOUDOIR_GLAMOUR_PRESETS, FASHION_80S_90S_PRESETS, FASHION_DECADES_PRESETS, FETISH_UNDERGROUND_PRESETS, NEWTON_FASHION_CIRCLE_PRESETS, VOGUE_HIGH_FASHION_PRESETS } from "./fashionPhotographyPresets";
 import { BAROQUE_PAINTERS, EIGHTEENTH_ROMANTIC_REALIST_PAINTERS, IMPRESSIONIST_POSTIMPRESSIONIST_PAINTERS, MEDIEVAL_RENAISSANCE_PAINTERS, MODERN_AVANT_GARDE_PAINTERS, SURREALIST_PAINTERS, TWENTIETH_CENTURY_PAINTERS } from "./famousPaintersPresets";
+import { ADULT_GENRE_PRESETS, ADULT_MASTER_PRESETS, ADULT_STYLE_PRESETS, ADULT_SUBGENRE_PRESETS } from "./adultPresets";
 
 export interface KleinStyleSubgenre {
   id: string;
@@ -39,6 +40,7 @@ const worldIds = ids(WORLD_TRADITION_PRESETS);
 const digitalIds = ids(DIGITAL_ILLUSTRATION_PRESETS);
 const photoIds = ids(PHOTO_CINEMA_PRESETS);
 const materialIds = ids(MATERIAL_AND_CRAFT_PRESETS);
+const adultIds = ids(ADULT_STYLE_PRESETS);
 
 const baseGroups: Record<string, string> = {
   custom: "custom", "line-art": "drawing", engraving: "drawing", woodcut: "drawing", linocut: "drawing", drypoint: "drawing",
@@ -50,6 +52,7 @@ const baseGroups: Record<string, string> = {
 };
 
 function genreFor(style: KleinStylePreset) {
+  if (adultIds.has(style.id)) return "adult";
   if (drawingIds.has(style.id)) return "drawing";
   if (paintingIds.has(style.id)) return "painting";
   if (worldIds.has(style.id)) return "world";
@@ -115,12 +118,18 @@ const groupSets: Record<string, Array<{ id: string; label: string; ids: Set<stri
     { id: "glass-ceramic", label: "Vetro e ceramica", ids: new Set(["stained-glass", "ceramic", "glass", "neon"]) },
     { id: "organic", label: "Materiali naturali", ids: new Set(["sand-art", "pressed-flowers"]) },
   ],
+  adult: [
+    { id: "adult-genres", label: "Generi porno", ids: ids(ADULT_GENRE_PRESETS) },
+    { id: "adult-subgenres", label: "Sottogeneri e linguaggi", ids: ids(ADULT_SUBGENRE_PRESETS) },
+    { id: "adult-masters", label: "Maestri del porno", ids: ids(ADULT_MASTER_PRESETS) },
+  ],
   custom: [{ id: "manual", label: "Prompt libero", ids: new Set(["custom"]) }],
 };
 
 const genreLabels: Record<string, string> = {
   custom: "Personalizzato", drawing: "Disegno e stampa", painting: "Pittura e movimenti", world: "Tradizioni dal mondo",
   digital: "Illustrazione digitale", photo: "Fotografia e cinema", material: "Materiali e artigianato",
+  adult: "Erotico e pornografico · 18+",
 };
 
 export const KLEIN_STYLE_CATALOG: readonly KleinStyleGenre[] = Object.entries(genreLabels).map(([genreId, label]) => {

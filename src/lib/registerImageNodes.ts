@@ -210,6 +210,7 @@ export function registerImageNodes() {
     UpscalerToolNode: aiToolCtors.UpscalerToolNode,
     YoloToolNode: aiToolCtors.YoloToolNode,
     FaceSwapToolNode: aiToolCtors.FaceSwapToolNode,
+    FluxWebGpuToolNode: aiToolCtors.FluxWebGpuToolNode,
   });
 
   registerSvgToolNodes(registerNodeType, {

@@ -13,6 +13,7 @@ import {
   UpscalerToolNode,
   YoloToolNode,
   FaceSwapToolNode,
+  FluxWebGpuToolNode,
 } from "./nodes";
 
 export interface ToolAiNodeCtors {
@@ -29,6 +30,7 @@ export interface ToolAiNodeCtors {
   UpscalerToolNode: NodeCtor;
   YoloToolNode: NodeCtor;
   FaceSwapToolNode: NodeCtor;
+  FluxWebGpuToolNode: NodeCtor;
 }
 
 export function createToolAiNodeCtors(): ToolAiNodeCtors {
@@ -46,6 +48,7 @@ export function createToolAiNodeCtors(): ToolAiNodeCtors {
     UpscalerToolNode: UpscalerToolNode as NodeCtor,
     YoloToolNode: YoloToolNode as NodeCtor,
     FaceSwapToolNode: FaceSwapToolNode as NodeCtor,
+    FluxWebGpuToolNode: FluxWebGpuToolNode as NodeCtor,
   };
 }
 export * from "./chatgptImage/runtime";
@@ -54,3 +57,4 @@ export * from "./klein/runtime";
 export * from "./upscaler/runtime";
 export * from "./yolo/runtime";
 export * from "./faceswap/runtime";
+export * from "./fluxWebgpu/runtime";

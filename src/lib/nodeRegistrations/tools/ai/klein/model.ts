@@ -1,5 +1,6 @@
 import type { GraphImage } from "../../../../../models/graphImage";
 import { ADDITIONAL_KLEIN_STYLE_PRESETS } from "./styles/additionalPresets";
+import { ADULT_STYLE_PRESETS } from "./styles/adultPresets";
 
 export interface KleinCommonOptions {
   baseUrl: string;
@@ -26,6 +27,7 @@ export interface KleinImg2ImgPromptSettings {
   stylePrompt: string;
   textPrompt: string;
   promptSuffix: string;
+  negativePrompt: string;
 }
 
 export const KLEIN_IMG2IMG_FIDELITY_PROMPT =
@@ -35,6 +37,11 @@ export const KLEIN_IMG2IMG_FIDELITY_PROMPT =
   "e la disposizione degli elementi. Modifica soltanto lo stile visivo richiesto. " +
   "Non sostituire il soggetto, non alterarne i tratti distintivi e non inventare una nuova posa.";
 
+export const KLEIN_IMG2IMG_NEGATIVE_PROMPT_PRESET =
+  "photograph, erotic, sexual pose, censored, covered anatomy, fused structures, " +
+  "duplicated anatomy, malformed anatomy, inaccurate anatomy, blurry, watermark, " +
+  "text, labels, low detail";
+
 export function resolveKleinImg2ImgPrompt(settings: KleinImg2ImgPromptSettings) {
   const preservationPrompt = settings.preserveSource
     ? KLEIN_IMG2IMG_FIDELITY_PROMPT
@@ -42,11 +49,13 @@ export function resolveKleinImg2ImgPrompt(settings: KleinImg2ImgPromptSettings) 
   const stylePrompt = settings.stylePrompt.trim();
   const textPrompt = settings.textPrompt.trim();
   const promptSuffix = settings.promptSuffix.trim();
+  const negativePrompt = settings.negativePrompt.trim();
   return [
     preservationPrompt,
     settings.useStylePreset ? stylePrompt : "",
     textPrompt,
     promptSuffix,
+    negativePrompt,
   ].filter(Boolean).join(" ");
 }
 
@@ -119,4 +128,5 @@ export const KLEIN_STYLE_PRESETS: readonly KleinStylePreset[] = [
   { id: "surreal", label: "Surrealismo", prompt: `${faithful}Trasforma in pittura surrealista onirica, dettagli precisi, accostamenti poetici e atmosfera sospesa, senza perdere il soggetto.` },
   { id: "abstract", label: "Astratto geometrico", prompt: `${faithful}Reinterpreta come arte astratta geometrica mantenendo leggibile la struttura del soggetto, forme ritmiche, campiture e composizione equilibrata.` },
   ...ADDITIONAL_KLEIN_STYLE_PRESETS,
+  ...ADULT_STYLE_PRESETS,
 ];
