@@ -1,15 +1,21 @@
-import { defineConfig } from "vite";
+import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react";
 import { fileURLToPath,URL } from "node:url";
 import { readFile } from "node:fs/promises";
 
-export default defineConfig({
+export default defineConfig(({ mode }) => {
+  const env = loadEnv(mode, process.cwd(), "");
+  const kleinHost = env.KLEIN_HOST || "192.168.1.127";
+  const kleinPort = env.KLEIN_PORT || "8000";
+  const kleinTarget = `http://${kleinHost}:${kleinPort}`;
+
+  return ({
   preview: {
     host: '0.0.0.0',
     allowedHosts: true,
     proxy: {
       '/klein-api': {
-        target: 'http://127.0.0.1:8000',
+        target: kleinTarget,
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/klein-api/, ''),
       },
@@ -20,7 +26,7 @@ export default defineConfig({
     allowedHosts: true,
     proxy: {
       '/klein-api': {
-        target: 'http://127.0.0.1:8000',
+        target: kleinTarget,
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/klein-api/, ''),
       },
@@ -77,4 +83,5 @@ export default defineConfig({
     },
     react(),
   ],
+  });
 });

@@ -1,12 +1,12 @@
 server {
-  listen 80;
+  listen ${APP_PORT};
   server_name _;
 
   root /usr/share/nginx/html;
   index index.html;
 
   location /klein-api/ {
-    proxy_pass http://host.docker.internal:8000/;
+    proxy_pass http://${KLEIN_HOST}:${KLEIN_PORT}/;
     proxy_http_version 1.1;
     proxy_set_header Host $host;
     proxy_read_timeout 600s;

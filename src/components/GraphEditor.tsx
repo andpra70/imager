@@ -11,6 +11,11 @@ import { registerImageNodes } from "../lib/registerImageNodes";
 import { drawActiveKleinStylePreviewOverlay } from "../lib/nodeRegistrations/tools/ai/klein/stylePreview/overlay";
 import { installKleinStyleMenuPreview } from "../lib/nodeRegistrations/tools/ai/klein/stylePreview/menuHover";
 import {
+  createImageNodeFromDrop,
+  getDroppedImageFile,
+  type DroppedImageNode,
+} from "../lib/graphDrop/imageDrop";
+import {
   getPreviewWidth,
   getPreviewWidthBounds,
   setPreviewWidth,
@@ -52,6 +57,8 @@ interface GraphNodeInstance {
 
 interface GraphRuntime extends InstanceType<typeof LGraph> {
   _nodes?: GraphNodeInstance[];
+  add(node: DroppedImageNode): void;
+  add(node: GraphNodeInstance): void;
   onNodeAdded?: () => void;
   onNodeRemoved?: () => void;
   onConnectionChange?: () => void;
@@ -78,6 +85,7 @@ interface GraphCanvasRuntime extends InstanceType<typeof LGraphCanvas> {
   copyToClipboard: () => void;
   pasteFromClipboard: () => void;
   deleteSelectedNodes: () => void;
+  convertEventToCanvasOffset: (event: MouseEvent) => [number, number];
   selected_nodes: Record<number, GraphNodeInstance>;
 }
 
@@ -612,7 +620,7 @@ function GraphEditor() {
     graphCanvasRef.current = runtimeCanvas;
     graphCanvas.ds.scale = 0.9;
     graphCanvas.allow_dragcanvas = true;
-    runtimeGraph.onGraphStateChange = undefined;
+    runtimeGraph.onGraphStateChange = () => persistGraph();
     runtimeGraph.onNodeAdded = undefined;
     runtimeGraph.onNodeRemoved = undefined;
     runtimeGraph.onConnectionChange = undefined;
@@ -621,28 +629,21 @@ function GraphEditor() {
     const uninstallStyleMenuPreview = installKleinStyleMenuPreview();
 
 
-    // LiteGraph drop handlers can throw if graph is temporarily null (e.g. teardown races).
-    // Guard them locally to avoid crashing the editor on external drops.
-    const originalProcessDrop = runtimeCanvas.processDrop?.bind(runtimeCanvas);
-    if (originalProcessDrop) {
-      runtimeCanvas.processDrop = (event: DragEvent) => {
-        if (!runtimeCanvas.graph) {
-          event.preventDefault();
-          return false;
-        }
-        return originalProcessDrop(event);
-      };
-    }
+    const onCanvasImageDrop = (event: DragEvent) => {
+      const file = getDroppedImageFile(event);
+      if (!file || !runtimeCanvas.graph) return;
 
-    const originalCheckDropItem = runtimeCanvas.checkDropItem?.bind(runtimeCanvas);
-    if (originalCheckDropItem) {
-      runtimeCanvas.checkDropItem = (event: DragEvent) => {
-        if (!runtimeCanvas.graph) {
-          return false;
-        }
-        return originalCheckDropItem(event);
-      };
-    }
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      const node = createImageNodeFromDrop(runtimeGraph, runtimeCanvas, event, file);
+      if (!node) {
+        setStatusMessage("Impossibile creare il nodo immagine.");
+        return;
+      }
+      restartGraphWithAdaptiveTick();
+      persistGraph(`Immagine “${file.name}” caricata in un nuovo nodo.`);
+    };
+    canvasElement.addEventListener("drop", onCanvasImageDrop, true);
 
     const requestedProjectName = getProjectNameFromUrl();
     const requestedProject = requestedProjectName
@@ -723,8 +724,10 @@ function GraphEditor() {
         autoSaveIntervalRef.current = null;
       }
       window.removeEventListener("resize", resizeCanvas);
+      canvasElement.removeEventListener("drop", onCanvasImageDrop, true);
       uninstallStyleMenuPreview();
       graph.stop();
+      runtimeGraph.onGraphStateChange = undefined;
       graph.clear();
       runtimeCanvas.onDrawForeground = undefined;
       graphCanvas.setGraph(null);
