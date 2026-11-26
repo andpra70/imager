@@ -9,8 +9,6 @@ IMAGE_NAME="${IMAGE_NAME:-plotterfun-node-editor}"
 TAG="${TAG:-latest}"
 CONTAINER_NAME="${CONTAINER_NAME:-plotterfun-node-editor}"
 HOST_PORT="${HOST_PORT:-8080}"
-KLEIN_HOST="${KLEIN_HOST:-192.168.1.127}"
-KLEIN_PORT="${KLEIN_PORT:-8000}"
 IMAGE_REF="${REGISTRY}/${IMAGE_NAME}:${TAG}"
 
 if docker ps -a --format '{{.Names}}' | grep -Fxq "${CONTAINER_NAME}"; then
@@ -25,8 +23,6 @@ docker run -d \
   --restart unless-stopped \
   --network host \
   -e APP_PORT="${HOST_PORT}" \
-  -e KLEIN_HOST="${KLEIN_HOST}" \
-  -e KLEIN_PORT="${KLEIN_PORT}" \
   "${IMAGE_REF}"
 
 printf 'Container: %s\n' "${CONTAINER_NAME}"

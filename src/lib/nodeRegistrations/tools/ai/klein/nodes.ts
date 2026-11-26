@@ -18,6 +18,7 @@ const clampInt = (value: unknown, min: number, max: number) => Math.round(Math.m
 const clamp = (value: unknown, min: number, max: number) => Math.min(max, Math.max(min, Number(value)));
 const notify = (node: PreviewAwareNode) => node.graph?.onGraphStateChange?.();
 const isImage = (value: unknown): value is GraphImage => value instanceof HTMLCanvasElement && value.width > 0 && value.height > 0;
+const OBSOLETE_KLEIN_URL = "http://192.168.1.127:8000/klein-api";
 
 function widget(node: PreviewAwareNode, name: string) {
   return (node.widgets as WidgetLike[] | undefined)?.find((item) => item.name === name);
@@ -85,6 +86,12 @@ export class KleinTxt2ImgToolNode {
   syncWidgets() {
     const history = this.getHistory(); const signature = history.join("\n"); if (signature === this.historySignature) return; this.historySignature = signature;
     const historyWidget = widget(this as unknown as PreviewAwareNode, "Cronologia"); if (historyWidget) historyWidget.options = { ...(historyWidget.options ?? {}), values: history.length ? history.map(historyLabel) : ["Nessun prompt salvato"] };
+  }
+  onConfigure(this: KleinNode & KleinTxt2ImgToolNode) {
+    if (this.properties.baseUrl === OBSOLETE_KLEIN_URL) this.properties.baseUrl = KLEIN_DEFAULTS.baseUrl;
+    const urlWidget = widget(this, "Klein URL");
+    if (urlWidget) urlWidget.value = this.properties.baseUrl;
+    this.historySignature = ""; this.syncWidgets(); this.refreshPreviewLayout();
   }
   onExecute(this: KleinNode & KleinTxt2ImgToolNode) {
     this.syncWidgets(); this.setOutputData(0, this.preview); if (!this.pendingRun || this.isRunning) return; this.pendingRun = false;
@@ -171,6 +178,7 @@ export class KleinImg2ImgToolNode {
     const path = findKleinStylePath(styleId) ?? findKleinStylePath("custom"); if (path) this.applyPath(path.genre, path.subgenre, path.style.id);
   }
   onConfigure(this: KleinNode & KleinImg2ImgToolNode) {
+    if (this.properties.baseUrl === OBSOLETE_KLEIN_URL) this.properties.baseUrl = KLEIN_DEFAULTS.baseUrl;
     if(typeof this.properties.preservationPrompt!=="string")this.properties.preservationPrompt=Boolean(this.properties.preserveSource??true)?KLEIN_IMG2IMG_FIDELITY_PROMPT:"";
     if(typeof this.properties.negativePrompt!=="string")this.properties.negativePrompt=KLEIN_IMG2IMG_NEGATIVE_PROMPT_PRESET;
     this.syncedStyleId = ""; this.syncStyleCatalog(true);

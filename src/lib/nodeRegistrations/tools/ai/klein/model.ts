@@ -81,7 +81,7 @@ export interface KleinStylePreset {
 }
 
 export const KLEIN_DEFAULTS = {
-  baseUrl: "http://192.168.1.127:8000",
+  baseUrl: "http://193.168.1.177:8000",
   width: 512,
   height: 512,
   maxSize: 1024,

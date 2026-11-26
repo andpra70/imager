@@ -1,36 +1,35 @@
-import { defineConfig, loadEnv } from "vite";
+import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import { fileURLToPath,URL } from "node:url";
 import { readFile } from "node:fs/promises";
 
-export default defineConfig(({ mode }) => {
-  const env = loadEnv(mode, process.cwd(), "");
-  const kleinHost = env.KLEIN_HOST || "192.168.1.127";
-  const kleinPort = env.KLEIN_PORT || "8000";
-  const kleinTarget = `http://${kleinHost}:${kleinPort}`;
+function kleinRelayTarget(request: { headers: Record<string, string | string[] | undefined> }) {
+  const raw = request.headers["x-klein-base-url"];
+  const value = (Array.isArray(raw) ? raw[0] : raw ?? "").replace(/\/$/, "");
+  if (!/^http:\/\/(?:10\.|192\.168\.|172\.(?:1[6-9]|2\d|3[01])\.|127\.0\.0\.1(?::|\/|$)|193\.168\.1\.177(?::|\/|$))/.test(value)) {
+    return "http://127.0.0.1:1";
+  }
+  return value;
+}
 
+const kleinRelayProxy = {
+  target: "http://127.0.0.1:8000",
+  changeOrigin: true,
+  router: kleinRelayTarget,
+  rewrite: (path: string) => path.replace(/^\/klein-relay/, ""),
+};
+
+export default defineConfig(() => {
   return ({
   preview: {
     host: '0.0.0.0',
     allowedHosts: true,
-    proxy: {
-      '/klein-api': {
-        target: kleinTarget,
-        changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/klein-api/, ''),
-      },
-    },
+    proxy: { '/klein-relay': kleinRelayProxy },
   },
   server: {
     host: '0.0.0.0',
     allowedHosts: true,
-    proxy: {
-      '/klein-api': {
-        target: kleinTarget,
-        changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/klein-api/, ''),
-      },
-    },
+    proxy: { '/klein-relay': kleinRelayProxy },
   },
   base: "./",
   optimizeDeps: {

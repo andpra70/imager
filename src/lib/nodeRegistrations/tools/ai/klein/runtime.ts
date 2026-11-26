@@ -23,12 +23,21 @@ function blobToCanvas(blob: Blob) {
   });
 }
 
-function endpoint(baseUrl: string, path: string) {
+interface KleinEndpoint {
+  url: string;
+  headers?: HeadersInit;
+}
+
+function endpoint(baseUrl: string, path: string): KleinEndpoint {
   const configured = baseUrl.trim().replace(/\/$/, "");
-  const root = /^http:\/\/(?:127\.0\.0\.1|localhost|192\.168\.1\.127):8000$/i.test(configured)
-    ? `${import.meta.env.BASE_URL}klein-api`.replace(/\/$/, "")
-    : configured;
-  return `${root}/${path}`;
+  const configuredOrigin = new URL(configured).origin;
+  if (configuredOrigin !== window.location.origin) {
+    return {
+      url: `${import.meta.env.BASE_URL}klein-relay/${path}`,
+      headers: { "X-Klein-Base-Url": configured },
+    };
+  }
+  return { url: `${configured}/${path}` };
 }
 
 async function readImageResponse(response: Response): Promise<KleinResult> {
@@ -49,7 +58,8 @@ export async function kleinTxt2Img(request: KleinTxt2ImgRequest) {
   body.append("steps", String(request.options.steps));
   body.append("guidance_scale", String(request.options.guidanceScale));
   body.append("seed", String(request.options.seed));
-  const response = await fetch(endpoint(request.options.baseUrl, "text2img"), { method: "POST", body, signal: request.signal });
+  const target = endpoint(request.options.baseUrl, "text2img");
+  const response = await fetch(target.url, { method: "POST", headers: target.headers, body, signal: request.signal });
   return readImageResponse(response);
 }
 
@@ -92,6 +102,7 @@ export async function kleinImg2Img(request: KleinImg2ImgRequest) {
   body.append("guidance_scale", String(request.options.guidanceScale));
   body.append("seed", String(request.options.seed));
   const route = request.images.length === 1 ? "img2img" : "multi-img2img";
-  const response = await fetch(endpoint(request.options.baseUrl, route), { method: "POST", body, signal: request.signal });
+  const target = endpoint(request.options.baseUrl, route);
+  const response = await fetch(target.url, { method: "POST", headers: target.headers, body, signal: request.signal });
   return readImageResponse(response);
 }
