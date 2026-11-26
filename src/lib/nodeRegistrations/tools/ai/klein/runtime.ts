@@ -26,7 +26,7 @@ function blobToCanvas(blob: Blob) {
 function endpoint(baseUrl: string, path: string) {
   const configured = baseUrl.trim().replace(/\/$/, "");
   const root = /^http:\/\/(?:127\.0\.0\.1|localhost|192\.168\.1\.127):8000$/i.test(configured)
-    ? "/klein-api"
+    ? `${import.meta.env.BASE_URL}klein-api`.replace(/\/$/, "")
     : configured;
   return `${root}/${path}`;
 }

@@ -11,14 +11,17 @@ COPY public ./public
 
 RUN npm run build
 
-FROM nginx:1.27-alpine AS runtime
+FROM nginxinc/nginx-unprivileged:1.27-alpine AS runtime
 
 ENV KLEIN_HOST=192.168.1.127
 ENV KLEIN_PORT=8000
 ENV APP_PORT=8080
-COPY docker/templates/default.conf.template /etc/nginx/templates/default.conf.template
-COPY --from=build /app/dist /usr/share/nginx/html
+COPY --chown=nginx:nginx docker/templates/default.conf.template /etc/nginx/templates/default.conf.template
+COPY --chown=nginx:nginx --from=build /app/dist /usr/share/nginx/html
 
 EXPOSE 8080
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD wget --quiet --spider http://127.0.0.1:${APP_PORT}/ || exit 1
 
 CMD ["nginx", "-g", "daemon off;"]
